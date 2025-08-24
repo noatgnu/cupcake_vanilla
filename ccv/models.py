@@ -1685,7 +1685,7 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
             "name": table_name,
             "description": description or f"Table created from template: {self.name}",
             "sample_count": sample_count,
-            "creator": creator,
+            "owner": creator,
             "lab_group": lab_group,
             **kwargs,
         }
