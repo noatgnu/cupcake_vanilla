@@ -1,0 +1,265 @@
+[tool.poetry]
+name = "cupcake-vanilla"
+version = "1.0.0"
+description = "CUPCAKE - Comprehensive platform for scientific metadata management with user management, lab groups, and SDRF-compliant data processing"
+authors = ["Toan Phung <toan.phung@proteo.info>"]
+readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/your-org/cupcake_vanilla"
+repository = "https://github.com/your-org/cupcake_vanilla"
+keywords = ["metadata", "sdrf", "proteomics", "django", "scientific-data", "lab-management"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 5.2",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+packages = [
+    {include = "ccc"},
+    {include = "ccv"}
+]
+
+# Include only essential files
+include = [
+    # Django templates (if any exist)
+    "ccc/templates/**/*",
+    "ccc/static/**/*",
+    "ccv/templates/**/*",
+    "ccv/static/**/*",
+
+    # Essential schema files only
+    "media/schemas/*.yml",
+    "media/schemas/*.yaml",
+
+    # Documentation
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+]
+
+# Exclude non-essential files
+exclude = [
+    # Development and testing
+    "**/__pycache__/",
+    "**/*.py[cod]",
+    "**/.*",
+    "**/.pytest_cache/",
+    "**/htmlcov/",
+    "**/.coverage*",
+    "**/tests/fixtures/*.large.*",
+    "**/tests/fixtures/big_*",
+
+    # Development tools
+    ".pre-commit-config.yaml",
+    ".flake8",
+    "pytest.ini",
+    "tox.ini",
+    ".editorconfig",
+
+    # Environment files
+    "**/.env*",
+    "**/.venv/",
+    "**/venv/",
+
+    # IDE files
+    "**/.idea/",
+    "**/.vscode/",
+    "**/*.swp",
+    "**/*.swo",
+
+    # Version control
+    "**/.git*",
+
+    # CI/CD
+    ".github/",
+
+    # Docker and deployment
+    "Dockerfile*",
+    "docker-compose*.yml",
+    "dockerfiles/",
+    "nginx-conf/",
+    "generate_ssl_certs.sh",
+
+    # Database and media files
+    "**/*.db",
+    "**/*.sqlite3",
+    "staticfiles/",
+    "media/uploads/",
+    "media/temp/",
+    "media/logos/",
+    "**/media/schemas/*.pkl",
+    "**/media/schemas/*_backup.*",
+    "**/media/schemas/*_temp.*",
+    "**/media/schemas/*_test.*",
+
+    # Project structure files
+    "cupcake_vanilla/",
+    "manage.py",
+    "setup.cfg",
+
+    # Logs and temporary files
+    "**/*.log",
+    "**/logs/",
+    "**/*.tmp",
+    "**/*.temp",
+    "**/temp/",
+    "**/tmp/",
+
+    # OS files
+    "**/.DS_Store",
+    "**/Thumbs.db",
+
+    # Development documentation
+    "INSTALL.md"
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+django = "^5.2.5"
+djangorestframework = "^3.14.0"
+django-filter = "^23.5"
+redis = "^5.0.1"
+django-redis = "^5.4.0"
+django-simple-history = "^3.4.0"
+psycopg2-binary = "^2.9.9"
+openpyxl = "^3.1.2"
+pandas = "^2.1.4"
+sdrf-pipelines = {git = "https://github.com/bigbio/sdrf-pipelines.git", rev = "d5abc187fa9e5cde3f3e839f6ce43f06a89ea8ba"}
+drf-chunked-upload = "^0.6.0"
+pronto = "^2.5.7"
+requests = "^2.31.0"
+djangorestframework-simplejwt = "^5.5.1"
+requests-oauthlib = "^2.0.0"
+python-social-auth = {extras = ["django"], version = "^0.3.6"}
+whitenoise = "^6.7.0"
+django-cors-headers = "^4.3.1"
+gunicorn = "23.0.0"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+tqdm = "^4.67.1"
+channels = "^4.0.0"
+channels-redis = "^4.2.0"
+websockets = "^12.0"
+cryptography = "^41.0.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.12.0"
+isort = "^5.13.0"
+flake8 = "^7.0.0"
+pytest = "^7.4.0"
+pytest-django = "^4.7.0"
+pytest-cov = "^4.1.0"
+pre-commit = "^3.6.0"
+django-stubs = "^4.2.0"
+types-requests = "^2.31.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | migrations
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+known_django = ["django"]
+known_first_party = ["ccc", "ccv"]
+sections = ["FUTURE", "STDLIB", "DJANGO", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503", "E501", "E402"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "docs/source/conf.py",
+    "old",
+    "build",
+    "dist",
+    "migrations",
+    ".venv"
+]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+plugins = ["mypy_django_plugin.main"]
+exclude = [
+    "migrations/",
+    "venv/",
+    ".venv/",
+]
+
+[tool.django-stubs]
+django_settings_module = "cupcake_vanilla.settings"
+ignore_missing_model_attributes = true
+
+# Additional mypy configuration for Django
+[[tool.mypy.overrides]]
+module = [
+    "rest_framework.*",
+    "rest_framework_simplejwt.*",
+    "simple_history.*",
+    "drf_chunked_upload.*",
+    "pronto.*",
+    "pandas.*",
+    "openpyxl.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "cupcake_vanilla.settings"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+addopts = "--cov=ccc --cov=ccv --cov-report=html --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["ccc", "ccv"]
+omit = ["*/migrations/*", "*/tests/*", "*/venv/*", "manage.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:"
+]
