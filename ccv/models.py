@@ -2277,11 +2277,11 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
     def can_view(self, user):
         """Check if user can view this template."""
         # Public templates are viewable by everyone
-        if self.is_public:
+        if self.visibility == "public":
             return True
 
         # Creator can always view their own templates
-        if self.user == user:
+        if self.owner == user:
             return True
 
         # Staff users can view all templates

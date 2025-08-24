@@ -946,7 +946,7 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             # Create metadata table from template
             metadata_table = template.create_table_from_template(
                 table_name=name,
-                owner=request.user,
+                creator=request.user,
                 sample_count=sample_count,
                 description=description,
                 lab_group=lab_group,

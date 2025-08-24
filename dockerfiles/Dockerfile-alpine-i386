@@ -1,0 +1,92 @@
+# Alpine Linux i386 (32-bit) Dockerfile for CUPCAKE Vanilla
+FROM --platform=linux/386 python:3.11-alpine
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV POETRY_VENV_IN_PROJECT=1
+ENV POETRY_NO_INTERACTION=1
+ENV POETRY_CACHE_DIR=/tmp/poetry_cache
+
+# Install system dependencies required for Python packages and PostgreSQL
+RUN apk update && apk add --no-cache \
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers \
+    postgresql-dev \
+    postgresql-client \
+    libffi-dev \
+    openssl-dev \
+    curl \
+    wget \
+    git \
+    jpeg-dev \
+    zlib-dev \
+    freetype-dev \
+    lcms2-dev \
+    openjpeg-dev \
+    tiff-dev \
+    tk-dev \
+    tcl-dev \
+    libxml2-dev \
+    libxslt-dev \
+    libpq \
+    tzdata \
+    bash \
+    ca-certificates
+
+# Create app directory
+WORKDIR /app
+
+# Create required directories
+RUN mkdir -p /app/media/temp /app/staticfiles
+
+# Install Poetry with specific version for stability
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir poetry==1.6.1
+RUN poetry config virtualenvs.create false
+RUN poetry config cache-dir /tmp/poetry_cache
+
+# Copy dependency files first for better caching
+COPY pyproject.toml poetry.lock* /app/
+
+# Install Python dependencies
+RUN poetry install --only=main --no-dev --no-root && \
+    rm -rf /tmp/poetry_cache
+
+# Copy application code
+COPY . /app/
+
+# Install the application itself
+RUN poetry install --only=main --no-dev
+
+# Create a non-root user for security
+RUN adduser -D -s /bin/sh appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Collect static files
+RUN python manage.py collectstatic --noinput --clear
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health/ || exit 1
+
+# Expose port
+EXPOSE 8000
+
+# Use gunicorn with uvicorn workers for ASGI support (WebSocket)
+CMD ["gunicorn", \
+     "--workers=2", \
+     "--worker-class=uvicorn.workers.UvicornWorker", \
+     "--bind=0.0.0.0:8000", \
+     "--timeout=300", \
+     "--keep-alive=2", \
+     "--max-requests=1000", \
+     "--max-requests-jitter=100", \
+     "--preload", \
+     "--log-level=info", \
+     "--access-logfile=-", \
+     "--error-logfile=-", \
+     "cupcake_vanilla.asgi:application"]
