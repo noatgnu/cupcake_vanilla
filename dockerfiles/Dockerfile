@@ -14,22 +14,22 @@ ARG TARGETARCH
 ENV SUPERCRONIC_VERSION=v0.2.33
 
 # Set architecture-specific variables
-RUN case "${TARGETARCH}" in \
-    "amd64") \
-        export SUPERCRONIC_ARCH="linux-amd64" && \
-        export SUPERCRONIC_SHA1SUM="71b0d58cc53f6bd72cf2f293e09e294b79c666d8" ;; \
-    "arm64") \
-        export SUPERCRONIC_ARCH="linux-arm64" && \
-        export SUPERCRONIC_SHA1SUM="73ddda42a9ad1adf21c0a6e52b8a48dbc24b1ea8" ;; \
-    *) \
-        echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
-    esac && \
-    export SUPERCRONIC_URL="https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-${SUPERCRONIC_ARCH}" && \
-    export SUPERCRONIC="supercronic-${SUPERCRONIC_ARCH}" && \
-    curl -fsSLO "$SUPERCRONIC_URL" && \
-    echo "${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}" | sha1sum -c - && \
-    chmod +x "$SUPERCRONIC" && \
-    mv "$SUPERCRONIC" "/usr/local/bin/supercronic"
+#RUN case "${TARGETARCH}" in \
+#    "amd64") \
+#        export SUPERCRONIC_ARCH="linux-amd64" && \
+#        export SUPERCRONIC_SHA1SUM="71b0d58cc53f6bd72cf2f293e09e294b79c666d8" ;; \
+#    "arm64") \
+#        export SUPERCRONIC_ARCH="linux-arm64" && \
+#        export SUPERCRONIC_SHA1SUM="73ddda42a9ad1adf21c0a6e52b8a48dbc24b1ea8" ;; \
+#    *) \
+#        echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+#    esac && \
+#    export SUPERCRONIC_URL="https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-${SUPERCRONIC_ARCH}" && \
+#    export SUPERCRONIC="supercronic-${SUPERCRONIC_ARCH}" && \
+#    curl -fsSLO "$SUPERCRONIC_URL" && \
+#    echo "${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}" | sha1sum -c - && \
+#    chmod +x "$SUPERCRONIC" && \
+#    mv "$SUPERCRONIC" "/usr/local/bin/supercronic"
 
 WORKDIR /app
 RUN mkdir "/app/media"
