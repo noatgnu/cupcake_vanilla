@@ -15,6 +15,15 @@ RUN mkdir "/app/media"
 RUN mkdir "/app/media/temp"
 RUN mkdir "/app/staticfiles"
 
+# Install Rust toolchain for i386 (required for some Python packages)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+# Set Rust target for i386
+RUN rustup target add i686-unknown-linux-gnu
+ENV CARGO_BUILD_TARGET=i686-unknown-linux-gnu
+ENV CC=gcc
+ENV CXX=g++
+
 # Install Poetry
 RUN pip install --upgrade pip && pip install poetry
 RUN poetry config virtualenvs.create false
@@ -22,8 +31,11 @@ RUN poetry config virtualenvs.create false
 # Copy application code
 COPY . /app/
 
-# Install dependencies and project
+# Install dependencies and project with Rust support
 RUN poetry lock
+# Set additional environment variables for cryptography compilation
+ENV CRYPTOGRAPHY_DONT_BUILD_RUST=0
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 RUN poetry install --only=main
 
 # Collect static files
