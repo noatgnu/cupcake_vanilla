@@ -1,6 +1,6 @@
 # Debian Buster i386 (32-bit) Dockerfile for CUPCAKE Vanilla
 # Using Debian Buster as it's the last Debian with i386 support
-FROM --platform=linux/386 python:3.11-slim-bullseye
+FROM --platform=linux/386 python:3.11-bullseye
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -9,35 +9,6 @@ ENV POETRY_VENV_IN_PROJECT=1
 ENV POETRY_NO_INTERACTION=1
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build dependencies
-    gcc \
-    g++ \
-    libc6-dev \
-    # Other dependencies
-    libffi-dev \
-    libssl-dev \
-    curl \
-    wget \
-    git \
-    # For image processing (Pillow)
-    libjpeg-dev \
-    zlib1g-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
-    libopenjp2-7-dev \
-    libtiff5-dev \
-    tk-dev \
-    # For lxml
-    libxml2-dev \
-    libxslt1-dev \
-    # System utilities
-    ca-certificates \
-    tzdata \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
 
 RUN curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg > /dev/null
 RUN sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt bullseye-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
