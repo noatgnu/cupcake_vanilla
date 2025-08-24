@@ -5,8 +5,8 @@ description = "CUPCAKE - Comprehensive platform for scientific metadata manageme
 authors = ["Toan Phung <toan.phung@proteo.info>"]
 readme = "README.md"
 license = "MIT"
-homepage = "https://github.com/your-org/cupcake_vanilla"
-repository = "https://github.com/your-org/cupcake_vanilla"
+homepage = "https://github.com/noatgnu/cupcake_vanilla"
+repository = "https://github.com/noatgnu/cupcake_vanilla"
 keywords = ["metadata", "sdrf", "proteomics", "django", "scientific-data", "lab-management"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -149,7 +149,7 @@ tqdm = "^4.67.1"
 channels = "^4.0.0"
 channels-redis = "^4.2.0"
 websockets = "^12.0"
-cryptography = "^41.0.0"
+cryptography = "^44.0.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.12.0"
