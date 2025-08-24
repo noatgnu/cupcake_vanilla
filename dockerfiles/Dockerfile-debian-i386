@@ -1,5 +1,6 @@
-# Alpine Linux i386 (32-bit) Dockerfile for CUPCAKE Vanilla
-FROM --platform=linux/386 python:3.11-alpine
+# Debian Buster i386 (32-bit) Dockerfile for CUPCAKE Vanilla
+# Using Debian Buster as it's the last Debian with i386 support
+FROM --platform=linux/386 python:3.11-slim-buster
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -7,34 +8,39 @@ ENV PYTHONUNBUFFERED=1
 ENV POETRY_VENV_IN_PROJECT=1
 ENV POETRY_NO_INTERACTION=1
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies required for Python packages and PostgreSQL
-RUN apk update && apk add --no-cache \
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build dependencies
     gcc \
     g++ \
-    musl-dev \
-    linux-headers \
-    postgresql-dev \
+    libc6-dev \
+    # PostgreSQL dependencies
+    libpq-dev \
     postgresql-client \
+    # Other dependencies
     libffi-dev \
-    openssl-dev \
+    libssl-dev \
     curl \
     wget \
     git \
-    jpeg-dev \
-    zlib-dev \
-    freetype-dev \
-    lcms2-dev \
-    openjpeg-dev \
-    tiff-dev \
+    # For image processing (Pillow)
+    libjpeg-dev \
+    zlib1g-dev \
+    libfreetype6-dev \
+    liblcms2-dev \
+    libopenjp2-7-dev \
+    libtiff5-dev \
     tk-dev \
-    tcl-dev \
+    # For lxml
     libxml2-dev \
-    libxslt-dev \
-    libpq \
+    libxslt1-dev \
+    # System utilities
+    ca-certificates \
     tzdata \
-    bash \
-    ca-certificates
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Create app directory
 WORKDIR /app
@@ -42,7 +48,7 @@ WORKDIR /app
 # Create required directories
 RUN mkdir -p /app/media/temp /app/staticfiles
 
-# Install Poetry with specific version for stability
+# Install Poetry
 RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir poetry==1.6.1
 RUN poetry config virtualenvs.create false
@@ -51,7 +57,7 @@ RUN poetry config cache-dir /tmp/poetry_cache
 # Copy dependency files first for better caching
 COPY pyproject.toml poetry.lock* /app/
 
-# Install Python dependencies
+# Install Python dependencies (Debian has better package support for i386)
 RUN poetry install --only=main --no-dev --no-root && \
     rm -rf /tmp/poetry_cache
 
@@ -62,7 +68,7 @@ COPY . /app/
 RUN poetry install --only=main --no-dev
 
 # Create a non-root user for security
-RUN adduser -D -s /bin/sh appuser && \
+RUN useradd --create-home --shell /bin/bash appuser && \
     chown -R appuser:appuser /app
 USER appuser
 

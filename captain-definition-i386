@@ -1,4 +1,4 @@
 {
     "schemaVersion": 2,
-    "dockerfilePath": "./dockerfiles/Dockerfile-alpine-i386"
+    "dockerfilePath": "./dockerfiles/Dockerfile-debian-i386"
 }
