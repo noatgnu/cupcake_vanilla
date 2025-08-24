@@ -1,6 +1,6 @@
 # Debian Buster i386 (32-bit) Dockerfile for CUPCAKE Vanilla
 # Using Debian Buster as it's the last Debian with i386 support
-FROM --platform=linux/386 python:3.11-slim-buster
+FROM --platform=linux/386 python:3.11-slim-bullseye
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -16,9 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libc6-dev \
-    # PostgreSQL dependencies
-    libpq-dev \
-    postgresql-client \
     # Other dependencies
     libffi-dev \
     libssl-dev \
@@ -41,6 +38,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
+
+RUN curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg > /dev/null
+RUN sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt bullseye-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7FCC7D46ACCC4CF8
+RUN apt-get update
+RUN apt-get -y install postgresql-client-15
 
 # Create app directory
 WORKDIR /app
