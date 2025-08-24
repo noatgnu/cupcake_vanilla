@@ -10,38 +10,24 @@ ENV POETRY_NO_INTERACTION=1
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Create app directory
 WORKDIR /app
-
-# Create required directories
-RUN mkdir -p /app/media/temp /app/staticfiles
+RUN mkdir "/app/media"
+RUN mkdir "/app/media/temp"
+RUN mkdir "/app/staticfiles"
 
 # Install Poetry
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir poetry==1.6.1
+RUN pip install --upgrade pip && pip install poetry
 RUN poetry config virtualenvs.create false
-RUN poetry config cache-dir /tmp/poetry_cache
-
-# Copy dependency files first for better caching
-COPY pyproject.toml poetry.lock* /app/
-
-# Install Python dependencies (Debian has better package support for i386)
-RUN poetry install --only=main --no-dev --no-root && \
-    rm -rf /tmp/poetry_cache
 
 # Copy application code
 COPY . /app/
 
-# Install the application itself
-RUN poetry install --only=main --no-dev
-
-# Create a non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser && \
-    chown -R appuser:appuser /app
-USER appuser
+# Install dependencies and project
+RUN poetry lock
+RUN poetry install --only=main
 
 # Collect static files
-RUN python manage.py collectstatic --noinput --clear
+RUN python manage.py collectstatic --noinput
 
 # Expose port
 EXPOSE 8000
