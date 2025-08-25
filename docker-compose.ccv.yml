@@ -67,27 +67,6 @@ services:
       - CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@example.com}
       - DOMAIN=ccv.ome.quest
 
-  certbot-test:
-    build:
-      context: .
-      dockerfile: ./dockerfiles/Dockerfile-certbot-test
-    network_mode: host
-    profiles:
-      - tools
-    environment:
-      - DOMAIN=ccv.ome.quest
-
-  certbot-test-ports:
-    build:
-      context: .
-      dockerfile: ./dockerfiles/Dockerfile-certbot-test
-    ports:
-      - "80:80"
-    profiles:
-      - tools
-    environment:
-      - DOMAIN=ccv.ome.quest
-
   db:
     image: postgres:15
     container_name: cupcake-vanilla-db
@@ -108,6 +87,16 @@ services:
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     networks:
       - cupcake-vanilla-net
+
+  nginx-test:
+    image: nginx:latest
+    container_name: cupcake-vanilla-nginx-test
+    restart: always
+    ports:
+        - "80:80"
+        - "443:443"
+    networks:
+        - cupcake-vanilla-net
 
 volumes:
   postgres-data:
