@@ -1,7 +1,7 @@
 FROM nginx:alpine
 
-# Install certbot
-RUN apk add --no-cache certbot
+# Install certbot and curl for testing
+RUN apk add --no-cache certbot curl
 
 # Create directories for webroot and certificates
 RUN mkdir -p /var/www/certbot /etc/letsencrypt
@@ -10,31 +10,46 @@ RUN mkdir -p /var/www/certbot /etc/letsencrypt
 RUN echo 'server { \
     listen 80; \
     server_name _; \
+    access_log /var/log/nginx/access.log; \
+    error_log /var/log/nginx/error.log; \
     location /.well-known/acme-challenge/ { \
         root /var/www/certbot; \
         try_files $uri =404; \
     } \
     location / { \
-        return 200 "ACME challenge server running"; \
+        return 200 "ACME challenge server running on $(hostname)"; \
         add_header Content-Type text/plain; \
     } \
 }' > /etc/nginx/conf.d/default.conf
 
-# Create entrypoint script with proper line breaks
+# Create entrypoint script with better debugging
 COPY <<EOF /entrypoint.sh
 #!/bin/sh
 set -e
 
-echo "Starting nginx for ACME challenges..."
+echo "=== Starting ACME Challenge Server ==="
+echo "Domain: \$DOMAIN"
+echo "Email: \$CERTBOT_EMAIL"
+echo "Container IP: \$(hostname -i)"
+
+# Start nginx
+echo "Starting nginx..."
 nginx -g "daemon off;" &
 NGINX_PID=\$!
 
+# Wait for nginx to start and test it
 echo "Waiting for nginx to start..."
-sleep 3
+sleep 5
 
-echo "Running certbot for domain: \$DOMAIN"
-echo "Using email: \$CERTBOT_EMAIL"
+# Test nginx locally
+echo "Testing nginx locally..."
+curl -f http://localhost/ || echo "Local test failed"
 
+# Create a test file in the webroot
+echo "test-file-content" > /var/www/certbot/test.txt
+echo "Test file created at: http://\$DOMAIN/.well-known/acme-challenge/test.txt"
+
+echo "Running certbot..."
 certbot certonly \\
     --webroot \\
     --webroot-path=/var/www/certbot \\
@@ -43,14 +58,29 @@ certbot certonly \\
     --agree-tos \\
     --no-eff-email \\
     --force-renewal \\
-    --domains "\$DOMAIN"
+    --domains "\$DOMAIN" \\
+    --verbose
 
-echo "Certificate generation completed!"
+CERTBOT_EXIT_CODE=\$?
+
+echo "Certbot exit code: \$CERTBOT_EXIT_CODE"
+
+if [ \$CERTBOT_EXIT_CODE -eq 0 ]; then
+    echo "=== Certificate generation completed successfully! ==="
+    ls -la /etc/letsencrypt/live/\$DOMAIN/ || echo "Certificate directory not found"
+else
+    echo "=== Certificate generation failed ==="
+    echo "Checking nginx logs:"
+    cat /var/log/nginx/access.log
+    cat /var/log/nginx/error.log
+fi
+
 echo "Stopping nginx..."
 kill \$NGINX_PID
 wait \$NGINX_PID 2>/dev/null || true
 
 echo "Done!"
+exit \$CERTBOT_EXIT_CODE
 EOF
 
 RUN chmod +x /entrypoint.sh
