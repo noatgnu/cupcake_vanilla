@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   app:
     build:
@@ -48,15 +46,12 @@ services:
   certbot:
     image: certbot/certbot:latest
     container_name: cupcake-vanilla-certbot
-    # First run (obtain cert): docker compose -f docker-compose.ccv.yml run --rm certbot certonly --webroot -w /var/www/certbot -d ccv.ome.quest --email you@example.com --agree-tos --no-eff-email
-    # Renewal (cron/host): docker compose -f docker-compose.ccv.yml run --rm certbot renew --webroot -w /var/www/certbot && docker compose -f docker-compose.ccv.yml exec nginx nginx -s reload
-    entrypoint: /bin/sh
-    command: -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --agree-tos; sleep 12h & wait $!; done"
     volumes:
       - letsencrypt:/etc/letsencrypt
       - certbot-www:/var/www/certbot
     networks:
       - cupcake-vanilla-net
+    command: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --agree-tos; sleep 12h & wait $$!; done"
 
   db:
     image: postgres:15
