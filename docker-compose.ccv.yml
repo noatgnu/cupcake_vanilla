@@ -67,6 +67,16 @@ services:
       - CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@example.com}
       - DOMAIN=ccv.ome.quest
 
+  certbot-test:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile-certbot-test
+    network_mode: host
+    profiles:
+      - tools
+    environment:
+      - DOMAIN=ccv.ome.quest
+
   db:
     image: postgres:15
     container_name: cupcake-vanilla-db
