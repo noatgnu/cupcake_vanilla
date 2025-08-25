@@ -60,8 +60,7 @@ services:
     volumes:
       - letsencrypt:/etc/letsencrypt
       - certbot-www:/var/www/certbot
-    ports:
-      - "80:80"
+    network_mode: host
     profiles:
       - tools
     environment:
