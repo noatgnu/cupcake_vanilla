@@ -68,20 +68,12 @@ services:
       - CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@example.com}
     command: >
       sh -c "
-        # Start nginx in background to serve ACME challenges
-        nginx -g 'daemon off;' &
-        NGINX_PID=$$!
+        echo 'Starting certbot in standalone mode...'
 
-        # Wait for nginx to start
-        sleep 5
-
-        # Get the certificate
-        certbot certonly --webroot --webroot-path=/var/www/html \
+        # Use certbot's built-in standalone web server for ACME challenges
+        certbot certonly --standalone \
           --email $$CERTBOT_EMAIL --agree-tos --no-eff-email \
           --force-renewal -d ccv.ome.quest
-
-        # Stop nginx
-        kill $$NGINX_PID
 
         echo 'Certificate generation complete!'
       "
