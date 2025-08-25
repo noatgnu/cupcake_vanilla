@@ -69,11 +69,13 @@ services:
     command: >
       sh -c "
         echo 'Starting certbot in standalone mode...'
+        echo 'Using email: $${CERTBOT_EMAIL}'
+        echo 'Domain: ccv.ome.quest'
 
         # Use certbot's built-in standalone web server for ACME challenges
-        certbot certonly --standalone \
-          --email $$CERTBOT_EMAIL --agree-tos --no-eff-email \
-          --force-renewal -d ccv.ome.quest
+        certbot certonly --standalone --non-interactive \
+          --email $${CERTBOT_EMAIL} --agree-tos --no-eff-email \
+          --force-renewal --domains ccv.ome.quest
 
         echo 'Certificate generation complete!'
       "
