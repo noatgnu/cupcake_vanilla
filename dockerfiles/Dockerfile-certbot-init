@@ -6,7 +6,7 @@ RUN apk add --no-cache certbot curl
 # Create directories for webroot and certificates
 RUN mkdir -p /var/www/certbot /etc/letsencrypt
 
-# Create a simple nginx configuration for ACME challenges
+# Create a simple nginx configuration for ACME challenges (fixed variable syntax)
 RUN echo 'server { \
     listen 80; \
     server_name _; \
@@ -17,7 +17,7 @@ RUN echo 'server { \
         try_files $uri =404; \
     } \
     location / { \
-        return 200 "ACME challenge server running on $(hostname)"; \
+        return 200 "ACME challenge server running"; \
         add_header Content-Type text/plain; \
     } \
 }' > /etc/nginx/conf.d/default.conf
@@ -31,6 +31,10 @@ echo "=== Starting ACME Challenge Server ==="
 echo "Domain: \$DOMAIN"
 echo "Email: \$CERTBOT_EMAIL"
 echo "Container IP: \$(hostname -i)"
+
+# Test nginx configuration before starting
+echo "Testing nginx configuration..."
+nginx -t
 
 # Start nginx
 echo "Starting nginx..."
@@ -48,6 +52,10 @@ curl -f http://localhost/ || echo "Local test failed"
 # Create a test file in the webroot
 echo "test-file-content" > /var/www/certbot/test.txt
 echo "Test file created at: http://\$DOMAIN/.well-known/acme-challenge/test.txt"
+
+# Test the challenge path
+echo "Testing challenge path locally..."
+curl -f http://localhost/.well-known/acme-challenge/test.txt || echo "Challenge path test failed"
 
 echo "Running certbot..."
 certbot certonly \\
@@ -71,8 +79,10 @@ if [ \$CERTBOT_EXIT_CODE -eq 0 ]; then
 else
     echo "=== Certificate generation failed ==="
     echo "Checking nginx logs:"
-    cat /var/log/nginx/access.log
-    cat /var/log/nginx/error.log
+    echo "=== Access Log ==="
+    cat /var/log/nginx/access.log 2>/dev/null || echo "No access log"
+    echo "=== Error Log ==="
+    cat /var/log/nginx/error.log 2>/dev/null || echo "No error log"
 fi
 
 echo "Stopping nginx..."
