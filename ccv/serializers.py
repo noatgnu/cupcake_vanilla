@@ -32,6 +32,7 @@ class MetadataTableSerializer(serializers.ModelSerializer):
     """Serializer for MetadataTable model."""
 
     columns = serializers.SerializerMethodField()
+    sample_pools = serializers.SerializerMethodField()
     column_count = serializers.IntegerField(source="get_column_count", read_only=True)
     sample_range = serializers.CharField(source="get_sample_range", read_only=True)
     owner_username = serializers.CharField(source="owner.username", read_only=True)
@@ -55,6 +56,7 @@ class MetadataTableSerializer(serializers.ModelSerializer):
             "content_type",
             "object_id",
             "columns",
+            "sample_pools",
             "column_count",
             "sample_range",
             "can_edit",
@@ -67,6 +69,11 @@ class MetadataTableSerializer(serializers.ModelSerializer):
         """Get the columns for this metadata table."""
         columns = obj.columns.all().order_by("column_position")
         return MetadataColumnSerializer(columns, many=True, context=self.context).data
+
+    def get_sample_pools(self, obj):
+        """Get the sample pools for this metadata table."""
+        sample_pools = obj.sample_pools.all().order_by("created_at")
+        return SamplePoolSerializer(sample_pools, many=True, context=self.context).data
 
     def get_can_edit(self, obj):
         """Check if current user can edit this table."""
@@ -120,6 +127,7 @@ class SamplePoolSerializer(serializers.ModelSerializer):
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     total_samples = serializers.IntegerField(source="get_total_samples", read_only=True)
     all_sample_indices = serializers.ListField(source="get_all_sample_indices", read_only=True)
+    metadata_columns = serializers.SerializerMethodField()
 
     class Meta:
         model = SamplePool
@@ -135,10 +143,16 @@ class SamplePoolSerializer(serializers.ModelSerializer):
             "metadata_table_name",
             "total_samples",
             "all_sample_indices",
+            "metadata_columns",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+    def get_metadata_columns(self, obj):
+        """Get the metadata columns for this sample pool."""
+        columns = obj.metadata_columns.all().order_by("column_position")
+        return MetadataColumnSerializer(columns, many=True, context=self.context).data
 
     def validate_pooled_only_samples(self, value):
         """Validate that pooled_only_samples is a list of integers."""

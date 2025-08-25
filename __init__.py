@@ -1,8 +1,7 @@
 """
-CUPCAKE Metadata - Comprehensive scientific metadata management platform.
+CUPCAKE Core - Comprehensive scientific metadata management platform.
 
-CUPCAKE (Comprehensive User-friendly Platform for Collaborative and Knowledge-based
-Experimental data management) combines user management, lab group collaboration, and
+CUPCAKE combines user management, lab group collaboration, and
 scientific metadata management in a unified Django package.
 
 This package includes:
@@ -17,10 +16,10 @@ __version__ = "1.0.0"
 __author__ = "Toan Phung"
 __email__ = "toan.phung@proteo.info"
 __description__ = "CUPCAKE - Comprehensive platform for scientific metadata management"
-__url__ = "https://github.com/your-org/cupcake-metadata"
+__url__ = "https://github.com/noatgnu/cupcake-vanilla"
 
 # Package information
-__title__ = "cupcake-metadata"
+__title__ = "cupcake-core"
 __license__ = "MIT"
 __copyright__ = "Copyright 2024 Toan Phung"
 

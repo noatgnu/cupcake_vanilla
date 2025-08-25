@@ -774,6 +774,38 @@ class SDRFImportAPITest(APITestCase):
             first_pool = pools.first()
             self.assertTrue(first_pool.sdrf_value.startswith("SN="))
 
+    def test_metadata_table_serializer_includes_sample_pools(self):
+        """Test that MetadataTableSerializer includes sample pools in output."""
+        from ccv.serializers import MetadataTableSerializer
+
+        # Create a sample pool for the metadata table
+        SamplePool.objects.create(
+            metadata_table=self.metadata_table,
+            pool_name="Test Pool",
+            pooled_only_samples=[1, 2],
+            pooled_and_independent_samples=[],
+            is_reference=True,
+            created_by=self.user,
+        )
+
+        # Update sample count to validate pool
+        self.metadata_table.sample_count = 3
+        self.metadata_table.save()
+
+        # Serialize the metadata table
+        serializer = MetadataTableSerializer(self.metadata_table)
+
+        # Check that sample_pools field is included
+        self.assertIn("sample_pools", serializer.data)
+        self.assertEqual(len(serializer.data["sample_pools"]), 1)
+
+        # Check sample pool data
+        pool_data = serializer.data["sample_pools"][0]
+        self.assertEqual(pool_data["pool_name"], "Test Pool")
+        self.assertEqual(pool_data["pooled_only_samples"], [1, 2])
+        self.assertTrue(pool_data["is_reference"])
+        self.assertEqual(pool_data["metadata_table"], self.metadata_table.id)
+
     def test_import_sdrf_permission_denied(self):
         """Test SDRF import with insufficient permissions."""
         import io

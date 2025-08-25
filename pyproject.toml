@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "cupcake-vanilla"
+name = "cupcake-core"
 version = "1.0.0"
 description = "CUPCAKE - Comprehensive platform for scientific metadata management with user management, lab groups, and SDRF-compliant data processing"
 authors = ["Toan Phung <toan.phung@proteo.info>"]
