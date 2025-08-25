@@ -4,16 +4,16 @@ FROM nginx:alpine
 RUN apk add --no-cache certbot curl
 
 # Create directories for webroot and certificates
-RUN mkdir -p /var/www/certbot /etc/letsencrypt
+RUN mkdir -p /var/www/certbot/.well-known/acme-challenge /etc/letsencrypt
 
-# Create a simple nginx configuration for ACME challenges (fixed variable syntax)
+# Create a simple nginx configuration for ACME challenges (fixed webroot path)
 RUN echo 'server { \
     listen 80; \
     server_name _; \
     access_log /var/log/nginx/access.log; \
     error_log /var/log/nginx/error.log; \
+    root /var/www/certbot; \
     location /.well-known/acme-challenge/ { \
-        root /var/www/certbot; \
         try_files $uri =404; \
     } \
     location / { \
@@ -49,13 +49,22 @@ sleep 5
 echo "Testing nginx locally..."
 curl -f http://localhost/ || echo "Local test failed"
 
+# Create the challenge directory structure
+mkdir -p /var/www/certbot/.well-known/acme-challenge
+
 # Create a test file in the webroot
-echo "test-file-content" > /var/www/certbot/test.txt
+echo "test-file-content" > /var/www/certbot/.well-known/acme-challenge/test.txt
 echo "Test file created at: http://\$DOMAIN/.well-known/acme-challenge/test.txt"
 
 # Test the challenge path
 echo "Testing challenge path locally..."
 curl -f http://localhost/.well-known/acme-challenge/test.txt || echo "Challenge path test failed"
+
+# List the webroot contents for debugging
+echo "Webroot contents:"
+ls -la /var/www/certbot/
+echo "Challenge directory contents:"
+ls -la /var/www/certbot/.well-known/acme-challenge/ || echo "Challenge directory not found"
 
 echo "Running certbot..."
 certbot certonly \\
