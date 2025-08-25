@@ -41,7 +41,7 @@ def sort_metadata(
     id_map = {}
 
     for i, metadata in enumerate(sorted_metadata):
-        column_name = f"{metadata.name}[{metadata.type}]"
+        column_name = metadata.name
         headers.append(column_name)
 
         id_map[metadata.id] = {
@@ -84,9 +84,11 @@ def sort_metadata(
             if not value:
                 value = metadata.value or ""
 
-            # Handle not_applicable flag
-            if metadata.not_applicable:
+            # Handle empty values with not_applicable flag
+            if not value and metadata.not_applicable:
                 value = "not applicable"
+            elif not value:
+                value = "not available"
 
             row.append(value)
         result.append(row)
@@ -115,7 +117,7 @@ def sort_pool_metadata(
     id_map = {}
 
     for i, metadata in enumerate(sorted_metadata):
-        column_name = f"{metadata.name}[{metadata.type}]"
+        column_name = metadata.name
         headers.append(column_name)
 
         id_map[metadata.id] = {
@@ -148,6 +150,7 @@ def sort_pool_metadata(
 def convert_sdrf_to_metadata(name: str, value: str) -> str:
     """
     Convert SDRF values to standardized metadata format.
+    Now handles favorite option format: [123] Human[*] -> Human
 
     Args:
         name: Metadata column name
@@ -156,6 +159,24 @@ def convert_sdrf_to_metadata(name: str, value: str) -> str:
     Returns:
         Converted value
     """
+    value = value.strip()
+
+    # Handle favorite option format: [123] display_value[*] -> display_value
+    if value.startswith("[") and "] " in value:
+        # Extract the display value between "] " and the final "[*]" or "[**]" or "[***]"
+        parts = value.split("] ", 1)
+        if len(parts) == 2:
+            display_part = parts[1]
+            # Remove source markers [*], [**], [***] at the end
+            if display_part.endswith("[*]"):
+                value = display_part[:-3]
+            elif display_part.endswith("[**]"):
+                value = display_part[:-4]
+            elif display_part.endswith("[***]"):
+                value = display_part[:-5]
+            else:
+                value = display_part
+
     # Handle specific conversions based on name
     name_lower = name.lower()
 
@@ -583,13 +604,13 @@ def detect_ontology_type(column_name: str, column_type: str) -> Optional[str]:
     if any(pattern in name_lower for pattern in ms_patterns):
         return "ms_terms"
 
-    # Unimod detection
+    # Unimod detection - be more specific to avoid false matches
     unimod_patterns = [
-        "modification",
+        "modification parameters",
         "ptm",
         "post-translational modification",
         "chemical modification",
-        "mod",
+        "protein modification",
         "unimod",
     ]
     if any(pattern in name_lower for pattern in unimod_patterns):

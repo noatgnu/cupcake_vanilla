@@ -40,13 +40,14 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "simple_history",
     "drf_chunked_upload",
     "social_django",
-    "channels",  # Django Channels for WebSocket support
-    "ccc.apps.CccConfig",  # CUPCAKE Core - reusable components
-    "ccv.apps.CcvConfig",  # CUPCAKE Vanilla - metadata management
+    "channels",
+    "ccc.apps.CccConfig",
+    "ccv.apps.CcvConfig",
 ]
 
 MIDDLEWARE = [

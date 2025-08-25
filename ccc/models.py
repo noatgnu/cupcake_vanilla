@@ -7,6 +7,7 @@ and site administration functionality that can be reused across CUPCAKE applicat
 
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.contrib.contenttypes.fields import GenericRelation
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
@@ -15,7 +16,29 @@ from simple_history.models import HistoricalRecords
 
 
 class ResourceType(models.TextChoices):
-    """Enumeration of different resource types in CUPCAKE applications."""
+    """
+    Enumeration of different resource types in CUPCAKE applications.
+
+    This defines the standardized types of resources that can be managed
+    within the CUPCAKE ecosystem, each with specific access control patterns.
+
+    Examples:
+        >>> # Create a metadata table resource
+        >>> resource_type = ResourceType.METADATA_TABLE
+        >>> print(resource_type)  # "metadata_table"
+        >>> print(resource_type.label)  # "Metadata Table"
+
+        >>> # Check if a type is valid
+        >>> ResourceType.METADATA_TABLE in ResourceType.values
+        True
+
+        >>> # Get all available types
+        >>> for choice in ResourceType.choices:
+        ...     print(f"{choice[0]}: {choice[1]}")
+        metadata_table: Metadata Table
+        metadata_table_template: Metadata Table Template
+        ...
+    """
 
     METADATA_TABLE = "metadata_table", "Metadata Table"
     METADATA_TABLE_TEMPLATE = "metadata_table_template", "Metadata Table Template"
@@ -26,7 +49,27 @@ class ResourceType(models.TextChoices):
 
 
 class ResourceVisibility(models.TextChoices):
-    """Enumeration of resource visibility levels."""
+    """
+    Enumeration of resource visibility levels for access control.
+
+    Defines who can access a resource based on its visibility setting.
+    Used in conjunction with resource ownership and explicit permissions.
+
+    Examples:
+        >>> # Set resource to private (only owner can access)
+        >>> visibility = ResourceVisibility.PRIVATE
+        >>> print(visibility)  # "private"
+
+        >>> # Check if visibility allows public access
+        >>> visibility = ResourceVisibility.PUBLIC
+        >>> is_public = visibility == ResourceVisibility.PUBLIC
+        >>> print(is_public)  # True
+
+        >>> # Get all visibility options for UI
+        >>> choices = [(v.value, v.label) for v in ResourceVisibility]
+        >>> print(choices)
+        [('private', 'Private'), ('group', 'Lab Group'), ('public', 'Public')]
+    """
 
     PRIVATE = "private", "Private"
     GROUP = "group", "Lab Group"
@@ -34,7 +77,33 @@ class ResourceVisibility(models.TextChoices):
 
 
 class ResourceRole(models.TextChoices):
-    """Enumeration of resource access roles."""
+    """
+    Enumeration of resource access roles with hierarchical permissions.
+
+    Defines different levels of access that users can have to resources,
+    with each role inheriting permissions from lower levels.
+
+    Permission hierarchy (highest to lowest):
+    - OWNER: Full control (read, write, delete, share, manage permissions)
+    - ADMIN: Administrative access (read, write, delete, share)
+    - EDITOR: Edit access (read, write)
+    - VIEWER: Read-only access
+
+    Examples:
+        >>> # Grant editor access to a user
+        >>> role = ResourceRole.EDITOR
+        >>> print(role)  # "editor"
+        >>> print(role.label)  # "Editor"
+
+        >>> # Check role hierarchy
+        >>> admin_roles = [ResourceRole.OWNER, ResourceRole.ADMIN]
+        >>> can_delete = ResourceRole.ADMIN in admin_roles
+        >>> print(can_delete)  # True
+
+        >>> # Get roles for permission checking
+        >>> edit_roles = [ResourceRole.OWNER, ResourceRole.ADMIN, ResourceRole.EDITOR]
+        >>> view_roles = list(ResourceRole.values)  # All roles can view
+    """
 
     OWNER = "owner", "Owner"
     ADMIN = "admin", "Administrator"
@@ -48,7 +117,42 @@ class AbstractResource(models.Model):
 
     This model handles ownership, permissions, visibility, and audit trails for any
     resource type in CUPCAKE applications. Models that inherit from this get
-    consistent access control patterns.
+    consistent access control patterns, audit trails, and permission checking methods.
+
+    Key Features:
+    - Ownership tracking with user and lab group association
+    - Flexible visibility controls (private, group, public)
+    - Role-based permission system with explicit grants
+    - Automatic audit trails with django-simple-history
+    - Resource locking and status management
+
+    Examples:
+        >>> # Create a concrete resource model
+        >>> class Document(AbstractResource):
+        ...     name = models.CharField(max_length=200)
+        ...     resource_type = ResourceType.FILE
+
+        >>> # Create and configure a resource
+        >>> doc = Document.objects.create(
+        ...     name="My Document",
+        ...     resource_type=ResourceType.FILE,
+        ...     owner=user,
+        ...     visibility=ResourceVisibility.GROUP,
+        ...     lab_group=lab_group
+        ... )
+
+        >>> # Check permissions
+        >>> can_view = doc.can_view(some_user)
+        >>> can_edit = doc.can_edit(some_user)
+        >>> user_role = doc.get_user_role(some_user)
+
+        >>> # Grant explicit permissions
+        >>> doc.add_permission(another_user, ResourceRole.EDITOR)
+        >>> doc.remove_permission(another_user)
+
+        >>> # Lock resource for editing
+        >>> doc.is_locked = True
+        >>> doc.save()
     """
 
     # Resource identification
@@ -89,11 +193,48 @@ class AbstractResource(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     history = HistoricalRecords(inherit=True)
 
+    # Generic relation to ResourcePermission for reverse lookups
+    resource_permissions = GenericRelation(
+        "ccc.ResourcePermission",
+        content_type_field="resource_content_type",
+        object_id_field="resource_object_id",
+        related_query_name="resource",
+    )
+
     class Meta:
         abstract = True
 
     def can_view(self, user):
-        """Check if a user can view this resource."""
+        """
+        Check if a user can view this resource.
+
+        Combines ownership, visibility settings, lab group membership,
+        and explicit permissions to determine view access.
+
+        Args:
+            user: Django User instance or None for anonymous users
+
+        Returns:
+            bool: True if user can view the resource, False otherwise
+
+        Examples:
+            >>> # Check view permission for resource owner
+            >>> resource.owner = user1
+            >>> resource.can_view(user1)  # True
+
+            >>> # Check view permission for public resource
+            >>> resource.visibility = ResourceVisibility.PUBLIC
+            >>> resource.can_view(anonymous_user)  # True
+
+            >>> # Check view permission for lab group member
+            >>> resource.visibility = ResourceVisibility.GROUP
+            >>> resource.lab_group.members.add(user2)
+            >>> resource.can_view(user2)  # True
+
+            >>> # Check view permission with explicit grant
+            >>> resource.add_permission(user3, ResourceRole.VIEWER)
+            >>> resource.can_view(user3)  # True
+        """
         if not user or not user.is_authenticated:
             return self.visibility == ResourceVisibility.PUBLIC
 
@@ -119,7 +260,37 @@ class AbstractResource(models.Model):
         ).exists()
 
     def can_edit(self, user):
-        """Check if a user can edit this resource."""
+        """
+        Check if a user can edit this resource.
+
+        Considers resource locking, ownership, staff status, and explicit
+        permissions to determine edit access. Locked resources can only
+        be edited by owners and administrators.
+
+        Args:
+            user: Django User instance to check permissions for
+
+        Returns:
+            bool: True if user can edit the resource, False otherwise
+
+        Examples:
+            >>> # Resource owner can always edit
+            >>> resource.owner = user1
+            >>> resource.can_edit(user1)  # True
+
+            >>> # Cannot edit locked resource unless owner/admin
+            >>> resource.is_locked = True
+            >>> resource.can_edit(regular_user)  # False
+            >>> resource.can_edit(resource.owner)  # True
+
+            >>> # Edit permission with explicit role
+            >>> resource.add_permission(user2, ResourceRole.EDITOR)
+            >>> resource.can_edit(user2)  # True
+
+            >>> # Staff users can always edit
+            >>> user3.is_staff = True
+            >>> resource.can_edit(user3)  # True
+        """
         if not user or not user.is_authenticated:
             return False
 
@@ -157,7 +328,35 @@ class AbstractResource(models.Model):
         return self.resource_permissions.filter(user=user, role__in=[ResourceRole.OWNER, ResourceRole.ADMIN]).exists()
 
     def can_share(self, user):
-        """Check if a user can share this resource."""
+        """
+        Check if a user can share this resource with other users.
+
+        Only owners and administrators can share resources, as sharing
+        requires the ability to grant permissions to other users.
+
+        Args:
+            user: Django User instance to check permissions for
+
+        Returns:
+            bool: True if user can share the resource, False otherwise
+
+        Examples:
+            >>> # Resource owner can share
+            >>> resource.owner = user1
+            >>> resource.can_share(user1)  # True
+
+            >>> # Admin can share
+            >>> resource.add_permission(user2, ResourceRole.ADMIN)
+            >>> resource.can_share(user2)  # True
+
+            >>> # Editor cannot share
+            >>> resource.add_permission(user3, ResourceRole.EDITOR)
+            >>> resource.can_share(user3)  # False
+
+            >>> # Staff users can share
+            >>> user4.is_staff = True
+            >>> resource.can_share(user4)  # True
+        """
         if not user or not user.is_authenticated:
             return False
 
@@ -173,7 +372,38 @@ class AbstractResource(models.Model):
         return self.resource_permissions.filter(user=user, role__in=[ResourceRole.OWNER, ResourceRole.ADMIN]).exists()
 
     def get_user_role(self, user):
-        """Get the user's role for this resource."""
+        """
+        Get the user's role for this resource.
+
+        Returns the highest role that the user has for this resource,
+        considering ownership, staff status, and explicit permissions.
+
+        Args:
+            user: Django User instance to check role for
+
+        Returns:
+            ResourceRole or None: The user's role, or None if no access
+
+        Examples:
+            >>> # Get owner role
+            >>> resource.owner = user1
+            >>> role = resource.get_user_role(user1)
+            >>> print(role)  # ResourceRole.OWNER
+
+            >>> # Get explicit role
+            >>> resource.add_permission(user2, ResourceRole.EDITOR)
+            >>> role = resource.get_user_role(user2)
+            >>> print(role)  # ResourceRole.EDITOR
+
+            >>> # Staff gets admin role
+            >>> user3.is_staff = True
+            >>> role = resource.get_user_role(user3)
+            >>> print(role)  # ResourceRole.ADMIN
+
+            >>> # No access
+            >>> role = resource.get_user_role(unauthorized_user)
+            >>> print(role)  # None
+        """
         if not user or not user.is_authenticated:
             return None
 
@@ -187,7 +417,33 @@ class AbstractResource(models.Model):
         return permission.role if permission else None
 
     def add_permission(self, user, role):
-        """Add or update a user's permission for this resource."""
+        """
+        Add or update a user's permission for this resource.
+
+        Creates or updates an explicit permission record for the user.
+        This is useful for granting access to users who don't have
+        access through ownership, lab group membership, or visibility.
+
+        Args:
+            user: Django User instance to grant permission to
+            role: ResourceRole to assign to the user
+
+        Returns:
+            ResourcePermission: The created or updated permission record
+
+        Examples:
+            >>> # Grant editor access
+            >>> perm = resource.add_permission(user1, ResourceRole.EDITOR)
+            >>> print(perm.role)  # ResourceRole.EDITOR
+
+            >>> # Upgrade to admin access
+            >>> perm = resource.add_permission(user1, ResourceRole.ADMIN)
+            >>> print(perm.role)  # ResourceRole.ADMIN
+
+            >>> # Grant viewer access to multiple users
+            >>> for user in users:
+            ...     resource.add_permission(user, ResourceRole.VIEWER)
+        """
         permission, created = ResourcePermission.objects.get_or_create(
             resource_content_type=self._meta.get_content_type(),
             resource_object_id=self.pk,
@@ -200,7 +456,29 @@ class AbstractResource(models.Model):
         return permission
 
     def remove_permission(self, user):
-        """Remove a user's explicit permission for this resource."""
+        """
+        Remove a user's explicit permission for this resource.
+
+        Deletes any explicit permission record for the user. Note that
+        this does not affect access through ownership, lab group membership,
+        or public visibility.
+
+        Args:
+            user: Django User instance to remove permission for
+
+        Examples:
+            >>> # Remove explicit permission
+            >>> resource.add_permission(user1, ResourceRole.EDITOR)
+            >>> resource.can_edit(user1)  # True
+            >>> resource.remove_permission(user1)
+            >>> resource.can_edit(user1)  # False (unless other access)
+
+            >>> # Remove permission but user still has access as owner
+            >>> resource.owner = user2
+            >>> resource.add_permission(user2, ResourceRole.VIEWER)
+            >>> resource.remove_permission(user2)
+            >>> resource.can_edit(user2)  # Still True (owner access)
+        """
         ResourcePermission.objects.filter(
             resource_content_type=self._meta.get_content_type(), resource_object_id=self.pk, user=user
         ).delete()
@@ -209,6 +487,41 @@ class AbstractResource(models.Model):
 class ResourcePermission(models.Model):
     """
     Explicit permissions for resources beyond the default ownership/lab group access.
+
+    This model stores fine-grained permissions that users have been explicitly
+    granted for specific resources. It uses Django's ContentType framework
+    to create permissions for any model that inherits from AbstractResource.
+
+    Key Features:
+    - Generic foreign key to any AbstractResource model
+    - Role-based permissions with audit trail
+    - Unique constraint prevents duplicate permissions
+    - Indexed for efficient permission checking
+
+    Examples:
+        >>> # Grant editor access to a document
+        >>> from django.contrib.contenttypes.models import ContentType
+        >>> doc_type = ContentType.objects.get_for_model(Document)
+        >>> permission = ResourcePermission.objects.create(
+        ...     resource_content_type=doc_type,
+        ...     resource_object_id=document.id,
+        ...     user=user,
+        ...     role=ResourceRole.EDITOR,
+        ...     granted_by=admin_user
+        ... )
+
+        >>> # Check if user has permission
+        >>> has_perm = ResourcePermission.objects.filter(
+        ...     resource_content_type=doc_type,
+        ...     resource_object_id=document.id,
+        ...     user=user,
+        ...     role__in=[ResourceRole.EDITOR, ResourceRole.ADMIN, ResourceRole.OWNER]
+        ... ).exists()
+
+        >>> # Get all permissions for a user
+        >>> user_perms = ResourcePermission.objects.filter(user=user)
+        >>> for perm in user_perms:
+        ...     print(f"{perm.role} access to {perm.resource_content_type}")
     """
 
     # Generic foreign key to any resource that inherits from AbstractResource
@@ -252,7 +565,43 @@ class ResourcePermission(models.Model):
 class SiteConfig(models.Model):
     """
     Site-specific configuration settings for CUPCAKE applications.
-    Singleton model - only one instance should exist.
+
+    Singleton model that stores customizable settings for the CUPCAKE
+    instance, including branding, feature toggles, and authentication
+    configuration. Only one instance should exist per deployment.
+
+    Key Features:
+    - Site branding (name, logo, colors)
+    - Feature toggles (user registration, ORCID login)
+    - Display preferences (powered-by attribution)
+    - Audit trail with update tracking
+
+    Examples:
+        >>> # Get or create site configuration
+        >>> config, created = SiteConfig.objects.get_or_create(
+        ...     defaults={
+        ...         'site_name': 'My CUPCAKE Instance',
+        ...         'primary_color': '#1976d2',
+        ...         'allow_user_registration': True,
+        ...         'enable_orcid_login': True
+        ...     }
+        ... )
+
+        >>> # Update site branding
+        >>> config.site_name = 'Proteomics Data Portal'
+        >>> config.primary_color = '#4caf50'
+        >>> config.logo_url = 'https://example.com/logo.png'
+        >>> config.updated_by = admin_user
+        >>> config.save()
+
+        >>> # Check feature flags
+        >>> if config.allow_user_registration:
+        ...     # Show registration form
+        ...     pass
+
+        >>> # Get current configuration for templates
+        >>> config = SiteConfig.objects.first()
+        >>> site_name = config.site_name if config else 'CUPCAKE'
     """
 
     # Site branding
@@ -290,6 +639,39 @@ class SiteConfig(models.Model):
 class LabGroup(models.Model):
     """
     Represents a laboratory group for organizing users and resources.
+
+    Lab groups provide a way to organize users into collaborative teams
+    and control access to shared resources. They support invitation-based
+    membership and configurable permission settings.
+
+    Key Features:
+    - Creator-based ownership with member management
+    - Invitation system for adding new members
+    - Configurable member invitation permissions
+    - Integration with resource visibility controls
+    - Audit trail with timestamps
+
+    Examples:
+        >>> # Create a new lab group
+        >>> lab_group = LabGroup.objects.create(
+        ...     name='Proteomics Lab',
+        ...     description='Research group focused on proteomics analysis',
+        ...     creator=pi_user,
+        ...     allow_member_invites=True
+        ... )
+
+        >>> # Add members to the group
+        >>> lab_group.members.add(researcher1, researcher2)
+
+        >>> # Check permissions
+        >>> can_invite = lab_group.can_invite(researcher1)  # True if allow_member_invites
+        >>> can_manage = lab_group.can_manage(pi_user)      # True for creator
+        >>> is_member = lab_group.is_member(researcher1)    # True
+
+        >>> # Use with resource visibility
+        >>> document.lab_group = lab_group
+        >>> document.visibility = ResourceVisibility.GROUP
+        >>> document.save()  # Now accessible to all lab group members
     """
 
     name = models.CharField(max_length=255, help_text="Name of the lab group")
@@ -332,25 +714,130 @@ class LabGroup(models.Model):
         return self.name
 
     def is_creator(self, user):
-        """Check if user is the creator of this lab group."""
+        """
+        Check if user is the creator of this lab group.
+
+        Args:
+            user: Django User instance to check
+
+        Returns:
+            bool: True if user created this lab group
+
+        Examples:
+            >>> lab_group.creator = pi_user
+            >>> lab_group.is_creator(pi_user)  # True
+            >>> lab_group.is_creator(student)  # False
+        """
         return self.creator == user
 
     def is_member(self, user):
-        """Check if user is a member of this lab group."""
+        """
+        Check if user is a member of this lab group.
+
+        Args:
+            user: Django User instance to check
+
+        Returns:
+            bool: True if user is in the members list
+
+        Examples:
+            >>> lab_group.members.add(researcher)
+            >>> lab_group.is_member(researcher)  # True
+            >>> lab_group.is_member(outsider)    # False
+        """
         return self.members.filter(id=user.id).exists()
 
     def can_invite(self, user):
-        """Check if user can invite others to this lab group."""
+        """
+        Check if user can invite others to this lab group.
+
+        Creators can always invite. Members can invite only if
+        allow_member_invites is enabled for the group.
+
+        Args:
+            user: Django User instance to check
+
+        Returns:
+            bool: True if user can send invitations
+
+        Examples:
+            >>> # Creator can always invite
+            >>> lab_group.can_invite(lab_group.creator)  # True
+
+            >>> # Member can invite if allowed
+            >>> lab_group.allow_member_invites = True
+            >>> lab_group.can_invite(member_user)  # True
+
+            >>> # Member cannot invite if disabled
+            >>> lab_group.allow_member_invites = False
+            >>> lab_group.can_invite(member_user)  # False
+        """
         return self.is_creator(user) or (self.allow_member_invites and self.is_member(user))
 
     def can_manage(self, user):
-        """Check if user can manage this lab group."""
-        return self.is_creator(user)
+        """
+        Check if user can manage this lab group.
+
+        Only creators can manage lab groups (edit settings, remove members,
+        delete the group, etc.). Staff users also get management privileges.
+
+        Args:
+            user: Django User instance to check
+
+        Returns:
+            bool: True if user can manage the lab group
+
+        Examples:
+            >>> # Creator can manage
+            >>> lab_group.can_manage(lab_group.creator)  # True
+
+            >>> # Regular members cannot manage
+            >>> lab_group.can_manage(member_user)  # False
+
+            >>> # Staff users can manage
+            >>> staff_user.is_staff = True
+            >>> lab_group.can_manage(staff_user)  # True
+        """
+        return self.is_creator(user) or (user.is_authenticated and user.is_staff)
 
 
 class LabGroupInvitation(models.Model):
     """
     Represents an invitation to join a lab group.
+
+    Manages the complete invitation lifecycle from creation to acceptance/rejection.
+    Supports email-based invitations with secure tokens and expiration handling.
+
+    Key Features:
+    - Secure token-based invitation system
+    - Email-based invitations for unregistered users
+    - Automatic expiration handling (default 7 days)
+    - Status tracking with audit trail
+    - Integration with lab group membership
+
+    Examples:
+        >>> # Send invitation to existing user
+        >>> invitation = LabGroupInvitation.objects.create(
+        ...     lab_group=proteomics_lab,
+        ...     inviter=pi_user,
+        ...     invited_email='researcher@university.edu',
+        ...     message='Join our proteomics research group!'
+        ... )
+
+        >>> # Check invitation status
+        >>> if invitation.can_accept():
+        ...     invitation.accept(invited_user)
+
+        >>> # Handle expiration
+        >>> if invitation.is_expired():
+        ...     invitation.status = LabGroupInvitation.InvitationStatus.EXPIRED
+        ...     invitation.save()
+
+        >>> # Get all pending invitations for a user
+        >>> pending = LabGroupInvitation.objects.filter(
+        ...     invited_email=user.email,
+        ...     status=LabGroupInvitation.InvitationStatus.PENDING
+        ... )
     """
 
     class InvitationStatus(models.TextChoices):
@@ -467,6 +954,36 @@ class LabGroupInvitation(models.Model):
 class UserOrcidProfile(models.Model):
     """
     Links user accounts with ORCID profiles and handles account merging.
+
+    Stores ORCID profile information for authenticated users and manages
+    the linking between CUPCAKE user accounts and ORCID identities.
+    Supports OAuth2-based authentication and profile data synchronization.
+
+    Key Features:
+    - One-to-one mapping between users and ORCID IDs
+    - Verification status tracking
+    - Profile data caching from ORCID API
+    - Integration with authentication backend
+
+    Examples:
+        >>> # Create ORCID profile after OAuth
+        >>> profile = UserOrcidProfile.objects.create(
+        ...     user=researcher,
+        ...     orcid_id='0000-0002-1825-0097',
+        ...     orcid_name='Josiah Carberry',
+        ...     orcid_email='jcarberry@example.edu',
+        ...     verified=True
+        ... )
+
+        >>> # Check if user has verified ORCID
+        >>> has_orcid = hasattr(user, 'orcid_profile') and user.orcid_profile.verified
+
+        >>> # Get user by ORCID ID
+        >>> try:
+        ...     profile = UserOrcidProfile.objects.get(orcid_id='0000-0002-1825-0097')
+        ...     user = profile.user
+        ... except UserOrcidProfile.DoesNotExist:
+        ...     user = None
     """
 
     user = models.OneToOneField(
@@ -510,6 +1027,43 @@ class UserOrcidProfile(models.Model):
 class AccountMergeRequest(models.Model):
     """
     Tracks requests to merge duplicate user accounts.
+
+    Manages the workflow for consolidating duplicate accounts that may occur
+    when users register multiple times or through different authentication
+    methods (e.g., email + ORCID). Provides audit trail and approval process.
+
+    Key Features:
+    - Request workflow with status tracking
+    - Primary/duplicate account designation
+    - Reason documentation for merges
+    - Admin approval process
+    - Audit trail with timestamps
+
+    Examples:
+        >>> # Request to merge duplicate accounts
+        >>> merge_request = AccountMergeRequest.objects.create(
+        ...     primary_user=main_account,
+        ...     duplicate_user=duplicate_account,
+        ...     requested_by=admin_user,
+        ...     reason='User created duplicate account via ORCID login'
+        ... )
+
+        >>> # Admin reviews and approves
+        >>> merge_request.status = 'approved'
+        >>> merge_request.save()
+
+        >>> # Check for pending merge requests
+        >>> pending = AccountMergeRequest.objects.filter(
+        ...     status='pending',
+        ...     primary_user=user
+        ... )
+
+        >>> # Validate merge request before creation
+        >>> merge_request = AccountMergeRequest(
+        ...     primary_user=user1,
+        ...     duplicate_user=user1  # Same user - will raise ValidationError
+        ... )
+        >>> merge_request.clean()  # ValidationError: Cannot merge user with themselves
     """
 
     STATUS_CHOICES = [

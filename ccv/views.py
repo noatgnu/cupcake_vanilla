@@ -4,6 +4,7 @@ Django REST Framework ViewSets for CUPCAKE Vanilla metadata management.
 
 import io
 import json
+import re
 
 from django.contrib.auth.models import User
 from django.db import models
@@ -1151,39 +1152,55 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             # We'll use the same metadata structure but organize by pool
             pass
 
-        # Get favourites for each metadata column (original CUPCAKE logic)
+        # Get favourites for each metadata column based on column names
         favourites = {}
 
-        # User-specific favourites
+        # Get column names from actual metadata columns being exported
+        column_names = set(column.name.lower() for column in metadata_columns)
+
+        # User-specific favourites - use case-insensitive name matching
         user_favourites = FavouriteMetadataOption.objects.filter(
-            user=request.user, service_lab_group__isnull=True, lab_group__isnull=True
+            user=request.user,
+            lab_group__isnull=True,
+            name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
         )
         for fav in user_favourites:
             if fav.name.lower() not in favourites:
                 favourites[fav.name.lower()] = []
-            favourites[fav.name.lower()].append(f"{fav.display_value}[*]")
+            favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[*]")
 
         # Lab group favourites
-        if data.get("lab_group_id"):
-            try:
-                lab_group = LabGroup.objects.get(id=data["lab_group_id"])
-                lab_favourites = FavouriteMetadataOption.objects.filter(lab_group=lab_group)
-                for fav in lab_favourites:
-                    if fav.name.lower() not in favourites:
-                        favourites[fav.name.lower()] = []
-                    favourites[fav.name.lower()].append(f"{fav.display_value}[**]")
-                    # Add "not applicable" for required metadata
-                    if fav.name.lower() == "tissue" or fav.name.lower() == "organism part":
-                        favourites[fav.name.lower()].append("not applicable")
-            except LabGroup.DoesNotExist:
-                pass
+        lab_group_ids = data.get("lab_group_ids")
+        if lab_group_ids is not None:  # Check for None vs empty list
+            if lab_group_ids == []:
+                # Empty list means "all lab groups"
+                lab_favourites = FavouriteMetadataOption.objects.filter(
+                    lab_group__isnull=False,
+                    name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+                )
+            else:
+                # Specific lab group IDs
+                lab_favourites = FavouriteMetadataOption.objects.filter(
+                    lab_group_id__in=lab_group_ids,
+                    name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+                )
+
+            for fav in lab_favourites:
+                if fav.name.lower() not in favourites:
+                    favourites[fav.name.lower()] = []
+                favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[**]")
+                # Add "not applicable" for required metadata
+                if fav.name.lower() == "tissue" or fav.name.lower() == "organism part":
+                    favourites[fav.name.lower()].append("not applicable")
 
         # Global recommendations
-        global_favourites = FavouriteMetadataOption.objects.filter(is_global=True)
+        global_favourites = FavouriteMetadataOption.objects.filter(
+            is_global=True, name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$"
+        )
         for fav in global_favourites:
             if fav.name.lower() not in favourites:
                 favourites[fav.name.lower()] = []
-            favourites[fav.name.lower()].append(f"{fav.display_value}[***]")
+            favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[***]")
 
         # Create Excel workbook with multiple sheets (original CUPCAKE structure)
         wb = Workbook()
@@ -1253,36 +1270,42 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         )
 
         # Populate main worksheet (original CUPCAKE logic)
-        if result_main:
+        if result_main and len(result_main) > 0:
             main_ws.append(result_main[0])
             main_work_area = f"A1:{get_column_letter(len(result_main[0]))}{metadata_table.sample_count + 1}"
 
             for row in result_main[1:]:
                 main_ws.append(row)
+        else:
+            # Add placeholder data if no metadata columns exist
+            main_ws.append(["No metadata columns"])
+            main_work_area = "A1:A1"
 
-            # Apply styling
-            for row in main_ws[main_work_area]:
-                for cell in row:
-                    cell.fill = fill
-                    cell.border = thin_border
+        # Apply styling to main worksheet
+        for row in main_ws[main_work_area]:
+            for cell in row:
+                cell.fill = fill
+                cell.border = thin_border
 
-            # Auto-adjust column widths
-            for col in main_ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(cell.value)
-                    except (TypeError, AttributeError):
-                        pass
-                adjusted_width = max_length + 2
-                main_ws.column_dimensions[column].width = adjusted_width
+        # Auto-adjust column widths for main worksheet
+        for col in main_ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(cell.value)
+                except (TypeError, AttributeError):
+                    pass
+            adjusted_width = max_length + 2
+            main_ws.column_dimensions[column].width = adjusted_width
 
-            # Add informational notes (original CUPCAKE notes)
+        # Add informational notes (original CUPCAKE notes)
+        if result_main and len(result_main) > 0:
             note_texts = [
                 "Note: Cells that are empty will automatically be filled with 'not applicable' or "
                 "'not available' depending on the column when submitted.",
+                "[ID] Format: [favorite_option_id] display_value[source_marker]",
                 "[*] User-specific favourite options.",
                 "[**] Lab group-recommended options.",
                 "[***] Global recommendations.",
@@ -1301,36 +1324,39 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 note_cell.alignment = Alignment(horizontal="left", vertical="center")
 
         # Populate hidden worksheet (original CUPCAKE logic)
-        if result_hidden:
+        if result_hidden and len(result_hidden) > 0:
             hidden_work_area = f"A1:{get_column_letter(len(result_hidden[0]))}{metadata_table.sample_count + 1}"
             hidden_ws.append(result_hidden[0])
             for row in result_hidden[1:]:
                 hidden_ws.append(row)
+        else:
+            # Add placeholder data if no hidden columns exist
+            hidden_ws.append(["No hidden columns"])
+            hidden_work_area = "A1:A1"
 
-            # Apply styling
-            for row in hidden_ws[hidden_work_area]:
-                for cell in row:
-                    cell.fill = fill
-                    cell.border = thin_border
+        # Apply styling to hidden worksheet
+        for row in hidden_ws[hidden_work_area]:
+            for cell in row:
+                cell.fill = fill
+                cell.border = thin_border
 
-            # Auto-adjust column widths
-            for col in hidden_ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(cell.value)
-                    except (TypeError, AttributeError):
-                        pass
-                adjusted_width = max_length + 2
-                hidden_ws.column_dimensions[column].width = adjusted_width
+        # Auto-adjust column widths for hidden worksheet
+        for col in hidden_ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(cell.value)
+                except (TypeError, AttributeError):
+                    pass
+            adjusted_width = max_length + 2
+            hidden_ws.column_dimensions[column].width = adjusted_width
 
         # Add data validation dropdowns for main worksheet (original CUPCAKE logic)
-        if result_main:
+        if result_main and len(result_main) > 0:
             for i, header in enumerate(result_main[0]):
-                name_parts = header.split("[")
-                name = name_parts[1].replace("]", "") if len(name_parts) > 1 else name_parts[0]
+                name = header
 
                 # Build option list
                 option_list = []
@@ -1362,10 +1388,9 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                     dv.add(f"{col_letter}2:{col_letter}{metadata_table.sample_count + 1}")
 
         # Add data validation dropdowns for hidden worksheet (original CUPCAKE logic)
-        if result_hidden:
+        if result_hidden and len(result_hidden) > 0:
             for i, header in enumerate(result_hidden[0]):
-                name_parts = header.split("[")
-                name = name_parts[1].replace("]", "") if len(name_parts) > 1 else name_parts[0]
+                name = header
 
                 # Build option list
                 option_list = []
@@ -1667,8 +1692,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                     metadata_table=metadata_table,
                 )
 
-                # Apply automatic ontology mapping
-                apply_ontology_mapping_to_column(metadata_column)
+                # Note: Ontology mapping should only be applied on user request, not automatically
 
             return metadata_column
 
@@ -2220,8 +2244,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 else:
                     metadata_column = self._create_column_from_header(header, False, metadata_table, n)
 
-                # Apply automatic ontology mapping
-                apply_ontology_mapping_to_column(metadata_column)
+                # Note: Ontology mapping should only be applied on user request, not automatically
                 created_columns.append(metadata_column)
 
             # Create metadata columns from hidden headers (original CUPCAKE logic)
@@ -2246,8 +2269,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                         header, True, metadata_table, len(main_headers) + n
                     )
 
-                # Apply automatic ontology mapping
-                apply_ontology_mapping_to_column(metadata_column)
+                # Note: Ontology mapping should only be applied on user request, not automatically
                 created_columns.append(metadata_column)
 
             # Process data to populate column values and modifiers (exact original CUPCAKE logic)
@@ -2377,13 +2399,25 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         """Helper method to create MetadataColumn from header (original CUPCAKE logic)."""
         header = header.lower() if header else ""
 
-        # Parse header format: type[name] (original CUPCAKE format)
-        if "[" in header:
-            metadata_type = header.split("[")[0]
-            name = header.split("[")[1].replace("]", "")
-        else:
-            metadata_type = ""
+        # Parse SDRF-style headers with brackets (e.g., "factor value[genetic modification]")
+        if "[" in header and header.endswith("]"):
+            # This is an SDRF-style header like "factor value[genetic modification]"
             name = header
+            base_part = header.split("[")[0].strip()
+
+            # Determine type based on SDRF conventions
+            if base_part.startswith("characteristics"):
+                metadata_type = "characteristics"
+            elif base_part.startswith("factor value"):
+                metadata_type = "factor value"
+            elif base_part.startswith("comment"):
+                metadata_type = "comment"
+            else:
+                metadata_type = "special"
+        else:
+            # Plain header name - this is special (not one of the standard SDRF metadata types)
+            name = header
+            metadata_type = "special"
 
         # Create metadata column with proper naming (match original CUPCAKE)
         metadata_column = MetadataColumn.objects.create(

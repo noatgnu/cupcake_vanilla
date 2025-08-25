@@ -247,6 +247,7 @@ ignore_missing_imports = true
 DJANGO_SETTINGS_MODULE = "cupcake_vanilla.settings"
 python_files = ["tests.py", "test_*.py", "*_tests.py"]
 addopts = "--cov=ccc --cov=ccv --cov-report=html --cov-report=term-missing"
+testpaths = [".", "ccc", "ccv", "tests"]
 
 [tool.coverage.run]
 source = ["ccc", "ccv"]

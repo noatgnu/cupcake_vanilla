@@ -257,6 +257,7 @@ class FavouriteMetadataOptionSerializer(serializers.ModelSerializer):
 class MetadataExportSerializer(serializers.Serializer):
     """Serializer for metadata export requests."""
 
+    metadata_table_id = serializers.IntegerField(help_text="ID of the MetadataTable to export")
     metadata_column_ids = serializers.ListField(
         child=serializers.IntegerField(),
         help_text="List of MetadataColumn IDs to export",
@@ -271,7 +272,11 @@ class MetadataExportSerializer(serializers.Serializer):
         required=False,
         help_text="List of SamplePool IDs to include (if include_pools is True)",
     )
-    lab_group_id = serializers.IntegerField(required=False, help_text="Lab group ID for favourite options")
+    lab_group_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="List of lab group IDs for favourite options (can be empty for none, or multiple IDs)",
+    )
 
 
 class MetadataImportSerializer(serializers.Serializer):
