@@ -53,33 +53,6 @@ services:
       - cupcake-vanilla-net
     command: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --agree-tos; sleep 12h & wait $$!; done"
 
-  certbot-init:
-    image: certbot/certbot:latest
-    volumes:
-      - letsencrypt:/etc/letsencrypt
-      - certbot-www:/var/www/certbot
-    ports:
-      - "80:80"
-    profiles:
-      - tools
-    environment:
-      - CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@example.com}
-      - DOMAIN=ccv.ome.quest
-    command: >
-      sh -c "
-        echo 'Starting certbot standalone mode for initial certificate generation...'
-        echo 'Domain: $${DOMAIN}'
-        echo 'Email: $${CERTBOT_EMAIL}'
-
-        certbot certonly --standalone --non-interactive \
-          --email $${CERTBOT_EMAIL} --agree-tos --no-eff-email \
-          --force-renewal --domains $${DOMAIN} --verbose
-
-        echo 'Certificate generation completed!'
-        ls -la /etc/letsencrypt/live/$${DOMAIN}/ || echo 'Certificate directory not found'
-      "
-    entrypoint: ""
-
   db:
     image: postgres:15
     container_name: cupcake-vanilla-db
@@ -100,6 +73,33 @@ services:
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     networks:
       - cupcake-vanilla-net
+
+  generate-self-signed:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile-ssl
+    volumes:
+      - letsencrypt:/certs
+    profiles:
+      - tools
+    environment:
+      - DOMAIN=ccv.ome.quest
+    command: >
+      sh -c "
+        echo 'Generating self-signed SSL certificates for ccv.ome.quest...'
+        mkdir -p /certs/live/ccv.ome.quest
+        openssl req -x509 -nodes -days 30 -newkey rsa:2048 \
+          -keyout /certs/live/ccv.ome.quest/privkey.pem \
+          -out /certs/live/ccv.ome.quest/fullchain.pem \
+          -subj '/C=US/ST=Development/L=Development/O=CUPCAKE-Vanilla/OU=Development/CN=ccv.ome.quest' \
+          -addext 'subjectAltName=DNS:ccv.ome.quest'
+        cp /certs/live/ccv.ome.quest/fullchain.pem /certs/live/ccv.ome.quest/chain.pem
+        mkdir -p /certs
+        echo '# Self-signed dhparam - replace with certbot' > /certs/ssl-dhparams.pem
+        echo '# Self-signed options - replace with certbot' > /certs/options-ssl-nginx.conf
+        echo 'Self-signed certificates generated successfully for ccv.ome.quest!'
+        ls -la /certs/live/ccv.ome.quest/
+      "
 
   #nginx-test:
   #  image: nginx:latest
