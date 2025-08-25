@@ -79,7 +79,7 @@ services:
       context: .
       dockerfile: ./dockerfiles/Dockerfile-ssl
     volumes:
-      - letsencrypt:/certs
+      - letsencrypt:/etc/letsencrypt
     profiles:
       - tools
     environment:
@@ -87,18 +87,18 @@ services:
     command: >
       sh -c "
         echo 'Generating self-signed SSL certificates for ccv.ome.quest...'
-        mkdir -p /certs/live/ccv.ome.quest
+        mkdir -p /etc/letsencrypt/live/ccv.ome.quest
         openssl req -x509 -nodes -days 30 -newkey rsa:2048 \
-          -keyout /certs/live/ccv.ome.quest/privkey.pem \
-          -out /certs/live/ccv.ome.quest/fullchain.pem \
+          -keyout /etc/letsencrypt/live/ccv.ome.quest/privkey.pem \
+          -out /etc/letsencrypt/live/ccv.ome.quest/fullchain.pem \
           -subj '/C=US/ST=Development/L=Development/O=CUPCAKE-Vanilla/OU=Development/CN=ccv.ome.quest' \
           -addext 'subjectAltName=DNS:ccv.ome.quest'
-        cp /certs/live/ccv.ome.quest/fullchain.pem /certs/live/ccv.ome.quest/chain.pem
-        mkdir -p /certs
-        echo '# Self-signed dhparam - replace with certbot' > /certs/ssl-dhparams.pem
-        echo '# Self-signed options - replace with certbot' > /certs/options-ssl-nginx.conf
+        cp /etc/letsencrypt/live/ccv.ome.quest/fullchain.pem /etc/letsencrypt/live/ccv.ome.quest/chain.pem
+        mkdir -p /etc/letsencrypt
+        echo '# Self-signed dhparam - replace with certbot' > /etc/letsencrypt/ssl-dhparams.pem
+        echo '# Self-signed options - replace with certbot' > /etc/letsencrypt/options-ssl-nginx.conf
         echo 'Self-signed certificates generated successfully for ccv.ome.quest!'
-        ls -la /certs/live/ccv.ome.quest/
+        ls -la /etc/letsencrypt/live/ccv.ome.quest/
       "
 
   #nginx-test:
