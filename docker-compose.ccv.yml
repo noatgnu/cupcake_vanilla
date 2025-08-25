@@ -60,8 +60,32 @@ services:
       - certbot-www:/var/www/certbot
     networks:
       - cupcake-vanilla-net
+    ports:
+      - "80:80"
     profiles:
       - tools
+    environment:
+      - CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@example.com}
+    command: >
+      sh -c "
+        # Start nginx in background to serve ACME challenges
+        nginx -g 'daemon off;' &
+        NGINX_PID=$$!
+
+        # Wait for nginx to start
+        sleep 5
+
+        # Get the certificate
+        certbot certonly --webroot --webroot-path=/var/www/html \
+          --email $$CERTBOT_EMAIL --agree-tos --no-eff-email \
+          --force-renewal -d ccv.ome.quest
+
+        # Stop nginx
+        kill $$NGINX_PID
+
+        echo 'Certificate generation complete!'
+      "
+    entrypoint: ""
 
   db:
     image: postgres:15
