@@ -536,6 +536,15 @@ class SamplePoolViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return queryset.order_by("pool_name")
 
+    def perform_create(self, serializer):
+        """Set the created_by field and create pool metadata."""
+        pool = serializer.save(created_by=self.request.user)
+
+        # Create pool metadata columns based on table columns
+        from .utils import create_pool_metadata_from_table_columns
+
+        create_pool_metadata_from_table_columns(pool)
+
     @action(detail=True, methods=["get"])
     def metadata_columns(self, request, pk=None):
         """Get metadata columns associated with this pool."""
@@ -1136,11 +1145,11 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         hidden_metadata = [m for m in metadata_columns if m.hidden]
 
         # Sort metadata and get structured output (original CUPCAKE approach)
-        result_main, id_map_main = sort_metadata(main_metadata, metadata_table.sample_count)
+        result_main, id_map_main = sort_metadata(main_metadata, metadata_table.sample_count, metadata_table)
         result_hidden = []
         id_map_hidden = {}
         if hidden_metadata:
-            result_hidden, id_map_hidden = sort_metadata(hidden_metadata, metadata_table.sample_count)
+            result_hidden, id_map_hidden = sort_metadata(hidden_metadata, metadata_table.sample_count, metadata_table)
 
         # Get pools and prepare pool data (original CUPCAKE logic)
         pools = list(metadata_table.sample_pools.all())
@@ -1830,11 +1839,14 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
                         if cell_value == "":
                             continue
-                        if cell_value == "not applicable":
-                            metadata_column.not_applicable = True
-                            continue
 
-                        value = metadata_column.convert_sdrf_to_metadata(cell_value)
+                        # Handle "not applicable" and "not available" as sample-specific values
+                        if cell_value == "not applicable":
+                            value = "not applicable"
+                        elif cell_value == "not available":
+                            value = "not available"
+                        else:
+                            value = metadata_column.convert_sdrf_to_metadata(cell_value)
 
                         if value not in metadata_value_map:
                             metadata_value_map[value] = []
@@ -1953,6 +1965,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                                         "is_reference": True,  # SN= pools are reference pools
                                         "metadata_row": row,
                                         "sdrf_value": sdrf_value,
+                                        "all_data_rows": data_rows,
                                     }
                                 )
 
@@ -1988,6 +2001,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                                 "is_reference": False,  # Pooled rows are not reference pools by default
                                 "metadata_row": template_row,
                                 "sdrf_value": sdrf_value,
+                                "all_data_rows": data_rows,
                             }
                         )
 
@@ -2283,12 +2297,15 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
                         if cell_value == "":
                             continue
-                        if cell_value == "not applicable":
-                            metadata_column.not_applicable = True
-                            continue
 
-                        # Convert value using original CUPCAKE conversion
-                        value = convert_sdrf_to_metadata(metadata_column.name.lower(), cell_value)
+                        # Handle "not applicable" and "not available" as sample-specific values
+                        if cell_value == "not applicable":
+                            value = "not applicable"
+                        elif cell_value == "not available":
+                            value = "not available"
+                        else:
+                            # Convert value using original CUPCAKE conversion
+                            value = convert_sdrf_to_metadata(metadata_column.name.lower(), cell_value)
 
                         if value not in metadata_value_map:
                             metadata_value_map[value] = []
@@ -2360,6 +2377,12 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                         is_reference=is_reference,
                         created_by=request.user,
                     )
+
+                    # Create pool metadata columns based on table columns
+                    from .utils import create_pool_metadata_from_table_columns
+
+                    create_pool_metadata_from_table_columns(sample_pool)
+
                     created_pools.append(sample_pool)
 
             # Perform ontology validation on imported data
@@ -2535,7 +2558,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         visible_metadata = metadata_columns.filter(hidden=False)
 
         # Sort metadata and get structured output for SDRF format
-        result_data, _ = sort_metadata(list(visible_metadata), metadata_table.sample_count)
+        result_data, _ = sort_metadata(list(visible_metadata), metadata_table.sample_count, metadata_table)
 
         # Add pool data if requested and pools exist (original CUPCAKE logic)
         if data.get("include_pools", True):

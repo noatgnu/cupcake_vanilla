@@ -16,7 +16,7 @@ __version__ = "1.0.0"
 __author__ = "Toan Phung"
 __email__ = "toan.phung@proteo.info"
 __description__ = "CUPCAKE - Comprehensive platform for scientific metadata management"
-__url__ = "https://github.com/noatgnu/cupcake-vanilla"
+__url__ = "https://github.com/noatgnu/cupcake_vanilla"
 
 # Package information
 __title__ = "cupcake-core"

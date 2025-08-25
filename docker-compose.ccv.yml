@@ -1,0 +1,88 @@
+version: '3.9'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile
+    container_name: cupcake-vanilla-app
+    env_file: []
+    environment:
+      - POSTGRES_NAME=cupcake_vanilla_db
+      - POSTGRES_DB=cupcake_vanilla_db
+      - POSTGRES_USER=cupcake_vanilla
+      - POSTGRES_PASSWORD=cupcake_vanilla_pass
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - DEBUG=False
+      - ALLOWED_HOSTS=ccv.ome.quest,localhost,127.0.0.1
+      - CORS_ORIGIN_WHITELIST=https://ccv.ome.quest,https://localhost,http://localhost:4200
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./media:/app/media/
+    networks:
+      - cupcake-vanilla-net
+
+  nginx:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile-nginx-ccv
+    container_name: cupcake-vanilla-nginx-ccv
+    restart: always
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+      - ./media:/media:ro
+    networks:
+      - cupcake-vanilla-net
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: cupcake-vanilla-certbot
+    # First run (obtain cert): docker compose -f docker-compose.ccv.yml run --rm certbot certonly --webroot -w /var/www/certbot -d ccv.ome.quest --email you@example.com --agree-tos --no-eff-email
+    # Renewal (cron/host): docker compose -f docker-compose.ccv.yml run --rm certbot renew --webroot -w /var/www/certbot && docker compose -f docker-compose.ccv.yml exec nginx nginx -s reload
+    entrypoint: /bin/sh
+    command: -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --agree-tos; sleep 12h & wait $!; done"
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    networks:
+      - cupcake-vanilla-net
+
+  db:
+    image: postgres:15
+    container_name: cupcake-vanilla-db
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: cupcake_vanilla_pass
+      POSTGRES_USER: cupcake_vanilla
+      POSTGRES_DB: cupcake_vanilla_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - cupcake-vanilla-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: cupcake-vanilla-redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - cupcake-vanilla-net
+
+volumes:
+  postgres-data:
+  letsencrypt:
+  certbot-www:
+
+networks:
+  cupcake-vanilla-net:

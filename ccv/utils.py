@@ -21,7 +21,7 @@ from .models import FavouriteMetadataOption, MetadataColumn, SamplePool, Schema
 
 
 def sort_metadata(
-    metadata_columns: List[MetadataColumn], sample_number: int
+    metadata_columns: List[MetadataColumn], sample_number: int, metadata_table=None
 ) -> Tuple[List[List[str]], Dict[int, Dict[str, Any]]]:
     """
     Sort metadata columns and create a structured output for SDRF export.
@@ -29,12 +29,28 @@ def sort_metadata(
     Args:
         metadata_columns: List of MetadataColumn objects
         sample_number: Number of samples
+        metadata_table: MetadataTable object (optional, used for pool information)
 
     Returns:
         Tuple of (result_data, id_map)
     """
     # Sort metadata columns by position and name
     sorted_metadata = sorted(metadata_columns, key=lambda x: (x.column_position or 0, x.name))
+
+    # Get pool information for setting pooled sample column
+    pooled_sample_status = {}  # sample_index -> status ("pooled", "not pooled", or None for not in any pool)
+    if metadata_table:
+        # Check ALL pools (both reference and non-reference) to determine pooled status
+        all_pools = list(metadata_table.sample_pools.all())
+        for pool in all_pools:
+            # Samples in pooled_only_samples are marked as "pooled"
+            for sample_idx in pool.pooled_only_samples:
+                pooled_sample_status[sample_idx] = "pooled"
+
+            # Samples in pooled_and_independent_samples are marked as "not pooled"
+            # but they can still appear in SN= rows for reference pools
+            for sample_idx in pool.pooled_and_independent_samples:
+                pooled_sample_status[sample_idx] = "not pooled"
 
     # Create header row
     headers = []
@@ -59,35 +75,45 @@ def sort_metadata(
         for metadata in sorted_metadata:
             value = ""
 
-            # Check for sample-specific modifiers
-            if metadata.modifiers and isinstance(metadata.modifiers, list):
-                # Look for sample-specific values in modifiers
-                for modifier in metadata.modifiers:
-                    if isinstance(modifier, dict):
-                        sample_range = modifier.get("samples", "")
-                        # Parse sample range string (can be "1,2,3" or "4-6")
-                        if sample_range:
-                            sample_indices = []
-                            for part in sample_range.split(","):
-                                part = part.strip()
-                                if "-" in part:
-                                    start, end = part.split("-")
-                                    sample_indices.extend(range(int(start), int(end) + 1))
-                                else:
-                                    sample_indices.append(int(part))
+            # Special handling for pooled sample column
+            if metadata.name.lower() == "pooled sample":
+                sample_number_1_based = sample_idx + 1
+                if sample_number_1_based in pooled_sample_status:
+                    value = pooled_sample_status[sample_number_1_based]
+                else:
+                    # Independent samples that are not in any pool show as "not pooled"
+                    value = "not pooled"
+            else:
+                # Check for sample-specific modifiers
+                if metadata.modifiers and isinstance(metadata.modifiers, list):
+                    # Look for sample-specific values in modifiers
+                    for modifier in metadata.modifiers:
+                        if isinstance(modifier, dict):
+                            sample_range = modifier.get("samples", "")
+                            # Parse sample range string (can be "1,2,3" or "4-6")
+                            if sample_range:
+                                sample_indices = []
+                                for part in sample_range.split(","):
+                                    part = part.strip()
+                                    if "-" in part:
+                                        start, end = part.split("-")
+                                        sample_indices.extend(range(int(start), int(end) + 1))
+                                    else:
+                                        sample_indices.append(int(part))
 
-                            if (sample_idx + 1) in sample_indices:
-                                value = modifier.get("value", "")
-                                break
+                                if (sample_idx + 1) in sample_indices:
+                                    value = modifier.get("value", "")
+                                    break
 
-            # Use default value if no modifier found
-            if not value:
-                value = metadata.value or ""
+                # Use default value if no modifier found
+                if not value:
+                    value = metadata.value or ""
 
             # Handle empty values with not_applicable flag
             if not value and metadata.not_applicable:
                 value = "not applicable"
-            elif not value:
+            elif not value and metadata.name.lower() != "pooled sample":
+                # Don't set "not available" for pooled sample column - empty is fine
                 value = "not available"
 
             row.append(value)
@@ -834,16 +860,167 @@ def synchronize_pools_with_import_data(metadata_table, import_pools_data, metada
         pool.delete()
 
 
+def _calculate_most_common_value_for_column(data_rows, pooled_sample_indices, col_index, metadata_column):
+    """
+    Calculate the most common value for a column among pooled samples.
+
+    Args:
+        data_rows: All data rows from the import
+        pooled_sample_indices: List of 1-based sample indices that belong to this pool
+        col_index: Column index to analyze
+        metadata_column: Metadata column for context
+
+    Returns:
+        Most common value among the pooled samples for this column
+    """
+    from collections import Counter
+
+    values = []
+
+    # Convert 1-based sample indices to 0-based row indices
+    for sample_index in pooled_sample_indices:
+        row_index = sample_index - 1  # Convert to 0-based
+        if row_index < len(data_rows):
+            row = data_rows[row_index]
+            if col_index < len(row):
+                cell_value = row[col_index].strip()
+                if cell_value and cell_value != "":  # Exclude empty values
+                    values.append(cell_value)
+
+    if not values:
+        # No values found - check if column allows not applicable
+        if metadata_column.not_applicable:
+            return "not applicable"
+        else:
+            return "not available"
+
+    # Find the most common value
+    value_counts = Counter(values)
+    most_common_value = value_counts.most_common(1)[0][0]
+
+    return most_common_value
+
+
+def create_pool_metadata_from_table_columns(pool):
+    """
+    Create metadata columns for a pool based on the parent table's columns.
+    This ensures the pool has all necessary metadata columns with appropriate values.
+
+    Args:
+        pool: SamplePool instance
+    """
+    from .models import MetadataColumn
+
+    # Get the parent table's columns
+    table_columns = list(pool.metadata_table.columns.all())
+
+    # Clear existing pool metadata columns
+    pool.metadata_columns.clear()
+
+    for table_column in table_columns:
+        if table_column.name.lower() == "pooled sample":
+            # Set pooled sample column to SN= value
+            pool_metadata_column = MetadataColumn.objects.create(
+                name=table_column.name,
+                type=table_column.type,
+                value=pool.sdrf_value,  # This will generate SN=source1,source2,...
+                mandatory=table_column.mandatory,
+                hidden=table_column.hidden,
+            )
+        elif table_column.name.lower() == "source name":
+            # Set source name column to pool name
+            pool_metadata_column = MetadataColumn.objects.create(
+                name=table_column.name,
+                type=table_column.type,
+                value=pool.pool_name,
+                mandatory=table_column.mandatory,
+                hidden=table_column.hidden,
+            )
+        else:
+            # For other columns, calculate the most common value among pool samples
+            pool_value = _calculate_most_common_value_for_pool_column(pool, table_column)
+            pool_metadata_column = MetadataColumn.objects.create(
+                name=table_column.name,
+                type=table_column.type,
+                value=pool_value,
+                mandatory=table_column.mandatory,
+                hidden=table_column.hidden,
+            )
+
+        # Add the metadata column to the pool
+        pool.metadata_columns.add(pool_metadata_column)
+
+
+def _calculate_most_common_value_for_pool_column(pool, table_column):
+    """Calculate the most common value for a column among pool samples."""
+    from collections import Counter
+
+    pooled_sample_indices = pool.pooled_only_samples + pool.pooled_and_independent_samples
+    values = []
+
+    # Check if the table column has modifiers for specific samples
+    if table_column.modifiers and isinstance(table_column.modifiers, list):
+        for sample_idx in pooled_sample_indices:
+            sample_value = None
+
+            # Look for sample-specific modifiers
+            for modifier in table_column.modifiers:
+                if isinstance(modifier, dict):
+                    sample_range = modifier.get("samples", "")
+                    if sample_range:
+                        sample_indices = []
+                        for part in sample_range.split(","):
+                            part = part.strip()
+                            if "-" in part:
+                                start, end = part.split("-")
+                                sample_indices.extend(range(int(start), int(end) + 1))
+                            else:
+                                sample_indices.append(int(part))
+
+                        if sample_idx in sample_indices:
+                            sample_value = modifier.get("value", "")
+                            break
+
+            # Use default value if no modifier found
+            if sample_value is None:
+                sample_value = table_column.value or ""
+
+            if sample_value:
+                values.append(sample_value)
+    else:
+        # No modifiers, all samples use default value
+        if table_column.value:
+            return table_column.value
+
+    if not values:
+        # No values found - check if column allows not applicable
+        if table_column.not_applicable:
+            return "not applicable"
+        else:
+            return "not available"
+
+    # Find the most common value
+    value_counts = Counter(values)
+    most_common_value = value_counts.most_common(1)[0][0]
+
+    return most_common_value
+
+
 def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
     """Create metadata for a pool from import data (ccv unified version)."""
     from .models import MetadataColumn
 
-    row = pool_data["metadata_row"]
+    row = pool_data.get("metadata_row")
     pool_name = pool_data["pool_name"]
     sdrf_value = pool_data["sdrf_value"]
+    has_sn_pattern = sdrf_value.startswith("SN=")
+
+    # Get all data rows for calculating most common values when no SN= pattern
+    all_data_rows = pool_data.get("all_data_rows", [])
+    pooled_sample_indices = pool_data["pooled_only_samples"] + pool_data["pooled_and_independent_samples"]
 
     for col_index, metadata_column in enumerate(metadata_columns):
-        if metadata_column.name == "pooled sample":
+        if metadata_column.name.lower() == "characteristics[pooled sample]":
             # Create pooled sample column with SN= value
             pool_metadata_column = MetadataColumn.objects.create(
                 name=metadata_column.name,
@@ -852,7 +1029,7 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
                 mandatory=metadata_column.mandatory,
                 hidden=metadata_column.hidden,
             )
-        elif metadata_column.name == "Source name":
+        elif metadata_column.name.lower() == "source name":
             # Create source name column with pool name
             pool_metadata_column = MetadataColumn.objects.create(
                 name=metadata_column.name,
@@ -862,8 +1039,16 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
                 hidden=metadata_column.hidden,
             )
         else:
-            # Create other metadata columns from the row
-            raw_value = row[col_index] if col_index < len(row) else ""
+            # Determine the value based on SN= pattern or most common value logic
+            if has_sn_pattern and row:
+                # Case 1: SN= pattern - use the SN= row's value directly
+                raw_value = row[col_index] if col_index < len(row) else ""
+            else:
+                # Case 2: No SN= pattern - calculate most common value among pooled samples
+                raw_value = _calculate_most_common_value_for_column(
+                    all_data_rows, pooled_sample_indices, col_index, metadata_column
+                )
+
             processed_value = raw_value
 
             # Process marker values for pools (same logic as main import)
@@ -893,6 +1078,13 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
                 elif raw_value.endswith("[****]"):
                     # Project suggestion - just strip the marker
                     processed_value = raw_value.replace("[****]", "")
+
+            # Handle special cases for empty/not applicable values (same logic as main table)
+            if not processed_value or processed_value.strip() == "":
+                if metadata_column.not_applicable:
+                    processed_value = "not applicable"
+                else:
+                    processed_value = "not available"
 
             pool_metadata_column = MetadataColumn.objects.create(
                 name=metadata_column.name,
