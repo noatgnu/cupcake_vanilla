@@ -54,37 +54,19 @@ services:
     command: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --agree-tos; sleep 12h & wait $$!; done"
 
   certbot-init:
-    image: certbot/certbot:latest
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile-certbot-init
     volumes:
       - letsencrypt:/etc/letsencrypt
       - certbot-www:/var/www/certbot
-    networks:
-      - cupcake-vanilla-net
     ports:
       - "80:80"
     profiles:
       - tools
     environment:
       - CERTBOT_EMAIL=${CERTBOT_EMAIL:-admin@example.com}
-    command:
-      - sh
-      - -c
-      - |
-        echo "Starting certbot in standalone mode..."
-        echo "Using email: $$CERTBOT_EMAIL"
-        echo "Domain: ccv.ome.quest"
-
-        certbot certonly \
-          --standalone \
-          --non-interactive \
-          --email "$$CERTBOT_EMAIL" \
-          --agree-tos \
-          --no-eff-email \
-          --force-renewal \
-          --domains ccv.ome.quest
-
-        echo "Certificate generation complete!"
-    entrypoint: ""
+      - DOMAIN=ccv.ome.quest
 
   db:
     image: postgres:15
