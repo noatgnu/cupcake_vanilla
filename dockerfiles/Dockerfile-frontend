@@ -32,8 +32,7 @@ RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
 RUN npm ci
 
 # Build the Angular application for production
-RUN chmod +x ./build-all.sh
-RUN npm run build:all
+RUN npm run build:libs && npm run build
 
 # Verify build output
 RUN ls -la dist/ && ls -la dist/cupcake-vanilla-ng/
