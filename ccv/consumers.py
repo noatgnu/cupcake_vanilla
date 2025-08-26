@@ -112,6 +112,13 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                         {"type": "subscription.confirmed", "subscription_type": subscription_type, "table_id": table_id}
                     )
                 )
+        elif subscription_type == "async_task_updates":
+            # Subscribe to user's async task updates
+            task_group_name = f"async_tasks_user_{self.user.id}"
+            await self.channel_layer.group_add(task_group_name, self.channel_name)
+            await self.send(
+                text_data=json.dumps({"type": "subscription.confirmed", "subscription_type": subscription_type})
+            )
 
     # Group message handlers
     async def notification_message(self, event):
@@ -156,6 +163,24 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                     "level": event.get("level", "info"),
                     "title": event["title"],
                     "message": event["message"],
+                    "timestamp": event.get("timestamp"),
+                }
+            )
+        )
+
+    async def async_task_update(self, event):
+        """Handle async task status updates."""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "async_task.update",
+                    "task_id": event["task_id"],
+                    "status": event["status"],
+                    "progress_percentage": event.get("progress_percentage"),
+                    "progress_description": event.get("progress_description"),
+                    "error_message": event.get("error_message"),
+                    "result": event.get("result"),
+                    "download_url": event.get("download_url"),
                     "timestamp": event.get("timestamp"),
                 }
             )

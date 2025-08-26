@@ -6,6 +6,7 @@ from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
+from .async_views import AsyncExportViewSet, AsyncImportViewSet, AsyncTaskViewSet, cleanup_expired_files
 from .chunked_upload import MetadataChunkedUploadView
 from .views import (
     CellOntologyViewSet,
@@ -61,6 +62,11 @@ router.register(r"ontology/search", OntologySearchViewSet, basename="ontologysea
 router.register(r"schemas", SchemaViewSet, basename="schema")
 router.register(r"sdrf-defaults", SDRFDefaultsViewSet, basename="sdrfdefaults")
 
+# Async task endpoints
+router.register(r"async-tasks", AsyncTaskViewSet, basename="asynctask")
+router.register(r"async-export", AsyncExportViewSet, basename="asyncexport")
+router.register(r"async-import", AsyncImportViewSet, basename="asyncimport")
+
 urlpatterns = [
     # DRF ViewSet endpoints (api/v1/ prefix comes from main urls.py)
     path("", include(router.urls)),
@@ -74,5 +80,11 @@ urlpatterns = [
         "chunked-upload/<uuid:pk>/",
         MetadataChunkedUploadView.as_view(),
         name="chunked-upload-detail",
+    ),
+    # Admin endpoint for cleaning up expired files
+    path(
+        "cleanup-expired-files/",
+        cleanup_expired_files,
+        name="cleanup-expired-files",
     ),
 ]

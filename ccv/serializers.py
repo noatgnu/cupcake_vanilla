@@ -26,6 +26,7 @@ from .models import (
     UberonAnatomy,
     Unimod,
 )
+from .task_models import AsyncTaskStatus
 
 
 class MetadataTableSerializer(serializers.ModelSerializer):
@@ -281,6 +282,9 @@ class MetadataExportSerializer(serializers.Serializer):
         choices=["excel", "csv", "sdrf"], default="excel", help_text="Export format"
     )
     include_pools = serializers.BooleanField(default=False, help_text="Whether to include sample pools in export")
+    async_processing = serializers.BooleanField(
+        default=False, help_text="Whether to process the export asynchronously via task queue"
+    )
     pool_ids = serializers.ListField(
         child=serializers.IntegerField(),
         required=False,
@@ -305,6 +309,9 @@ class MetadataImportSerializer(serializers.Serializer):
     )
     create_pools = serializers.BooleanField(default=True, help_text="Whether to create sample pools from SDRF data")
     replace_existing = serializers.BooleanField(default=False, help_text="Whether to replace existing metadata columns")
+    async_processing = serializers.BooleanField(
+        default=False, help_text="Whether to process the import asynchronously via task queue"
+    )
 
     def validate_metadata_table_id(self, value):
         """Validate that the metadata table exists."""
@@ -1185,3 +1192,102 @@ class OntologySuggestionSerializer(serializers.Serializer):
                 "ontology_type": ontology_type,
                 "full_data": data,  # Return all available data for unknown types
             }
+
+
+class AsyncTaskStatusSerializer(serializers.ModelSerializer):
+    """Serializer for AsyncTaskStatus model."""
+
+    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
+    task_type_display = serializers.CharField(source="get_task_type_display", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    duration = serializers.SerializerMethodField()
+    progress_percentage = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AsyncTaskStatus
+        fields = [
+            "id",
+            "task_type",
+            "task_type_display",
+            "status",
+            "status_display",
+            "metadata_table",
+            "metadata_table_name",
+            "parameters",
+            "result",
+            "progress_current",
+            "progress_total",
+            "progress_percentage",
+            "progress_description",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "duration",
+            "error_message",
+            "rq_job_id",
+            "queue_name",
+        ]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "duration",
+            "progress_percentage",
+            "task_type_display",
+            "status_display",
+            "metadata_table_name",
+        ]
+
+    def get_duration(self, obj):
+        """Return task duration in seconds."""
+        return obj.duration
+
+    def get_progress_percentage(self, obj):
+        """Return progress as percentage."""
+        return obj.progress_percentage
+
+
+class AsyncTaskListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing async tasks."""
+
+    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
+    task_type_display = serializers.CharField(source="get_task_type_display", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    duration = serializers.SerializerMethodField()
+    progress_percentage = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AsyncTaskStatus
+        fields = [
+            "id",
+            "task_type",
+            "task_type_display",
+            "status",
+            "status_display",
+            "metadata_table",
+            "metadata_table_name",
+            "progress_percentage",
+            "progress_description",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "duration",
+            "error_message",
+        ]
+        read_only_fields = "__all__"
+
+    def get_duration(self, obj):
+        """Return task duration in seconds."""
+        return obj.duration
+
+    def get_progress_percentage(self, obj):
+        """Return progress as percentage."""
+        return obj.progress_percentage
+
+
+class TaskCreateResponseSerializer(serializers.Serializer):
+    """Serializer for task creation responses."""
+
+    task_id = serializers.UUIDField(help_text="ID of the created task")
+    message = serializers.CharField(help_text="Success message")

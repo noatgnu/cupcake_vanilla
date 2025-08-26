@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "drf_chunked_upload",
     "social_django",
     "channels",
+    "django_rq",
     "ccc.apps.CccConfig",
     "ccv.apps.CcvConfig",
 ]
@@ -130,6 +131,47 @@ SESSION_CACHE_ALIAS = "default"
 
 # Cache time to live is 15 minutes by default
 CACHE_TTL = 60 * 15
+
+# RQ (Redis Queue) configuration
+RQ_QUEUES = {
+    "default": {
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
+        "DB": int(os.environ.get("REDIS_DB_RQ", "3")),  # Use different DB from cache and channels
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
+        "DEFAULT_TIMEOUT": 3600,  # 1 hour timeout for tasks
+        "CONNECTION_KWARGS": {
+            "health_check_interval": 30,
+        },
+    },
+    "high": {
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
+        "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
+        "DEFAULT_TIMEOUT": 1800,  # 30 minutes for high priority tasks
+        "CONNECTION_KWARGS": {
+            "health_check_interval": 30,
+        },
+    },
+    "low": {
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
+        "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
+        "DEFAULT_TIMEOUT": 7200,  # 2 hours for low priority tasks
+        "CONNECTION_KWARGS": {
+            "health_check_interval": 30,
+        },
+    },
+}
+
+# Enable/disable RQ task queuing (can be configured per environment)
+ENABLE_RQ_TASKS = os.environ.get("ENABLE_RQ_TASKS", "True").lower() in ("true", "1", "yes", "on")
+
+# Task result file settings
+TASK_RESULT_EXPIRE_DAYS = int(os.environ.get("TASK_RESULT_EXPIRE_DAYS", "7"))  # Files expire after 7 days
+TASK_DOWNLOAD_TOKEN_MAX_AGE = int(os.environ.get("TASK_DOWNLOAD_TOKEN_MAX_AGE", "600"))  # 10 minutes
 
 # Django Channels configuration
 CHANNEL_LAYERS = {

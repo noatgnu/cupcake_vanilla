@@ -6,6 +6,7 @@ import io
 import json
 import re
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models
 from django.db.models import Q
@@ -510,6 +511,23 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    def perform_update(self, serializer):
+        """Update metadata column and sync hidden property to pool columns."""
+        # Get the old instance to check what changed
+        old_instance = self.get_object()
+        old_hidden = old_instance.hidden
+
+        # Save the updated instance
+        instance = serializer.save()
+
+        # If hidden property changed, sync to pool columns
+        if old_hidden != instance.hidden:
+            sample_pools = instance.metadata_table.sample_pools.all()
+            for pool in sample_pools:
+                pool_columns = pool.metadata_columns.filter(column_position=instance.column_position)
+                if pool_columns.exists():
+                    pool_columns.update(hidden=instance.hidden)
+
 
 class SamplePoolViewSet(FilterMixin, viewsets.ModelViewSet):
     """ViewSet for managing SamplePool objects."""
@@ -544,6 +562,15 @@ class SamplePoolViewSet(FilterMixin, viewsets.ModelViewSet):
         from .utils import create_pool_metadata_from_table_columns
 
         create_pool_metadata_from_table_columns(pool)
+
+    def perform_update(self, serializer):
+        """Update pool and refresh pooled sample columns."""
+        pool = serializer.save()
+
+        # Update pooled sample column values after pool changes
+        from .utils import update_pooled_sample_column_for_table
+
+        update_pooled_sample_column_for_table(pool.metadata_table)
 
     @action(detail=True, methods=["get"])
     def metadata_columns(self, request, pk=None):
@@ -1134,6 +1161,20 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Check if async processing is requested and RQ is enabled
+        if data.get("async_processing", False):
+            if not getattr(settings, "ENABLE_RQ_TASKS", False):
+                return Response(
+                    {"error": "Async task queuing is not enabled"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            # Queue async task
+            from .async_views import AsyncExportViewSet
+
+            async_view = AsyncExportViewSet()
+            return async_view.excel_template(request)
+
         # Get metadata columns (user can specify specific columns or get all)
         if data.get("metadata_column_ids"):
             metadata_columns = metadata_table.columns.filter(id__in=data["metadata_column_ids"])
@@ -1223,9 +1264,9 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         pool_object_map_ws = None
 
         if has_pools and data.get("include_pools", True):
-            # Note: Pool worksheets created but not fully utilized in simplified ccv
-            wb.create_sheet(title="pool_main")
-            wb.create_sheet(title="pool_hidden")
+            # Create pool worksheets with actual pool data
+            pool_main_ws = wb.create_sheet(title="pool_main")
+            pool_hidden_ws = wb.create_sheet(title="pool_hidden")
             pool_id_metadata_column_map_ws = wb.create_sheet(title="pool_id_metadata_column_map")
             pool_object_map_ws = wb.create_sheet(title="pool_object_map")
 
@@ -1236,8 +1277,30 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         for k, v in id_map_hidden.items():
             id_metadata_column_map_ws.append([k, v["column"], v["name"], v["type"], v["hidden"]])
 
-        # Fill pool ID mapping if pools exist
+        # Fill pool data and mapping if pools exist
         if has_pools and data.get("include_pools", True) and pool_id_metadata_column_map_ws:
+            # Get pool metadata columns
+            pool_main_metadata = [m for m in metadata_columns if not m.hidden]
+            pool_hidden_metadata = [m for m in metadata_columns if m.hidden]
+
+            # Generate pool data using sort_pool_metadata utility
+            from .utils import sort_pool_metadata
+
+            result_pool_main, pool_id_map_main = sort_pool_metadata(pool_main_metadata, pools)
+            result_pool_hidden, pool_id_map_hidden = (
+                sort_pool_metadata(pool_hidden_metadata, pools) if pool_hidden_metadata else ([], {})
+            )
+
+            # Fill pool_main sheet
+            for row_data in result_pool_main:
+                pool_main_ws.append(row_data)
+
+            # Fill pool_hidden sheet if there's hidden data
+            if result_pool_hidden:
+                for row_data in result_pool_hidden:
+                    pool_hidden_ws.append(row_data)
+
+            # Fill pool ID metadata column mapping
             pool_id_metadata_column_map_ws.append(["id", "column", "name", "type", "hidden"])
             for k, v in pool_id_map_main.items():
                 pool_id_metadata_column_map_ws.append([k, v["column"], v["name"], v["type"], v["hidden"]])
@@ -1674,6 +1737,14 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 # Try to find exact match in template
                 template_column = table_template.user_columns.filter(name__iexact=clean_name).first()
 
+            # If not found in table template, try to find in global column templates
+            if not template_column:
+                from .models import MetadataColumnTemplate
+
+                template_column = MetadataColumnTemplate.objects.filter(
+                    column_name__iexact=clean_name, is_active=True
+                ).first()
+
             # Create new column with template properties if available
             if template_column:
                 # Create column using template properties (copy, don't reference existing template column)
@@ -1712,6 +1783,20 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
+
+        # Check if async processing is requested and RQ is enabled
+        if data.get("async_processing", False):
+            if not getattr(settings, "ENABLE_RQ_TASKS", False):
+                return Response(
+                    {"error": "Async task queuing is not enabled"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            # Queue async task
+            from .async_views import AsyncImportViewSet
+
+            async_view = AsyncImportViewSet()
+            return async_view.sdrf_file(request)
 
         try:
             # Read and parse SDRF file
@@ -2013,46 +2098,44 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
             # Perform ontology validation on imported data
             validation_results = validate_sdrf_data_against_ontologies(headers, data_rows, created_columns)
-
+            for col in metadata_table.columns.all():
+                print(f"Column: {col.name}, Position: {col.column_position}")
             # Reorganize columns based on schema order from template
-            if table_template and hasattr(table_template, "user_columns"):
-                # Collect schemas from the template's columns
-                schema_ids = set()
-                for template_column in table_template.user_columns.all():
-                    if (
-                        hasattr(template_column, "template")
-                        and template_column.template
-                        and hasattr(template_column.template, "schema")
-                        and template_column.template.schema
-                    ):
-                        schema_ids.add(template_column.template.schema.id)
-
-                if schema_ids:
-                    try:
-                        metadata_table.reorder_columns_by_schema(schema_ids=list(schema_ids))
-                    except Exception as e:
-                        # Log error but don't fail the import
-                        print(f"Warning: Failed to reorder columns by schema: {e}")
-                        # Fall back to normalizing positions
+            if table_template:
+                if table_template.user_columns:
+                    schema_ids = set()
+                    for template_column in table_template.user_columns.all():
+                        if template_column.template:
+                            if template_column.template.schema:
+                                schema_ids.add(template_column.template.schema.id)
+                    if schema_ids:
+                        try:
+                            metadata_table.reorder_columns_by_schema(schema_ids=list(schema_ids))
+                        except Exception as e:
+                            # Log error but don't fail the import
+                            print(f"Warning: Failed to reorder columns by schema: {e}")
+                            # Fall back to normalizing positions
+                            metadata_table.normalize_column_positions()
+                    else:
+                        # No schemas found, just normalize positions
                         metadata_table.normalize_column_positions()
-                else:
-                    # No schemas found, just normalize positions
-                    metadata_table.normalize_column_positions()
 
-                # Apply the same reordering logic to sample pool columns
-                if created_pools:
-                    for pool in created_pools:
-                        if pool.metadata_columns.exists():
-                            if schema_ids:
-                                try:
-                                    pool.reorder_pool_columns_by_schema(schema_ids=list(schema_ids))
-                                except Exception as e:
-                                    # Log error but don't fail the import, fall back to basic reordering
-                                    print(f"Warning: Failed to reorder pool '{pool.pool_name}' columns by schema: {e}")
+                    # Apply the same reordering logic to sample pool columns
+                    if created_pools:
+                        for pool in created_pools:
+                            if pool.metadata_columns.exists():
+                                if schema_ids:
+                                    try:
+                                        pool.reorder_pool_columns_by_schema(schema_ids=list(schema_ids))
+                                    except Exception as e:
+                                        # Log error but don't fail the import, fall back to basic reordering
+                                        print(
+                                            f"Warning: Failed to reorder pool '{pool.pool_name}' columns by schema: {e}"
+                                        )
+                                        pool.basic_pool_column_reordering()
+                                else:
+                                    # No schemas found, use basic section-based ordering for pools
                                     pool.basic_pool_column_reordering()
-                            else:
-                                # No schemas found, use basic section-based ordering for pools
-                                pool.basic_pool_column_reordering()
             else:
                 # No template available, just normalize positions
                 metadata_table.normalize_column_positions()
@@ -2101,6 +2184,20 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
+
+        # Check if async processing is requested and RQ is enabled
+        if data.get("async_processing", False):
+            if not getattr(settings, "ENABLE_RQ_TASKS", False):
+                return Response(
+                    {"error": "Async task queuing is not enabled"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            # Queue async task
+            from .async_views import AsyncImportViewSet
+
+            async_view = AsyncImportViewSet()
+            return async_view.excel_file(request)
 
         try:
             # Read Excel workbook
@@ -2540,6 +2637,20 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 {"error": "metadata_table_id is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Check if async processing is requested and RQ is enabled
+        if data.get("async_processing", False):
+            if not getattr(settings, "ENABLE_RQ_TASKS", False):
+                return Response(
+                    {"error": "Async task queuing is not enabled"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            # Queue async task
+            from .async_views import AsyncExportViewSet
+
+            async_view = AsyncExportViewSet()
+            return async_view.sdrf_file(request)
 
         # Check permissions
         if not metadata_table.can_view(request.user):

@@ -200,8 +200,7 @@ class MetadataTable(BaseMetadataTable):
         # Get schema-based column ordering
         sections = compile_sdrf_columns_from_schemas(schema_names, schema_ids, schema_dir)
         section_order = ["source_name", "characteristics", "special", "comment", "factor_value"]
-        print(sections)
-        # Create mapping of column names to column objects organized by section
+
         column_map = {}
         for s in section_order:
             column_map[s] = {}
@@ -228,46 +227,35 @@ class MetadataTable(BaseMetadataTable):
                 if col_name not in column_map["special"]:
                     column_map["special"][col_name] = []
                 column_map["special"][col_name].append(col)
-        print(column_map)
         processed_columns = set()
-        section_count = {}
         current_position = 0
 
         # Process columns by schema sections in defined order
         for section in section_order:
             schema_columns = sections.get(section, [])
-            section_count[section] = 0
-
+            # First, process schema columns
             for schema_col_name in schema_columns:
                 schema_col_lower = schema_col_name.lower()
                 if schema_col_lower in column_map[section] and schema_col_lower not in processed_columns:
                     columns = column_map[section][schema_col_lower]
                     for column in columns:
+                        print(f"Setting position {current_position} for column {column.name}")
                         column.column_position = current_position
-                        section_count[section] += 1
                         column.save(update_fields=["column_position"])
                         current_position += 1
                     processed_columns.add(schema_col_lower)
-
-        # Handle remaining columns not defined in schema
-        current_overall_position = 0
-        for section in section_order:
-            current_overall_position += section_count[section]
-            for col_name in column_map[section]:
+            # Then, process remaining columns in this section not in schema
+            for col_name, columns in column_map[section].items():
                 if col_name not in processed_columns:
-                    columns = column_map[section][col_name]
                     for column in columns:
-                        column.column_position = current_overall_position
+                        print(f"Setting position {current_position} for column {column.name} (not in schema)")
+                        column.column_position = current_position
                         column.save(update_fields=["column_position"])
-                        current_overall_position += 1
-                        print(column.name, column.column_position)
-                else:
-                    columns = column_map[section][col_name]
-                    for column in columns:
-                        if column.column_position < current_overall_position:
-                            column.column_position = current_overall_position
-                            column.save(update_fields=["column_position"])
-                        current_overall_position += 1
+                        current_position += 1
+
+        for col in self.columns.all():
+            print(f"Column: {col.name}, Position: {col.column_position}")
+        # Removed unnecessary second loop and variables
 
         return True
 
@@ -1627,39 +1615,28 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                     column_map["special"][col_name].append(col)
 
         processed_columns = set()
-        section_count = {}
         current_position = 0
+
+        # Process columns by schema sections in defined order
         for section in section_order:
             schema_columns = sections.get(section, [])
-            section_count[section] = 0
+            # First, process schema columns
             for schema_col_name in schema_columns:
                 schema_col_lower = schema_col_name.lower()
                 if schema_col_lower in column_map[section] and schema_col_lower not in processed_columns:
                     columns = column_map[section][schema_col_lower]
                     for column in columns:
                         column.column_position = current_position
-                        section_count[section] += 1
                         column.save(update_fields=["column_position"])
                         current_position += 1
                     processed_columns.add(schema_col_lower)
-
-        current_overall_position = 0
-        for section in section_order:
-            current_overall_position += section_count[section]
-            for col_name in column_map[section]:
+            # Then, process remaining columns in this section not in schema
+            for col_name, columns in column_map[section].items():
                 if col_name not in processed_columns:
-                    columns = column_map[section][col_name]
                     for column in columns:
-                        column.column_position = current_overall_position
+                        column.column_position = current_position
                         column.save(update_fields=["column_position"])
-                        current_overall_position += 1
-                else:
-                    columns = column_map[section][col_name]
-                    for column in columns:
-                        if column.column_position < current_overall_position:
-                            column.column_position = current_overall_position
-                            column.save(update_fields=["column_position"])
-                        current_overall_position += 1
+                        current_position += 1
 
         return True
 
@@ -3060,3 +3037,6 @@ class MetadataColumnTemplateShare(models.Model):
 
     def __str__(self):
         return f"{self.template.name} shared with {self.user.username} ({self.permission_level})"
+
+
+# Task tracking models are imported where needed

@@ -159,12 +159,25 @@ def sort_pool_metadata(
     for pool in pools:
         row = []
         for metadata in sorted_metadata:
-            # For pools, use the pool name or metadata value
-            if metadata.name.lower() == "pool name":
+            value = ""
+
+            # Look for corresponding metadata column in this pool
+            pool_metadata_column = None
+            for pool_column in pool.metadata_columns.all():
+                if pool_column.name == metadata.name:
+                    pool_metadata_column = pool_column
+                    break
+
+            if pool_metadata_column:
+                value = pool_metadata_column.value or ""
+            elif metadata.name.lower() == "source name":
+                # Fallback: source name should be pool name
                 value = pool.pool_name
-            elif metadata.name.lower() == "pool description":
-                value = pool.pool_description or ""
+            elif metadata.name.lower().startswith("characteristics[pooled sample"):
+                # Fallback: pooled sample should be SN= value
+                value = pool.sdrf_value
             else:
+                # Use table column default as fallback
                 value = metadata.value or ""
 
             row.append(value)
@@ -1289,3 +1302,100 @@ def reorder_columns_by_schema(
         reordered_df.to_csv(output_file, sep="\t", index=False)
 
     return reordered_df
+
+
+def update_pooled_sample_column_for_table(metadata_table):
+    """
+    Update the 'pooled sample' column values for all rows in the metadata table based on current pool configurations.
+    Args:
+        metadata_table: MetadataTable instance
+    """
+    # Find the 'pooled sample' column (case insensitive, with or without characteristics[])
+    pooled_column = None
+    for column in metadata_table.columns.all():
+        if "pooled sample" in column.name.lower():
+            pooled_column = column
+            break
+
+    if not pooled_column:
+        return
+
+    # Initialize all samples as "not pooled"
+    pooled_sample_status = {}
+    sample_count = metadata_table.columns.first().row_count if metadata_table.columns.exists() else 0
+
+    for i in range(1, sample_count + 1):
+        pooled_sample_status[i] = "not pooled"
+
+    # Update status based on current pool configurations
+    for pool in metadata_table.sample_pools.all():
+        # Samples that exist only in pools (pooled_only_samples)
+        for sample_idx in pool.pooled_only_samples:
+            if sample_idx in pooled_sample_status:
+                # Generate SN= value for this pool
+                sn_value = f"SN={pool.pool_name}"
+                pooled_sample_status[sample_idx] = sn_value
+
+        # Samples that exist both in pool and independently (pooled_and_independent_samples)
+        for sample_idx in pool.pooled_and_independent_samples:
+            if sample_idx in pooled_sample_status:
+                # These samples remain as "not pooled" in the main table
+                pooled_sample_status[sample_idx] = "not pooled"
+
+    # Update the column's modifiers to reflect the new pooled sample status
+    modifiers = []
+    current_value = "not pooled"  # Default value
+
+    # Group consecutive sample indices with the same value for efficient storage
+    value_ranges = {}
+    for sample_idx, value in pooled_sample_status.items():
+        if value not in value_ranges:
+            value_ranges[value] = []
+        value_ranges[value].append(sample_idx)
+
+    # Create modifiers for each unique value
+    for value, sample_indices in value_ranges.items():
+        if value == "not pooled":
+            # This becomes the default value
+            current_value = value
+            continue
+
+        # Convert sample indices to range strings
+        sample_indices.sort()
+        ranges = []
+        start = sample_indices[0]
+        end = sample_indices[0]
+
+        for i in range(1, len(sample_indices)):
+            if sample_indices[i] == end + 1:
+                end = sample_indices[i]
+            else:
+                if start == end:
+                    ranges.append(str(start))
+                else:
+                    ranges.append(f"{start}-{end}")
+                start = sample_indices[i]
+                end = sample_indices[i]
+
+        # Add the last range
+        if start == end:
+            ranges.append(str(start))
+        else:
+            ranges.append(f"{start}-{end}")
+
+        modifiers.append({"samples": ",".join(ranges), "value": value})
+
+    # Update the pooled sample column
+    pooled_column.value = current_value
+    pooled_column.modifiers = modifiers
+    pooled_column.save()
+
+    # Also update corresponding pool columns
+    for pool in metadata_table.sample_pools.all():
+        pool_pooled_columns = pool.metadata_columns.filter(name__icontains="pooled sample")
+        if pool_pooled_columns.exists():
+            pool_pooled_column = pool_pooled_columns.first()
+            # Pool columns should show SN= format
+            sn_value = f"SN={pool.pool_name}"
+            pool_pooled_column.value = sn_value
+            pool_pooled_column.save()

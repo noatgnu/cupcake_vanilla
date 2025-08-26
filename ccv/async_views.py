@@ -1,0 +1,480 @@
+"""
+Async task management views for handling export/import operations via RQ.
+"""
+from django.conf import settings
+from django.http import HttpResponse
+from django.utils import timezone
+
+from django_filters.rest_framework import DjangoFilterBackend
+from django_rq import get_queue
+from rest_framework import status, viewsets
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.filters import SearchFilter
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from ccv.models import MetadataTable
+from ccv.serializers import (
+    AsyncTaskListSerializer,
+    AsyncTaskStatusSerializer,
+    MetadataExportSerializer,
+    MetadataImportSerializer,
+)
+from ccv.task_models import AsyncTaskStatus, TaskResult
+
+
+class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for managing async tasks (export/import operations).
+
+    Provides read-only access to user's async tasks with filtering and search capabilities.
+    Users can list, retrieve, cancel, and download results from their tasks.
+    """
+
+    queryset = AsyncTaskStatus.objects.all()
+    serializer_class = AsyncTaskListSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["task_type", "status", "metadata_table"]
+    search_fields = ["metadata_table__name"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        """Filter queryset to user's tasks only."""
+        return AsyncTaskStatus.objects.filter(user=self.request.user).order_by("-created_at")
+
+    def get_serializer_class(self):
+        """Return appropriate serializer class based on action."""
+        if self.action == "retrieve":
+            return AsyncTaskStatusSerializer
+        return AsyncTaskListSerializer
+
+    def retrieve(self, request, pk=None):
+        """Get specific task details."""
+        try:
+            task = self.get_queryset().get(id=pk)
+        except AsyncTaskStatus.DoesNotExist:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        data = {
+            "id": str(task.id),
+            "task_type": task.task_type,
+            "status": task.status,
+            "metadata_table_id": task.metadata_table.id if task.metadata_table else None,
+            "metadata_table_name": task.metadata_table.name if task.metadata_table else None,
+            "parameters": task.parameters,
+            "result": task.result,
+            "progress_percentage": task.progress_percentage,
+            "progress_description": task.progress_description,
+            "created_at": task.created_at,
+            "started_at": task.started_at,
+            "completed_at": task.completed_at,
+            "duration": task.duration,
+            "error_message": task.error_message,
+            "traceback": task.traceback if task.status == "FAILURE" else None,
+        }
+
+        return Response(data)
+
+    @action(detail=True, methods=["delete"])
+    def cancel(self, request, pk=None):
+        """Cancel a queued or running task."""
+        try:
+            task = self.get_queryset().get(id=pk)
+        except AsyncTaskStatus.DoesNotExist:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if task.status in ["SUCCESS", "FAILURE", "CANCELLED"]:
+            return Response({"error": "Task cannot be cancelled"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Try to cancel RQ job
+        if task.rq_job_id:
+            try:
+                queue = get_queue(task.queue_name)
+                job = queue.job_class.fetch(task.rq_job_id, connection=queue.connection)
+                if job:
+                    job.cancel()
+            except Exception:
+                pass  # Job might not exist or be cancellable
+
+        task.cancel()
+
+        return Response({"message": "Task cancelled successfully"})
+
+    @action(detail=True, methods=["get"])
+    def download_url(self, request, pk=None):
+        """Generate a signed download URL for task result file."""
+        try:
+            task = self.get_object()
+        except AsyncTaskStatus.DoesNotExist:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if task.status != "SUCCESS":
+            return Response({"error": "Task not completed successfully"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if task has file result
+        if not hasattr(task, "file_result") or not task.file_result.file:
+            return Response({"error": "No file available for download"}, status=status.HTTP_404_NOT_FOUND)
+
+        file_result = task.file_result
+
+        # Check if file has expired
+        if file_result.is_expired():
+            return Response({"error": "File has expired"}, status=status.HTTP_410_GONE)
+
+        # Generate signed download token with 10 minute expiry
+        signed_token, nginx_internal_path = file_result.generate_download_url(expire_minutes=10)
+
+        # Return download URL info
+        download_url = f"{request.build_absolute_uri(f'/api/v1/async-tasks/{task.id}/download/')}?token={signed_token}"
+
+        return Response(
+            {
+                "download_url": download_url,
+                "filename": file_result.file_name,
+                "content_type": file_result.content_type,
+                "file_size": file_result.file_size,
+                "expires_at": file_result.expires_at,
+                "expires_in_hours": max(0, int((file_result.expires_at - timezone.now()).total_seconds() / 3600)),
+            }
+        )
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        """Direct download endpoint with signed token verification."""
+        signed_token = request.GET.get("token")
+
+        if not signed_token:
+            return HttpResponse("Missing token", status=400)
+
+        # Verify the signed token
+        task_result = TaskResult.verify_download_token(signed_token, request.user)
+
+        if not task_result:
+            return HttpResponse("Invalid or expired token", status=403)
+
+        # Check if file exists
+        if not task_result.file or not task_result.get_file_path():
+            return HttpResponse("File not found", status=404)
+
+        # Record download
+        task_result.record_download()
+
+        # Use nginx X-Accel-Redirect for secure file serving
+        response = HttpResponse()
+        response["X-Accel-Redirect"] = f"/internal/media/{task_result.file.name}"
+        response["Content-Type"] = task_result.content_type or "application/octet-stream"
+        response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
+        response["Content-Length"] = task_result.file_size
+
+        # Add cache headers (short cache since files are temporary)
+        response["Cache-Control"] = "private, max-age=300"  # 5 minutes
+
+        # Optional: Add security headers
+        response["X-Content-Type-Options"] = "nosniff"
+        response["X-Download-Options"] = "noopen"
+
+        return response
+
+
+class AsyncExportViewSet(viewsets.GenericViewSet):
+    """
+    ViewSet for async export operations.
+
+    Provides endpoints to queue async export tasks for Excel and SDRF formats.
+    Tasks are processed in the background via RQ workers.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=["post"])
+    def excel_template(self, request):
+        """Queue Excel template export task."""
+        serializer = MetadataExportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            metadata_table = MetadataTable.objects.get(id=data["metadata_table_id"])
+        except MetadataTable.DoesNotExist:
+            return Response(
+                {"error": "metadata_table_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check permissions
+        if not metadata_table.can_view(request.user):
+            return Response(
+                {"error": "Permission denied: cannot view this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check if RQ is enabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            return Response(
+                {"error": "Async task queuing is not enabled"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Create task record
+        task = AsyncTaskStatus.objects.create(
+            task_type="EXPORT_EXCEL",
+            user=request.user,
+            metadata_table=metadata_table,
+            parameters={
+                "metadata_column_ids": data.get("metadata_column_ids"),
+                "include_pools": data.get("include_pools", True),
+            },
+        )
+
+        # Queue the task
+        queue = get_queue("default")
+        job = queue.enqueue(
+            "ccv.tasks.export_excel_template_task",
+            metadata_table_id=metadata_table.id,
+            user_id=request.user.id,
+            metadata_column_ids=data.get("metadata_column_ids"),
+            include_pools=data.get("include_pools", True),
+            task_id=str(task.id),
+            job_timeout="1h",
+        )
+
+        # Update task with job ID
+        task.rq_job_id = job.id
+        task.save(update_fields=["rq_job_id"])
+
+        return Response(
+            {"task_id": str(task.id), "message": "Excel export task queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=False, methods=["post"])
+    def sdrf_file(self, request):
+        """Queue SDRF file export task."""
+        serializer = MetadataExportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            metadata_table = MetadataTable.objects.get(id=data["metadata_table_id"])
+        except MetadataTable.DoesNotExist:
+            return Response(
+                {"error": "metadata_table_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check permissions
+        if not metadata_table.can_view(request.user):
+            return Response(
+                {"error": "Permission denied: cannot view this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check if RQ is enabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            return Response(
+                {"error": "Async task queuing is not enabled"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Create task record
+        task = AsyncTaskStatus.objects.create(
+            task_type="EXPORT_SDRF",
+            user=request.user,
+            metadata_table=metadata_table,
+            parameters={
+                "include_pools": data.get("include_pools", True),
+            },
+        )
+
+        # Queue the task
+        queue = get_queue("default")
+        job = queue.enqueue(
+            "ccv.tasks.export_sdrf_task",
+            metadata_table_id=metadata_table.id,
+            user_id=request.user.id,
+            include_pools=data.get("include_pools", True),
+            task_id=str(task.id),
+            job_timeout="1h",
+        )
+
+        # Update task with job ID
+        task.rq_job_id = job.id
+        task.save(update_fields=["rq_job_id"])
+
+        return Response(
+            {"task_id": str(task.id), "message": "SDRF export task queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class AsyncImportViewSet(viewsets.GenericViewSet):
+    """
+    ViewSet for async import operations.
+
+    Provides endpoints to queue async import tasks for SDRF and Excel files.
+    Tasks are processed in the background via RQ workers.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=["post"])
+    def sdrf_file(self, request):
+        """Queue SDRF file import task."""
+        serializer = MetadataImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            metadata_table = MetadataTable.objects.get(id=data["metadata_table_id"])
+        except MetadataTable.DoesNotExist:
+            return Response(
+                {"error": "Invalid metadata_table_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check permissions
+        if not metadata_table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check if RQ is enabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            return Response(
+                {"error": "Async task queuing is not enabled"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Read file content
+        file_content = data["file"].read().decode("utf-8")
+
+        # Create task record
+        task = AsyncTaskStatus.objects.create(
+            task_type="IMPORT_SDRF",
+            user=request.user,
+            metadata_table=metadata_table,
+            parameters={
+                "replace_existing": data.get("replace_existing", False),
+                "validate_ontologies": data.get("validate_ontologies", True),
+                "file_name": data["file"].name,
+            },
+        )
+
+        # Queue the task
+        queue = get_queue("default")
+        job = queue.enqueue(
+            "ccv.tasks.import_sdrf_task",
+            metadata_table_id=metadata_table.id,
+            user_id=request.user.id,
+            file_content=file_content,
+            replace_existing=data.get("replace_existing", False),
+            validate_ontologies=data.get("validate_ontologies", True),
+            task_id=str(task.id),
+            job_timeout="1h",
+        )
+
+        # Update task with job ID
+        task.rq_job_id = job.id
+        task.save(update_fields=["rq_job_id"])
+
+        return Response(
+            {"task_id": str(task.id), "message": "SDRF import task queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=False, methods=["post"])
+    def excel_file(self, request):
+        """Queue Excel file import task."""
+        serializer = MetadataImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            metadata_table = MetadataTable.objects.get(id=data["metadata_table_id"])
+        except MetadataTable.DoesNotExist:
+            return Response(
+                {"error": "Invalid metadata_table_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check permissions
+        if not metadata_table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check if RQ is enabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            return Response(
+                {"error": "Async task queuing is not enabled"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Read file data
+        file_data = data["file"].read()
+
+        # Create task record
+        task = AsyncTaskStatus.objects.create(
+            task_type="IMPORT_EXCEL",
+            user=request.user,
+            metadata_table=metadata_table,
+            parameters={
+                "replace_existing": data.get("replace_existing", False),
+                "validate_ontologies": data.get("validate_ontologies", True),
+                "file_name": data["file"].name,
+            },
+        )
+
+        # Queue the task
+        queue = get_queue("default")
+        job = queue.enqueue(
+            "ccv.tasks.import_excel_task",
+            metadata_table_id=metadata_table.id,
+            user_id=request.user.id,
+            file_data=file_data,
+            replace_existing=data.get("replace_existing", False),
+            validate_ontologies=data.get("validate_ontologies", True),
+            task_id=str(task.id),
+            job_timeout="1h",
+        )
+
+        # Update task with job ID
+        task.rq_job_id = job.id
+        task.save(update_fields=["rq_job_id"])
+
+        return Response(
+            {"task_id": str(task.id), "message": "Excel import task queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cleanup_expired_files(request):
+    """
+    Management endpoint to clean up expired task result files.
+
+    This should typically be called by a cron job or similar scheduled task.
+    """
+    if not request.user.is_staff:
+        return Response({"error": "Admin privileges required"}, status=status.HTTP_403_FORBIDDEN)
+
+    # Find expired files
+    expired_results = TaskResult.objects.filter(expires_at__lt=timezone.now(), file__isnull=False)
+
+    cleaned_count = 0
+    error_count = 0
+
+    for result in expired_results:
+        try:
+            result.cleanup_expired()
+            cleaned_count += 1
+        except Exception as e:
+            error_count += 1
+            # Log error in production
+            print(f"Error cleaning up file for task {result.task.id}: {e}")
+
+    return Response({"message": "Cleanup completed", "files_cleaned": cleaned_count, "errors": error_count})

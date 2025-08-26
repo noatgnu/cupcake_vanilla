@@ -1,0 +1,137 @@
+# Multi-stage Dockerfile for CUPCAKE Vanilla Angular Frontend
+# Stage 1: Build the Angular application
+
+FROM node:20-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Install git and curl for healthchecks
+RUN apk add --no-cache git curl
+
+# Clone the repository
+RUN git clone https://github.com/noatgnu/cupcake-vanilla-ng.git .
+
+# Build argument for the hostname (defaults to ccv.ome.quest)
+ARG HOSTNAME=ccv.ome.quest
+
+# Replace localhost in environment.ts with the provided hostname
+RUN sed -i "s|https://localhost|https://${HOSTNAME}|g" src/environments/environment.ts && \
+    sed -i "s|wss://localhost|wss://${HOSTNAME}|g" src/environments/environment.ts && \
+    sed -i "s|production: false|production: true|g" src/environments/environment.ts
+
+# Also update development environment file in case it's used
+RUN sed -i "s|http://localhost:8000|https://${HOSTNAME}|g" src/environments/environment.development.ts && \
+    sed -i "s|ws://localhost:8000|wss://${HOSTNAME}|g" src/environments/environment.development.ts
+
+# Show updated environment files for debugging
+RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts && \
+    echo "=== Updated environment.development.ts ===" && cat src/environments/environment.development.ts
+
+# Install dependencies (development dependencies needed for build)
+RUN npm ci
+
+# Build the Angular application for production
+RUN npm run build
+
+# Verify build output
+RUN ls -la dist/ && ls -la dist/cupcake-vanilla-ng/
+
+# Stage 2: Serve with nginx
+FROM nginx:alpine
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+# Copy custom nginx configuration
+COPY <<EOF /etc/nginx/conf.d/default.conf
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+
+    # Security headers
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied expired no-cache no-store private must-revalidate auth;
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/json
+        application/javascript
+        application/xml+rss
+        application/atom+xml
+        image/svg+xml;
+
+    # Cache static assets
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+    }
+
+    # Handle Angular routing (SPA)
+    location / {
+        try_files \$uri \$uri/ /index.html;
+
+        # Cache control for HTML files
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+
+        # Security headers
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+    }
+
+    # Health check endpoint
+    location = /health {
+        access_log off;
+        return 200 'Frontend healthy\n';
+        add_header Content-Type text/plain;
+    }
+}
+EOF
+
+# Copy built Angular app from builder stage
+COPY --from=builder /app/dist/cupcake-vanilla-ng/browser /usr/share/nginx/html
+
+# Create a non-root user for security
+RUN addgroup -g 1001 -S nginx && \
+    adduser -S -D -H -u 1001 -h /var/cache/nginx -s /sbin/nologin -G nginx -g nginx nginx && \
+    chown -R nginx:nginx /usr/share/nginx/html && \
+    chown -R nginx:nginx /var/cache/nginx && \
+    chown -R nginx:nginx /var/log/nginx && \
+    chown -R nginx:nginx /etc/nginx/conf.d
+
+# Make nginx run as non-root
+RUN touch /var/run/nginx.pid && \
+    chown -R nginx:nginx /var/run/nginx.pid
+
+# Switch to non-root user
+USER nginx
+
+# Expose port
+EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost/health || exit 1
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]

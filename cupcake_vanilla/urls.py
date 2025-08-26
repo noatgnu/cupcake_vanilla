@@ -22,6 +22,8 @@ urlpatterns = [
     # Auth endpoints like auth/login/, auth/orcid/
     # DRF browsable API
     path("api-auth/", include("rest_framework.urls")),
+    # RQ admin interface (only in development)
+    path("admin/rq/", include("django_rq.urls")),
 ]
 
 # Serve media files during development
