@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ("ccc", "0001_initial"),
         ("contenttypes", "0002_remove_content_type_name"),
-        ("drf_chunked_upload", "0002_alter_chunkedupload_user"),
+        ("drf_chunked_upload", "0001_initial"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
