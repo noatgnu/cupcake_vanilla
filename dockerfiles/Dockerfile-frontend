@@ -32,6 +32,7 @@ RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
 RUN npm ci
 
 # Build the Angular application for production
+RUN chmod +x ./build-all.sh
 RUN npm run build:all
 
 # Verify build output
