@@ -27,6 +27,12 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-%!ai*=3sq=w)=qpv72559
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
 
+# CUPCAKE Configuration
+# Enable individual CUPCAKE apps based on requirements
+ENABLE_CUPCAKE_MACARON = os.environ.get("ENABLE_CUPCAKE_MACARON", "True").lower() == "true"
+ENABLE_CUPCAKE_MINT_CHOCOLATE = os.environ.get("ENABLE_CUPCAKE_MINT_CHOCOLATE", "False").lower() == "true"
+ENABLE_CUPCAKE_SALTED_CARAMEL = os.environ.get("ENABLE_CUPCAKE_SALTED_CARAMEL", "True").lower() == "true"
+ENABLE_CUPCAKE_RED_VELVET = os.environ.get("ENABLE_CUPCAKE_RED_VELVET", "True").lower() == "true"
 
 # Application definition
 
@@ -50,6 +56,19 @@ INSTALLED_APPS = [
     "ccc.apps.CccConfig",
     "ccv.apps.CcvConfig",
 ]
+
+# Conditionally add CUPCAKE apps based on configuration
+if ENABLE_CUPCAKE_MACARON:
+    INSTALLED_APPS.append("ccm.apps.CcmConfig")
+
+if ENABLE_CUPCAKE_MINT_CHOCOLATE:
+    INSTALLED_APPS.append("ccmc.apps.CcmcConfig")
+
+if ENABLE_CUPCAKE_SALTED_CARAMEL:
+    INSTALLED_APPS.append("ccsc.apps.CcscConfig")
+
+if ENABLE_CUPCAKE_RED_VELVET:
+    INSTALLED_APPS.append("ccrv.apps.CcrvConfig")
 
 MIDDLEWARE = [
     "django.middleware.gzip.GZipMiddleware",
@@ -324,10 +343,10 @@ MEDIA_ROOT = BASE_DIR / "media"
 DRF_CHUNKED_UPLOAD_PATH = "chunked_uploads"
 DRF_CHUNKED_UPLOAD_ABSTRACT_MODEL = False
 DRF_CHUNKED_UPLOAD_MAX_BYTES = 1024 * 1024 * 1024 * 2  # 2GB
-DRF_CHUNKED_UPLOAD_USER_RESTRICED = True  # Restrict uploads to authenticated users
+DRF_CHUNKED_UPLOAD_USER_RESTRICTED = True  # Restrict uploads to authenticated users
 DRF_CHUNKED_UPLOAD_COMPLETE_EXT = ".done"
 DRF_CHUNKED_UPLOAD_INCOMPLETE_EXT = ".part"
-DRF_CHUNKED_UPLOAD_ENCODER = "sha256"  # Use SHA-256 for file hashing
+DRF_CHUNKED_UPLOAD_CHECKSUM = "sha256"  # Use SHA-256 for file hashing
 
 # Authentication backends
 AUTHENTICATION_BACKENDS = [

@@ -125,16 +125,16 @@ exclude = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
-django = "^5.2.5"
+django = "^5.2.6"
 djangorestframework = "^3.14.0"
-django-filter = "^23.5"
-redis = "^5.0.1"
-django-redis = "^5.4.0"
+django-filter = "^25.1"
+redis = "^6.4.0"
+django-redis = "^6.0.0"
 django-simple-history = "^3.4.0"
 psycopg2-binary = "^2.9.9"
 openpyxl = "^3.1.2"
 pandas = "^2.1.4"
-sdrf-pipelines = {git = "https://github.com/bigbio/sdrf-pipelines.git", rev = "d5abc187fa9e5cde3f3e839f6ce43f06a89ea8ba"}
+sdrf-pipelines = {git = "https://github.com/bigbio/sdrf-pipelines.git", rev = "80dc732b07a7a9dbc98ea265a79fdf5b3fcf0577"}
 drf-chunked-upload = "^0.6.0"
 pronto = "^2.5.7"
 requests = "^2.31.0"
@@ -144,14 +144,15 @@ python-social-auth = {extras = ["django"], version = "^0.3.6"}
 whitenoise = "^6.7.0"
 django-cors-headers = "^4.3.1"
 gunicorn = "23.0.0"
-uvicorn = {extras = ["standard"], version = "^0.24.0"}
+uvicorn = {extras = ["standard"], version = "^0.35.0"}
 tqdm = "^4.67.1"
 channels = "^4.0.0"
 channels-redis = "^4.2.0"
-websockets = "^12.0"
-cryptography = "^44.0.1"
-rq = "^1.15.0"
-django-rq = "^2.8.1"
+websockets = "^15.0.1"
+cryptography = "^45.0.7"
+rq = "^2.5.0"
+django-rq = "^3.1"
+beautifulsoup4="^4.13.5"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.12.0"

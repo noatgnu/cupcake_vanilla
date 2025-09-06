@@ -1142,3 +1142,146 @@ class AccountMergeRequest(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+
+
+class RemoteHost(models.Model):
+    history = HistoricalRecords()
+    host_name = models.CharField(max_length=255, default="localhost")
+    host_port = models.IntegerField(default=8000)
+    host_protocol = models.CharField(max_length=255, default="http")
+    host_description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    host_token = models.TextField(blank=True, null=True)
+    host_type_choices = [
+        ("cupcake", "Cupcake"),
+    ]
+
+    class Meta:
+        app_label = "ccc"
+        ordering = ["id"]
+
+    def __str__(self):
+        return self.host_name
+
+
+class AnnotationFolder(AbstractResource):
+    """
+    Hierarchical folder system for organizing annotations and documents.
+
+    Core model that can be used across all apps to organize documents,
+    files, and annotations with proper access control and sharing.
+    """
+
+    folder_name = models.CharField(max_length=255, help_text="Name of the folder", default="New Folder")
+    parent_folder = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        related_name="child_folders",
+        blank=True,
+        null=True,
+        help_text="Parent folder for hierarchical organization",
+    )
+    is_shared_document_folder = models.BooleanField(
+        default=False, help_text="Indicates if this folder is specifically for shared documents"
+    )
+
+    remote_id = models.BigIntegerField(blank=True, null=True)
+    remote_host = models.ForeignKey(
+        "RemoteHost", on_delete=models.CASCADE, related_name="annotation_folders", blank=True, null=True
+    )
+
+    class Meta:
+        app_label = "ccc"
+        ordering = ["folder_name"]
+
+    def __str__(self):
+        return self.folder_name
+
+    def get_full_path(self):
+        """Get the full hierarchical path of this folder."""
+        if not self.parent_folder:
+            return self.folder_name
+        return f"{self.parent_folder.get_full_path()}/{self.folder_name}"
+
+    def get_all_child_folders(self):
+        """Get all nested child folders recursively."""
+        children = []
+        for child in self.child_folders.all():
+            children.append(child)
+            children.extend(child.get_all_child_folders())
+        return children
+
+
+class Annotation(AbstractResource):
+    """
+    Universal annotation/document model for attaching files and notes.
+
+    Core model that can be used across all apps to attach documents,
+    files, images, and notes to any other model with proper access control.
+    """
+
+    ANNOTATION_TYPE_CHOICES = [
+        ("text", "Text"),
+        ("file", "File"),
+        ("image", "Image"),
+        ("video", "Video"),
+        ("audio", "Audio"),
+        ("sketch", "Sketch"),
+        ("other", "Other"),
+        ("checklist", "Checklist"),
+        ("counter", "Counter"),
+        ("table", "Table"),
+        ("alignment", "Alignment"),
+        ("calculator", "Calculator"),
+        ("mcalculator", "Molarity Calculator"),
+        ("randomization", "Randomization"),
+        ("instrument", "Instrument"),
+        ("metadata", "Metadata"),
+        ("booking", "Booking"),
+    ]
+
+    annotation = models.TextField(help_text="Text content or description of the annotation", default="")
+    annotation_type = models.CharField(
+        max_length=20, choices=ANNOTATION_TYPE_CHOICES, default="text", help_text="Type of annotation content"
+    )
+    file = models.FileField(blank=True, null=True, upload_to="annotations/", help_text="Optional file attachment")
+    folder = models.ForeignKey(
+        AnnotationFolder,
+        on_delete=models.CASCADE,
+        related_name="annotations",
+        blank=True,
+        null=True,
+        help_text="Folder containing this annotation",
+    )
+
+    # Transcription and translation features
+    transcribed = models.BooleanField(default=False, help_text="Whether audio/video has been transcribed")
+    transcription = models.TextField(blank=True, null=True, help_text="Text transcription of audio/video content")
+    language = models.CharField(max_length=10, blank=True, null=True, help_text="Language code of the content")
+    translation = models.TextField(blank=True, null=True, help_text="Translation of the content")
+
+    # Status flags
+    scratched = models.BooleanField(default=False, help_text="Whether this annotation is marked as deleted/scratched")
+
+    # Remote sync fields
+    remote_id = models.BigIntegerField(blank=True, null=True)
+    remote_host = models.ForeignKey(
+        "RemoteHost", on_delete=models.CASCADE, related_name="annotations", blank=True, null=True
+    )
+
+    class Meta:
+        app_label = "ccc"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        if self.annotation:
+            preview = self.annotation[:50]
+            if len(self.annotation) > 50:
+                preview += "..."
+            return f"{self.get_annotation_type_display()}: {preview}"
+        return f"{self.get_annotation_type_display()}: [File]"
+
+
+# Import the AnnotationFileUpload model so Django can detect it for migrations
+from .annotation_chunked_upload import AnnotationFileUpload  # noqa: F401

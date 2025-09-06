@@ -9,7 +9,17 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 
-from .models import AccountMergeRequest, LabGroup, LabGroupInvitation, ResourcePermission, SiteConfig, UserOrcidProfile
+from .models import (
+    AccountMergeRequest,
+    Annotation,
+    AnnotationFolder,
+    LabGroup,
+    LabGroupInvitation,
+    RemoteHost,
+    ResourcePermission,
+    SiteConfig,
+    UserOrcidProfile,
+)
 
 
 @admin.register(SiteConfig)
@@ -19,15 +29,45 @@ class SiteConfigAdmin(admin.ModelAdmin):
     Provides a clean interface for managing global site settings.
     """
 
-    list_display = ["site_name", "allow_user_registration", "enable_orcid_login", "updated_at", "updated_by"]
-    list_filter = ["allow_user_registration", "enable_orcid_login", "show_powered_by"]
+    list_display = [
+        "site_name",
+        "allow_user_registration",
+        "enable_orcid_login",
+        "updated_at",
+        "updated_by",
+    ]
+    list_filter = [
+        "allow_user_registration",
+        "enable_orcid_login",
+        "show_powered_by",
+    ]
     search_fields = ["site_name"]
     readonly_fields = ["created_at", "updated_at", "updated_by"]
 
     fieldsets = (
-        ("Site Branding", {"fields": ("site_name", "logo_url", "logo_image", "primary_color", "show_powered_by")}),
-        ("Authentication Settings", {"fields": ("allow_user_registration", "enable_orcid_login")}),
-        ("Audit Information", {"fields": ("created_at", "updated_at", "updated_by"), "classes": ("collapse",)}),
+        (
+            "Site Branding",
+            {
+                "fields": (
+                    "site_name",
+                    "logo_url",
+                    "logo_image",
+                    "primary_color",
+                    "show_powered_by",
+                )
+            },
+        ),
+        (
+            "Authentication Settings",
+            {"fields": ("allow_user_registration", "enable_orcid_login")},
+        ),
+        (
+            "Audit Information",
+            {
+                "fields": ("created_at", "updated_at", "updated_by"),
+                "classes": ("collapse",),
+            },
+        ),
     )
 
     def save_model(self, request, obj, form, change):
@@ -43,9 +83,22 @@ class LabGroupAdmin(admin.ModelAdmin):
     Allows administrators to manage lab groups and their memberships.
     """
 
-    list_display = ["name", "creator", "member_count", "is_active", "allow_member_invites", "created_at"]
+    list_display = [
+        "name",
+        "creator",
+        "member_count",
+        "is_active",
+        "allow_member_invites",
+        "created_at",
+    ]
     list_filter = ["is_active", "allow_member_invites", "created_at"]
-    search_fields = ["name", "description", "creator__username", "creator__first_name", "creator__last_name"]
+    search_fields = [
+        "name",
+        "description",
+        "creator__username",
+        "creator__first_name",
+        "creator__last_name",
+    ]
     filter_horizontal = ["members"]
     readonly_fields = ["created_at", "updated_at"]
 
@@ -53,7 +106,10 @@ class LabGroupAdmin(admin.ModelAdmin):
         ("Basic Information", {"fields": ("name", "description", "creator")}),
         ("Membership", {"fields": ("members",)}),
         ("Settings", {"fields": ("is_active", "allow_member_invites")}),
-        ("Audit Information", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
+        (
+            "Audit Information",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
     )
 
     def member_count(self, obj):
@@ -70,10 +126,22 @@ class LabGroupInvitationAdmin(admin.ModelAdmin):
     Allows administrators to monitor and manage lab group invitations.
     """
 
-    list_display = ["lab_group", "invited_email", "inviter", "status", "created_at", "expires_at"]
+    list_display = [
+        "lab_group",
+        "invited_email",
+        "inviter",
+        "status",
+        "created_at",
+        "expires_at",
+    ]
     list_filter = ["status", "created_at", "expires_at"]
     search_fields = ["invited_email", "lab_group__name", "inviter__username"]
-    readonly_fields = ["invitation_token", "created_at", "updated_at", "responded_at"]
+    readonly_fields = [
+        "invitation_token",
+        "created_at",
+        "updated_at",
+        "responded_at",
+    ]
 
     fieldsets = (
         ("Invitation Details", {"fields": ("lab_group", "inviter", "invited_email", "invited_user")}),
@@ -211,3 +279,116 @@ class CustomUserAdmin(BaseUserAdmin):
 # Unregister the default User admin and register our custom one
 admin.site.unregister(User)
 admin.site.register(User, CustomUserAdmin)
+
+
+@admin.register(RemoteHost)
+class RemoteHostAdmin(admin.ModelAdmin):
+    """
+    Admin interface for remote host configuration.
+    Manages distributed CUPCAKE deployment hosts.
+    """
+
+    list_display = ["host_name", "host_protocol", "host_port", "host_description", "created_at"]
+    list_filter = ["host_protocol", "created_at"]
+    search_fields = ["host_name", "host_description"]
+    readonly_fields = ["created_at", "updated_at"]
+
+    fieldsets = (
+        ("Host Configuration", {"fields": ("host_name", "host_protocol", "host_port", "host_description")}),
+        (
+            "Security",
+            {
+                "fields": ("host_token",),
+                "classes": ("collapse",),
+                "description": "Authentication token for secure communication",
+            },
+        ),
+        ("Audit Information", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
+    )
+
+
+@admin.register(AnnotationFolder)
+class AnnotationFolderAdmin(admin.ModelAdmin):
+    """
+    Admin interface for annotation folders.
+    Manages hierarchical folder organization for annotations.
+    """
+
+    list_display = ["folder_name", "owner", "parent_folder", "is_shared_document_folder", "is_active", "created_at"]
+    list_filter = ["is_shared_document_folder", "is_active", "is_locked", "visibility", "created_at"]
+    search_fields = ["folder_name", "owner__username", "owner__first_name", "owner__last_name"]
+    readonly_fields = ["created_at", "updated_at"]
+    autocomplete_fields = ["owner", "parent_folder", "lab_group"]
+
+    fieldsets = (
+        ("Folder Information", {"fields": ("folder_name", "parent_folder", "is_shared_document_folder")}),
+        ("Ownership & Access", {"fields": ("owner", "lab_group", "visibility")}),
+        ("Status", {"fields": ("is_active", "is_locked")}),
+        ("Audit Information", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
+    )
+
+    def get_queryset(self, request):
+        """Include select_related for better performance."""
+        return super().get_queryset(request).select_related("owner", "parent_folder", "lab_group")
+
+
+@admin.register(Annotation)
+class AnnotationAdmin(admin.ModelAdmin):
+    """
+    Admin interface for annotations.
+    Manages user annotations with file uploads and metadata.
+    """
+
+    list_display = [
+        "annotation_preview",
+        "annotation_type",
+        "owner",
+        "folder",
+        "transcribed",
+        "is_active",
+        "created_at",
+    ]
+    list_filter = [
+        "annotation_type",
+        "transcribed",
+        "scratched",
+        "is_active",
+        "is_locked",
+        "visibility",
+        "language",
+        "created_at",
+    ]
+    search_fields = [
+        "annotation",
+        "transcription",
+        "translation",
+        "owner__username",
+        "owner__first_name",
+        "owner__last_name",
+    ]
+    readonly_fields = ["created_at", "updated_at"]
+    autocomplete_fields = ["owner", "folder", "lab_group"]
+
+    fieldsets = (
+        ("Annotation Content", {"fields": ("annotation", "annotation_type", "file")}),
+        ("Organization", {"fields": ("folder",)}),
+        (
+            "Transcription & Translation",
+            {"fields": ("transcribed", "transcription", "language", "translation"), "classes": ("collapse",)},
+        ),
+        ("Ownership & Access", {"fields": ("owner", "lab_group", "visibility")}),
+        ("Status", {"fields": ("is_active", "is_locked", "scratched")}),
+        ("Audit Information", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
+    )
+
+    def annotation_preview(self, obj):
+        """Show a preview of the annotation content."""
+        if obj.annotation:
+            return obj.annotation[:100] + "..." if len(obj.annotation) > 100 else obj.annotation
+        return "(No content)"
+
+    annotation_preview.short_description = "Content Preview"
+
+    def get_queryset(self, request):
+        """Include select_related for better performance."""
+        return super().get_queryset(request).select_related("owner", "folder", "lab_group")

@@ -43,6 +43,9 @@ class BaseMetadataTable(AbstractResource):
     # Table status
     is_published = models.BooleanField(default=False, help_text="Whether this table is published/finalized")
 
+    # Source app tracking
+    source_app = models.CharField(max_length=50, default="ccv", help_text="Django app that created this metadata table")
+
     # Generic foreign key for optional association with external objects
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True)
     object_id = models.PositiveIntegerField(null=True, blank=True)
@@ -170,6 +173,278 @@ class MetadataTable(BaseMetadataTable):
             return f"1-{self.sample_count}"
         return "0"
 
+    def change_sample_index(self, old_index: int, new_index: int):
+        """
+        Change a sample's row index number and update all associated data.
+
+        This method updates:
+        - All column modifiers that reference the old sample index
+        - All sample pools that contain the old sample index
+
+        Args:
+            old_index: Current 1-based sample index to change
+            new_index: New 1-based sample index to assign
+
+        Returns:
+            dict: Summary of changes made
+
+        Raises:
+            ValueError: If indices are invalid or new_index conflicts with existing data
+        """
+        # Validate inputs
+        if old_index < 1 or new_index < 1:
+            raise ValueError("Sample indices must be positive integers (1-based)")
+
+        if old_index > self.sample_count:
+            raise ValueError(f"Old index {old_index} exceeds sample count {self.sample_count}")
+
+        if new_index > self.sample_count:
+            raise ValueError(f"New index {new_index} exceeds sample count {self.sample_count}")
+
+        if old_index == new_index:
+            return {"changed": False, "message": "Indices are the same, no changes needed"}
+
+        changes_summary = {
+            "changed": True,
+            "old_index": old_index,
+            "new_index": new_index,
+            "columns_updated": 0,
+            "pools_updated": 0,
+            "modifier_updates": [],
+            "pool_updates": [],
+        }
+
+        # Update column modifiers
+        for column in self.columns.all():
+            if column.modifiers:
+                updated_modifiers = []
+                column_changed = False
+
+                for modifier in column.modifiers:
+                    if isinstance(modifier, dict) and "samples" in modifier:
+                        # Parse and update sample indices in this modifier
+                        updated_samples = self._update_sample_indices_in_range(
+                            modifier["samples"], old_index, new_index
+                        )
+
+                        if updated_samples != modifier["samples"]:
+                            column_changed = True
+                            changes_summary["modifier_updates"].append(
+                                {
+                                    "column": column.name,
+                                    "old_samples": modifier["samples"],
+                                    "new_samples": updated_samples,
+                                }
+                            )
+
+                        modifier["samples"] = updated_samples
+
+                    updated_modifiers.append(modifier)
+
+                if column_changed:
+                    column.modifiers = updated_modifiers
+                    column.save(update_fields=["modifiers"])
+                    changes_summary["columns_updated"] += 1
+
+        # Update sample pools
+        for pool in self.sample_pools.all():
+            pool_changed = False
+
+            # Update pooled_only_samples
+            if old_index in pool.pooled_only_samples:
+                pool.pooled_only_samples.remove(old_index)
+                pool.pooled_only_samples.append(new_index)
+                pool.pooled_only_samples.sort()
+                pool_changed = True
+                changes_summary["pool_updates"].append(
+                    {
+                        "pool": pool.pool_name,
+                        "type": "pooled_only_samples",
+                        "change": f"moved {old_index} → {new_index}",
+                    }
+                )
+
+            # Update pooled_and_independent_samples
+            if old_index in pool.pooled_and_independent_samples:
+                pool.pooled_and_independent_samples.remove(old_index)
+                pool.pooled_and_independent_samples.append(new_index)
+                pool.pooled_and_independent_samples.sort()
+                pool_changed = True
+                changes_summary["pool_updates"].append(
+                    {
+                        "pool": pool.pool_name,
+                        "type": "pooled_and_independent_samples",
+                        "change": f"moved {old_index} → {new_index}",
+                    }
+                )
+
+            if pool_changed:
+                pool.save(update_fields=["pooled_only_samples", "pooled_and_independent_samples"])
+                changes_summary["pools_updated"] += 1
+
+        return changes_summary
+
+    def _update_sample_indices_in_range(self, sample_range_str: str, old_index: int, new_index: int) -> str:
+        """
+        Update sample indices within a range string (e.g., "1,2,3" or "1-3,5").
+
+        Args:
+            sample_range_str: String containing sample indices like "1,2,3" or "1-3,5"
+            old_index: Sample index to replace
+            new_index: New sample index
+
+        Returns:
+            Updated range string with indices changed
+        """
+        if not sample_range_str:
+            return sample_range_str
+
+        # Parse sample indices from the range string
+        sample_indices = []
+        for part in sample_range_str.split(","):
+            part = part.strip()
+            if "-" in part:
+                start, end = map(int, part.split("-"))
+                sample_indices.extend(range(start, end + 1))
+            else:
+                sample_indices.append(int(part))
+
+        # Replace old index with new index if present
+        if old_index in sample_indices:
+            # Remove old index and add new index
+            while old_index in sample_indices:
+                idx = sample_indices.index(old_index)
+                sample_indices[idx] = new_index
+
+            # Remove duplicates and sort
+            sample_indices = sorted(set(sample_indices))
+
+            # Convert back to compressed range format
+            return self._compress_sample_indices_to_string(sample_indices)
+
+        return sample_range_str
+
+    def _compress_sample_indices_to_string(self, indices: list[int]) -> str:
+        """
+        Convert a list of sample indices to a compressed string format.
+
+        Args:
+            indices: Sorted list of sample indices
+
+        Returns:
+            Compressed string like "1-3,5,7-9"
+        """
+        if not indices:
+            return ""
+
+        indices = sorted(set(indices))  # Ensure sorted and unique
+        ranges = []
+        start = indices[0]
+        end = indices[0]
+
+        for i in range(1, len(indices)):
+            if indices[i] == end + 1:
+                end = indices[i]
+            else:
+                # Add the current range
+                if start == end:
+                    ranges.append(str(start))
+                else:
+                    ranges.append(f"{start}-{end}")
+                start = end = indices[i]
+
+        # Add the final range
+        if start == end:
+            ranges.append(str(start))
+        else:
+            ranges.append(f"{start}-{end}")
+
+        return ",".join(ranges)
+
+    def batch_change_sample_indices(self, index_mappings: dict):
+        """
+        Change multiple sample indices in a single operation.
+
+        Args:
+            index_mappings: Dictionary mapping old_index -> new_index
+
+        Returns:
+            dict: Summary of all changes made
+
+        Example:
+            # Swap samples 1 and 3: {1: 3, 3: 1}
+            # Reorder samples: {1: 2, 2: 3, 3: 1}
+        """
+        if not index_mappings:
+            return {"changed": False, "message": "No mappings provided"}
+
+        # Validate all mappings first
+        for old_idx, new_idx in index_mappings.items():
+            if old_idx < 1 or new_idx < 1:
+                raise ValueError("Sample indices must be positive integers (1-based)")
+            if old_idx > self.sample_count or new_idx > self.sample_count:
+                raise ValueError(f"Sample indices must not exceed sample count {self.sample_count}")
+
+        # Check for conflicts in new indices (unless it's a swap)
+        new_indices = list(index_mappings.values())
+        old_indices = list(index_mappings.keys())
+
+        for new_idx in new_indices:
+            if new_indices.count(new_idx) > 1:
+                raise ValueError(f"Multiple samples cannot be mapped to the same index {new_idx}")
+            # Allow mapping to an index that's also being moved (swap case)
+            if new_idx not in old_indices and new_idx in [
+                idx for idx in range(1, self.sample_count + 1) if idx not in old_indices
+            ]:
+                # This would overwrite an existing sample that's not being moved
+                raise ValueError(f"Index {new_idx} is occupied by a sample that's not being moved")
+
+        batch_summary = {
+            "changed": True,
+            "total_mappings": len(index_mappings),
+            "columns_updated": 0,
+            "pools_updated": 0,
+            "individual_changes": [],
+        }
+
+        # Apply changes - need to be careful about order to avoid conflicts
+        # For swaps and complex reorderings, use a temporary mapping approach
+        temp_offset = self.sample_count + 1000  # Use high temporary indices
+
+        # Step 1: Move all old indices to temporary positions
+        temp_mappings = {}
+        for old_idx, new_idx in index_mappings.items():
+            temp_idx = temp_offset + old_idx
+            temp_mappings[old_idx] = temp_idx
+            change_result = self.change_sample_index(old_idx, temp_idx)
+            batch_summary["individual_changes"].append(
+                {"step": "temp_move", "old": old_idx, "temp": temp_idx, "result": change_result}
+            )
+
+        # Step 2: Move from temporary positions to final positions
+        for old_idx, new_idx in index_mappings.items():
+            temp_idx = temp_offset + old_idx
+            change_result = self.change_sample_index(temp_idx, new_idx)
+            batch_summary["individual_changes"].append(
+                {
+                    "step": "final_move",
+                    "temp": temp_idx,
+                    "new": new_idx,
+                    "original_old": old_idx,
+                    "result": change_result,
+                }
+            )
+
+        # Summarize total changes
+        batch_summary["columns_updated"] = sum(
+            change["result"].get("columns_updated", 0) for change in batch_summary["individual_changes"]
+        )
+        batch_summary["pools_updated"] = sum(
+            change["result"].get("pools_updated", 0) for change in batch_summary["individual_changes"]
+        )
+
+        return batch_summary
+
     def reorder_columns_by_schema(
         self, schema_names: list[str] = None, schema_ids: list[int] = None, schema_dir: str = None
     ):
@@ -262,6 +537,7 @@ class MetadataTable(BaseMetadataTable):
     def add_column(self, column_data: dict, position: int = None):
         """
         Add a new column to this metadata table at the specified position.
+        Also adds the column to all associated pools.
 
         Args:
             column_data: Dictionary containing column data
@@ -282,11 +558,72 @@ class MetadataTable(BaseMetadataTable):
         column_data["column_position"] = position
         column = MetadataColumn.objects.create(**column_data)
 
+        # Synchronize with pools: add column to all pools of this table
+        self._sync_column_to_pools(column, action="add")
+
         return column
+
+    def add_column_with_auto_reorder(self, column_data: dict, position: int = None, auto_reorder: bool = True):
+        """
+        Add a new column to this metadata table and automatically reorder columns.
+
+        This convenience method combines adding a column with automatic schema-based
+        reordering using the same patterns established throughout the codebase.
+
+        Args:
+            column_data: Dictionary containing column data
+            position: Position to insert the column (None for end, ignored if auto_reorder=True)
+            auto_reorder: Whether to automatically reorder columns after adding (default: True)
+
+        Returns:
+            dict: Result containing the created column and reordering status
+                {
+                    'column': MetadataColumn,
+                    'reordered': bool,
+                    'schema_ids_used': list[int],
+                    'message': str
+                }
+        """
+        # Add the column first (will be repositioned during reordering if enabled)
+        column = self.add_column(column_data, position=position)
+
+        result = {"column": column, "reordered": False, "schema_ids_used": [], "message": "Column added successfully"}
+
+        if auto_reorder:
+            try:
+                # Collect schema IDs from existing columns using established pattern
+                schema_ids = set()
+                for col in self.columns.all():
+                    if col.template and col.template.schema:
+                        schema_ids.add(col.template.schema.id)
+
+                schema_ids_list = list(schema_ids)
+                result["schema_ids_used"] = schema_ids_list
+
+                if schema_ids_list:
+                    # Use existing schema-based reordering method
+                    reorder_success = self.reorder_columns_by_schema(schema_ids=schema_ids_list)
+                    if reorder_success:
+                        result["reordered"] = True
+                        result["message"] = f"Column added and reordered using {len(schema_ids_list)} schema(s)"
+                    else:
+                        result["message"] = "Column added successfully, but schema reordering failed"
+                else:
+                    # No schemas found, just normalize positions
+                    self.normalize_column_positions()
+                    result["reordered"] = True
+                    result["message"] = "Column added and positions normalized (no schemas found)"
+
+            except Exception as e:
+                # If reordering fails, column is still added but not reordered
+                result["message"] = f"Column added successfully, but reordering failed: {str(e)}"
+
+        return result
 
     def remove_column(self, column_id: int):
         """
         Remove a column and adjust positions of remaining columns.
+        Also removes the column from all associated pools.
 
         Args:
             column_id: ID of the column to remove
@@ -297,6 +634,9 @@ class MetadataTable(BaseMetadataTable):
         try:
             column = self.columns.get(id=column_id)
             removed_position = column.column_position
+
+            # Synchronize with pools: remove column from all pools of this table
+            self._sync_column_to_pools(column, action="remove")
 
             # Delete the column
             column.delete()
@@ -309,6 +649,52 @@ class MetadataTable(BaseMetadataTable):
             return True
         except MetadataColumn.DoesNotExist:
             return False
+
+    def _sync_column_to_pools(self, column, action="add"):
+        """
+        Synchronize a column operation with all pools belonging to this metadata table.
+
+        Args:
+            column: MetadataColumn instance to synchronize
+            action: 'add' or 'remove'
+        """
+        for pool in self.sample_pools.all():
+            if action == "add":
+                # Create a new column for the pool based on the main table column
+                pool_column_data = {
+                    "name": column.name,
+                    "type": column.type,
+                    "value": column.value,
+                    "modifiers": column.modifiers.copy() if column.modifiers else [],
+                    "column_position": column.column_position,
+                    "not_applicable": column.not_applicable,
+                    "mandatory": column.mandatory,
+                    "hidden": column.hidden,
+                    "auto_generated": column.auto_generated,
+                    "readonly": column.readonly,
+                    "ontology_type": column.ontology_type,
+                    "ontology_options": column.ontology_options.copy() if column.ontology_options else None,
+                    "custom_ontology_filters": column.custom_ontology_filters.copy()
+                    if column.custom_ontology_filters
+                    else {},
+                    "suggested_values": column.suggested_values.copy() if column.suggested_values else [],
+                    "staff_only": column.staff_only,
+                    "possible_default_values": column.possible_default_values.copy()
+                    if column.possible_default_values
+                    else [],
+                    "template": column.template,
+                }
+
+                # Create a new MetadataColumn instance for the pool
+                pool_column = MetadataColumn.objects.create(**pool_column_data)
+                pool.metadata_columns.add(pool_column)
+
+            elif action == "remove":
+                # Remove columns from this pool that have the same name as the removed column
+                pool_columns_to_remove = pool.metadata_columns.filter(name=column.name)
+                for pool_column in pool_columns_to_remove:
+                    pool.metadata_columns.remove(pool_column)
+                    pool_column.delete()
 
     def reorder_column(self, column_id: int, new_position: int):
         """
@@ -360,6 +746,388 @@ class MetadataTable(BaseMetadataTable):
             if column.column_position != index:
                 column.column_position = index
                 column.save(update_fields=["column_position"])
+
+    @classmethod
+    def combine_tables_columnwise(
+        cls,
+        source_tables: list["MetadataTable"],
+        target_name: str,
+        description: str = None,
+        user=None,
+        apply_schema_reordering: bool = True,
+    ) -> "MetadataTable":
+        """
+        Combine multiple metadata tables column-wise (side by side).
+
+        This creates a new table with all columns from source tables combined,
+        and the sample count set to the maximum sample count among source tables.
+
+        Args:
+            source_tables: List of MetadataTable objects to combine
+            target_name: Name for the new combined table
+            description: Optional description for the new table
+            user: User creating the combined table
+            apply_schema_reordering: Whether to apply schema-based column reordering
+
+        Returns:
+            MetadataTable: New combined metadata table
+
+        Raises:
+            ValueError: If no source tables provided or other validation errors
+        """
+        if not source_tables:
+            raise ValueError("At least one source table is required")
+
+        if not target_name:
+            raise ValueError("Target table name is required")
+
+        # Get the maximum sample count from all source tables
+        max_sample_count = max(table.sample_count for table in source_tables)
+
+        # Create the new combined metadata table
+        combined_table = cls.objects.create(
+            name=target_name,
+            description=description or f"Combined table from {len(source_tables)} source tables",
+            sample_count=max_sample_count,
+            owner=user,
+        )
+
+        # Track column position counter and schema IDs
+        column_position = 0
+        schema_ids = set()
+
+        try:
+            # Combine columns from all source tables
+            for table_index, source_table in enumerate(source_tables):
+                table_prefix = f"T{table_index + 1}_" if len(source_tables) > 1 else ""
+
+                for source_column in source_table.columns.order_by("column_position", "name"):
+                    # Create new column with potentially prefixed name to avoid conflicts
+                    new_column_name = f"{table_prefix}{source_column.name}"
+
+                    # Check if a column with this name already exists
+                    existing_column = combined_table.columns.filter(name=new_column_name).first()
+                    if existing_column:
+                        # Add numeric suffix to make it unique
+                        counter = 1
+                        while existing_column:
+                            new_column_name = f"{table_prefix}{source_column.name}_{counter}"
+                            existing_column = combined_table.columns.filter(name=new_column_name).first()
+                            counter += 1
+
+                    # Create the new column
+                    new_column = MetadataColumn.objects.create(
+                        metadata_table=combined_table,
+                        name=new_column_name,
+                        type=source_column.type,
+                        value=source_column.value,
+                        modifiers=source_column.modifiers.copy() if source_column.modifiers else [],
+                        column_position=column_position,
+                        mandatory=source_column.mandatory,
+                        hidden=source_column.hidden,
+                        field_mask=source_column.field_mask,
+                        ontology_reference=source_column.ontology_reference,
+                    )
+
+                    # Copy templates relationship if it exists
+                    if hasattr(source_column, "template") and source_column.template:
+                        new_column.template = source_column.template
+                        new_column.save()
+
+                        # Collect schema IDs for reordering
+                        if source_column.template.template and source_column.template.template.schema:
+                            schema_ids.add(source_column.template.template.schema.id)
+
+                    column_position += 1
+
+            # Combine sample pools from all source tables
+            for table_index, source_table in enumerate(source_tables):
+                table_prefix = f"T{table_index + 1}_" if len(source_tables) > 1 else ""
+
+                for source_pool in source_table.sample_pools.all():
+                    # Create new pool with prefixed name
+                    new_pool_name = f"{table_prefix}{source_pool.pool_name}"
+
+                    # Ensure unique pool name
+                    counter = 1
+                    original_pool_name = new_pool_name
+                    while combined_table.sample_pools.filter(pool_name=new_pool_name).exists():
+                        new_pool_name = f"{original_pool_name}_{counter}"
+                        counter += 1
+
+                    new_pool = SamplePool.objects.create(
+                        metadata_table=combined_table,
+                        pool_name=new_pool_name,
+                        pooled_only_samples=source_pool.pooled_only_samples.copy(),
+                        pooled_and_independent_samples=source_pool.pooled_and_independent_samples.copy(),
+                        is_reference=source_pool.is_reference,
+                    )
+
+                    # Copy pool metadata columns
+                    for source_pool_column in source_pool.metadata_columns.all():
+                        # Find corresponding column in the combined table
+                        target_column_name = f"{table_prefix}{source_pool_column.name}"
+                        target_column = combined_table.columns.filter(name=target_column_name).first()
+
+                        if target_column:
+                            # Create pool column copy
+                            pool_column = MetadataColumn.objects.create(
+                                name=source_pool_column.name,
+                                type=source_pool_column.type,
+                                value=source_pool_column.value,
+                                modifiers=source_pool_column.modifiers.copy() if source_pool_column.modifiers else [],
+                                column_position=source_pool_column.column_position,
+                                mandatory=source_pool_column.mandatory,
+                                hidden=source_pool_column.hidden,
+                                field_mask=source_pool_column.field_mask,
+                                ontology_reference=source_pool_column.ontology_reference,
+                            )
+                            new_pool.metadata_columns.add(pool_column)
+
+            # Apply schema-based column reordering if requested and schemas are available
+            if apply_schema_reordering and schema_ids:
+                try:
+                    combined_table.reorder_columns_by_schema(schema_ids=list(schema_ids))
+                except Exception as e:
+                    print(f"Warning: Failed to reorder columns by schema: {e}")
+                    combined_table.normalize_column_positions()
+            else:
+                # Basic column position normalization
+                combined_table.normalize_column_positions()
+
+            return combined_table
+
+        except Exception as e:
+            # Clean up on error
+            combined_table.delete()
+            raise Exception(f"Failed to combine tables column-wise: {str(e)}")
+
+    @classmethod
+    def combine_tables_rowwise(
+        cls,
+        source_tables: list["MetadataTable"],
+        target_name: str,
+        description: str = None,
+        user=None,
+        apply_schema_reordering: bool = True,
+        merge_strategy: str = "union",
+    ) -> "MetadataTable":
+        """
+        Combine multiple metadata tables row-wise (stacked vertically).
+
+        This creates a new table with rows from all source tables stacked,
+        using either union (all unique columns) or intersection (only common columns).
+
+        Args:
+            source_tables: List of MetadataTable objects to combine
+            target_name: Name for the new combined table
+            description: Optional description for the new table
+            user: User creating the combined table
+            apply_schema_reordering: Whether to apply schema-based column reordering
+            merge_strategy: "union" (all columns) or "intersection" (common columns only)
+
+        Returns:
+            MetadataTable: New combined metadata table
+
+        Raises:
+            ValueError: If no source tables provided or other validation errors
+        """
+        if not source_tables:
+            raise ValueError("At least one source table is required")
+
+        if not target_name:
+            raise ValueError("Target table name is required")
+
+        if merge_strategy not in ["union", "intersection"]:
+            raise ValueError("Merge strategy must be 'union' or 'intersection'")
+
+        # Analyze columns from all source tables
+        all_column_info = {}  # column_name -> {type, properties, source_tables}
+        schema_ids = set()
+
+        for source_table in source_tables:
+            for column in source_table.columns.all():
+                if column.name not in all_column_info:
+                    all_column_info[column.name] = {
+                        "type": column.type,
+                        "mandatory": column.mandatory,
+                        "hidden": column.hidden,
+                        "field_mask": column.field_mask,
+                        "ontology_reference": column.ontology_reference,
+                        "source_tables": [],
+                    }
+                all_column_info[column.name]["source_tables"].append(source_table)
+
+                # Collect schema IDs
+                if (
+                    hasattr(column, "template")
+                    and column.template
+                    and column.template.template
+                    and column.template.template.schema
+                ):
+                    schema_ids.add(column.template.template.schema.id)
+
+        # Determine which columns to include based on merge strategy
+        if merge_strategy == "intersection":
+            # Only include columns present in ALL source tables
+            columns_to_include = {
+                name: info for name, info in all_column_info.items() if len(info["source_tables"]) == len(source_tables)
+            }
+        else:  # union
+            # Include all columns from all source tables
+            columns_to_include = all_column_info
+
+        if not columns_to_include:
+            raise ValueError(f"No common columns found for {merge_strategy} merge strategy")
+
+        # Calculate total sample count
+        total_sample_count = sum(table.sample_count for table in source_tables)
+
+        # Create the new combined metadata table
+        combined_table = cls.objects.create(
+            name=target_name,
+            description=description
+            or f"Row-wise combined table from {len(source_tables)} source tables ({merge_strategy})",
+            sample_count=total_sample_count,
+            owner=user,
+        )
+
+        try:
+            # Create columns in the combined table
+            for column_position, (column_name, column_info) in enumerate(columns_to_include.items()):
+                new_column = MetadataColumn.objects.create(
+                    metadata_table=combined_table,
+                    name=column_name,
+                    type=column_info["type"],
+                    column_position=column_position,
+                    mandatory=column_info["mandatory"],
+                    hidden=column_info["hidden"],
+                    field_mask=column_info["field_mask"],
+                    ontology_reference=column_info["ontology_reference"],
+                )
+
+                # Combine modifiers and values from all source tables
+                combined_modifiers = []
+                sample_offset = 1  # Start from sample 1
+
+                for source_table in source_tables:
+                    source_column = source_table.columns.filter(name=column_name).first()
+
+                    if source_column:
+                        # Use source column's value and modifiers
+                        if not new_column.value:
+                            new_column.value = source_column.value
+
+                        # Adjust sample indices in modifiers
+                        if source_column.modifiers:
+                            for modifier in source_column.modifiers:
+                                if isinstance(modifier, dict) and "samples" in modifier:
+                                    # Parse and adjust sample ranges
+                                    adjusted_modifier = modifier.copy()
+                                    original_samples = modifier["samples"]
+                                    adjusted_ranges = []
+
+                                    for part in original_samples.split(","):
+                                        part = part.strip()
+                                        if "-" in part:
+                                            start, end = map(int, part.split("-"))
+                                            adjusted_ranges.append(
+                                                f"{start + sample_offset - 1}-{end + sample_offset - 1}"
+                                            )
+                                        else:
+                                            sample_idx = int(part)
+                                            adjusted_ranges.append(str(sample_idx + sample_offset - 1))
+
+                                    adjusted_modifier["samples"] = ",".join(adjusted_ranges)
+                                    combined_modifiers.append(adjusted_modifier)
+                    else:
+                        # Column doesn't exist in this source table (union case)
+                        # Add default value for this table's sample range
+                        if merge_strategy == "union":
+                            end_sample = sample_offset + source_table.sample_count - 1
+                            if sample_offset == end_sample:
+                                sample_range = str(sample_offset)
+                            else:
+                                sample_range = f"{sample_offset}-{end_sample}"
+
+                            combined_modifiers.append(
+                                {"samples": sample_range, "value": ""}  # Empty value for missing columns
+                            )
+
+                    sample_offset += source_table.sample_count
+
+                new_column.modifiers = combined_modifiers
+                new_column.save()
+
+            # Combine sample pools with adjusted sample indices
+            sample_offset = 1
+            for table_index, source_table in enumerate(source_tables):
+                table_prefix = f"T{table_index + 1}_" if len(source_tables) > 1 else ""
+
+                for source_pool in source_table.sample_pools.all():
+                    new_pool_name = f"{table_prefix}{source_pool.pool_name}"
+
+                    # Ensure unique pool name
+                    counter = 1
+                    original_pool_name = new_pool_name
+                    while combined_table.sample_pools.filter(pool_name=new_pool_name).exists():
+                        new_pool_name = f"{original_pool_name}_{counter}"
+                        counter += 1
+
+                    # Adjust sample indices for the new table
+                    adjusted_pooled_only = [idx + sample_offset - 1 for idx in source_pool.pooled_only_samples]
+                    adjusted_pooled_independent = [
+                        idx + sample_offset - 1 for idx in source_pool.pooled_and_independent_samples
+                    ]
+
+                    new_pool = SamplePool.objects.create(
+                        metadata_table=combined_table,
+                        pool_name=new_pool_name,
+                        pooled_only_samples=adjusted_pooled_only,
+                        pooled_and_independent_samples=adjusted_pooled_independent,
+                        is_reference=source_pool.is_reference,
+                    )
+
+                    # Copy pool metadata columns for columns that exist in the combined table
+                    for source_pool_column in source_pool.metadata_columns.all():
+                        if source_pool_column.name in columns_to_include:
+                            pool_column = MetadataColumn.objects.create(
+                                name=source_pool_column.name,
+                                type=source_pool_column.type,
+                                value=source_pool_column.value,
+                                modifiers=source_pool_column.modifiers.copy() if source_pool_column.modifiers else [],
+                                column_position=source_pool_column.column_position,
+                                mandatory=source_pool_column.mandatory,
+                                hidden=source_pool_column.hidden,
+                                field_mask=source_pool_column.field_mask,
+                                ontology_reference=source_pool_column.ontology_reference,
+                            )
+                            new_pool.metadata_columns.add(pool_column)
+
+                sample_offset += source_table.sample_count
+
+            # Apply schema-based column reordering if requested and schemas are available
+            if apply_schema_reordering and schema_ids:
+                try:
+                    combined_table.reorder_columns_by_schema(schema_ids=list(schema_ids))
+                except Exception as e:
+                    print(f"Warning: Failed to reorder columns by schema: {e}")
+                    combined_table.normalize_column_positions()
+            else:
+                # Basic column position normalization
+                combined_table.normalize_column_positions()
+
+            # Update pooled sample columns if they exist
+            from .utils import update_pooled_sample_column_for_table
+
+            update_pooled_sample_column_for_table(combined_table)
+
+            return combined_table
+
+        except Exception as e:
+            # Clean up on error
+            combined_table.delete()
+            raise Exception(f"Failed to combine tables row-wise: {str(e)}")
 
 
 class MetadataColumn(models.Model):
@@ -437,11 +1205,16 @@ class MetadataColumn(models.Model):
         help_text="Custom filters to apply when querying the ontology",
     )
     suggested_values = models.JSONField(default=list, blank=True, help_text="Cached suggested values from ontology")
-
+    staff_only = models.BooleanField(default=False, help_text="Whether only staff can edit this column")
     # Audit trail
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     history = HistoricalRecords()
+    possible_default_values = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of possible default sdrf values for this column template",
+    )
 
     class Meta:
         app_label = "ccv"
@@ -684,10 +1457,10 @@ class MetadataColumn(models.Model):
             accession = lookup_value.get("accession", "").strip()
             if has_key_value:
                 if "NT" in value_dict:
-                    row_value.append(value_dict["NT"])
+                    row_value.append(f"NT={value_dict['NT']}")
             else:
-                row_value.append(value)
-            row_value.append(accession)
+                row_value.append(f"NT={value}")
+            row_value.append(f"AC={accession}")
             return ";".join(row_value)
         elif self.ontology_type == "unimod":
             accession = lookup_value.get("accession", "").strip()
@@ -709,6 +1482,11 @@ class MetadataColumn(models.Model):
             else:
                 nt = lookup_value.get("identifier", "").strip()
                 row_value.append(f"NT={nt}")
+
+            return ";".join(row_value)
+
+        # Default case - return the original value if no specific ontology handling
+        return value
 
     def validate_value_against_ontology(self, value: str) -> bool:
         """Validate if a value exists in the associated ontology."""
@@ -1640,6 +2418,30 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
 
         return True
 
+    def add_column_with_auto_reorder(self, column_data: dict, position: int = None, auto_reorder: bool = True):
+        """Add a new column to this metadata table template and automatically reorder columns."""
+        column = self.add_column_to_template(column_data, position=position)
+        result = {"column": column, "reordered": False, "schema_ids_used": [], "message": "Column added successfully"}
+
+        if auto_reorder:
+            schema_ids = set()
+            for col in self.user_columns.all():
+                if col.template and col.template.schema:
+                    schema_ids.add(col.template.schema.id)
+
+            if schema_ids:
+                schema_ids_list = list(schema_ids)
+                try:
+                    reorder_success = self.reorder_columns_by_schema(schema_ids=schema_ids_list)
+                    if reorder_success:
+                        result["reordered"] = True
+                        result["schema_ids_used"] = schema_ids_list
+                        result["message"] = f"Column added and reordered using {len(schema_ids_list)} schema(s)"
+                except Exception as e:
+                    print(f"Warning: Failed to reorder template columns by schema: {e}")
+
+        return result
+
     def create_table_from_template(
         self, table_name: str, creator=None, sample_count: int = 1, description: str = None, lab_group=None, **kwargs
     ) -> "MetadataTable":
@@ -1738,11 +2540,9 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
         Returns:
             MetadataTable: The newly created table with columns
         """
-        # Handle schema IDs or names
         schema_objects = []
 
         if schema_ids:
-            # Use schema IDs (preferred)
             for schema_id in schema_ids:
                 try:
                     schema_obj = Schema.objects.get(id=schema_id, is_active=True)
@@ -1750,7 +2550,6 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                 except Schema.DoesNotExist:
                     print(f"Warning: Schema with ID {schema_id} not found or not active")
         elif schemas:
-            # Legacy support: Use schema names
             for schema_name in schemas:
                 try:
                     schema_obj = Schema.objects.get(name=schema_name, is_active=True)
@@ -1758,14 +2557,12 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                 except Schema.DoesNotExist:
                     print(f"Warning: Schema '{schema_name}' not found or not active")
         else:
-            # Default to minimum schema
             try:
                 minimum_schema = Schema.objects.get(name="minimum", is_active=True)
                 schema_objects = [minimum_schema]
             except Schema.DoesNotExist:
                 raise ValueError("No schemas provided and minimum schema not found")
 
-        # Create the metadata table
         schema_names = [s.display_name or s.name for s in schema_objects]
         table_data = {
             "name": table_name,
@@ -2185,19 +2982,16 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
         template = cls.objects.create(**template_data)
 
         try:
-            # Add schemas to template and increment usage count
             if schema_objects:
                 template.schemas.set(schema_objects)
                 for schema_obj in schema_objects:
                     schema_obj.usage_count += 1
                     schema_obj.save(update_fields=["usage_count"])
 
-            # Get column templates linked to the schemas
             column_templates = []
             seen_template_ids = set()
 
             for schema_obj in schema_objects:
-                # Get all column templates linked to this schema
                 schema_templates = schema_obj.column_templates.filter(is_active=True).order_by("default_position", "id")
 
                 for col_template in schema_templates:
@@ -2581,11 +3375,16 @@ class MetadataColumnTemplate(AbstractResource):
         related_name="column_templates",
         help_text="Schema model this template is associated with",
     )
-
+    staff_only = models.BooleanField(default=False, help_text="Whether only staff can edit this column")
     # Audit trail
     last_used_at = models.DateTimeField(blank=True, null=True, help_text="When this template was last used")
     base_column = models.BooleanField(
         default=False, help_text="Whether this is a base column template for core metadata"
+    )
+    possible_default_values = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of possible default sdrf values for this column template",
     )
 
     class Meta(AbstractResource.Meta):

@@ -5,6 +5,7 @@ Provides factory classes to create realistic test data based on SDRF patterns
 and scientific metadata conventions.
 """
 
+import os
 import random
 from typing import Dict, List
 
@@ -25,6 +26,27 @@ from ccv.models import (
 )
 
 User = get_user_model()
+
+
+def get_fixture_path(filename):
+    """Get absolute path to test fixture file."""
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    return os.path.join(project_root, "tests", "fixtures", filename)
+
+
+def fixture_exists(filename):
+    """Check if a fixture file exists."""
+    return os.path.exists(get_fixture_path(filename))
+
+
+def read_fixture_content(filename):
+    """Read fixture file content."""
+    filepath = get_fixture_path(filename)
+    if not os.path.exists(filepath):
+        return None
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        return f.read()
 
 
 class SDRFDataPatterns:
@@ -145,13 +167,23 @@ class UserFactory:
         if not email:
             email = f"{username}@example.com"
 
-        return User.objects.create_user(
+        user = User.objects.create_user(
             username=username,
             email=email,
             password=kwargs.get("password", "testpass123"),
             first_name=kwargs.get("first_name", "Test"),
             last_name=kwargs.get("last_name", "User"),
         )
+
+        # Set additional attributes like is_staff, is_superuser
+        for key, value in kwargs.items():
+            if key not in ["password", "first_name", "last_name"] and hasattr(user, key):
+                setattr(user, key, value)
+
+        if any(key in kwargs for key in ["is_staff", "is_superuser", "is_active"]):
+            user.save()
+
+        return user
 
     @staticmethod
     def create_lab_group_user(lab_name: str = None) -> tuple:
@@ -192,7 +224,7 @@ class MetadataTableFactory:
             "name": f"Study {random.randint(1000, 9999)}",
             "description": "Proteomics study generated for testing",
             "sample_count": random.randint(6, 50),
-            "creator": user,
+            "owner": user,
             "lab_group": lab_group,
         }
         defaults.update(kwargs)
@@ -209,7 +241,6 @@ class MetadataTableFactory:
             "name": f"Proteomics Study PXD{random.randint(100000, 999999)}",
             "description": "Mass spectrometry-based proteomics study",
             "sample_count": random.randint(8, 30),
-            "technology_type": "proteomic profiling by mass spectrometry",
         }
         defaults.update(kwargs)
 
@@ -232,6 +263,11 @@ class MetadataTableFactory:
             ("cleavage agent details", "comment", False),
             ("modification parameters", "comment", False),
             ("pooled sample", "characteristics", False),
+            ("cell type", "characteristics", False),
+            ("age", "characteristics", False),
+            ("sex", "characteristics", False),
+            ("individual", "characteristics", False),
+            ("biological replicate", "characteristics", False),
         ]
 
         for i, (name, col_type, mandatory) in enumerate(standard_columns[:column_count]):
@@ -245,6 +281,44 @@ class MetadataTableFactory:
             )
 
         return table
+
+    @staticmethod
+    def from_sdrf_file(sdrf_file_path: str, created_by: User = None, **kwargs) -> MetadataTable:
+        """Create a metadata table by importing from an actual SDRF fixture file."""
+        import os
+
+        from ccv.tasks.import_utils import import_sdrf_data
+
+        if not created_by:
+            created_by = UserFactory.create_user()
+
+        # Read the actual SDRF file content
+        with open(sdrf_file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Extract filename for table name
+        filename = os.path.basename(sdrf_file_path).replace(".sdrf.tsv", "")
+
+        # Create empty metadata table first
+        table_name = kwargs.pop("table_name", f"SDRF_{filename}")
+        metadata_table = MetadataTableFactory.create_basic_table(user=created_by, name=table_name, **kwargs)
+
+        # Import SDRF data into the table
+        import_result = import_sdrf_data(
+            file_content=content,
+            metadata_table=metadata_table,
+            user=created_by,
+            replace_existing=True,
+            validate_ontologies=False,  # Skip validation for faster testing
+            create_pools=True,
+        )
+
+        if not import_result.get("success"):
+            raise ValueError(f"SDRF import failed: {import_result.get('error', 'Unknown error')}")
+
+        # Refresh from database to get updated sample_count
+        metadata_table.refresh_from_db()
+        return metadata_table
 
 
 class MetadataColumnFactory:
@@ -337,7 +411,7 @@ class SamplePoolFactory:
             "pooled_only_samples": [1, 2],
             "pooled_and_independent_samples": [],
             "is_reference": True,
-            "created_by": metadata_table.creator,
+            "created_by": metadata_table.owner,
         }
         defaults.update(kwargs)
 
@@ -363,14 +437,23 @@ class OntologyFactory:
     @staticmethod
     def create_species(**kwargs) -> Species:
         """Create a species record."""
-        organism_data = [
-            ("HUMAN", 9606, "Homo sapiens", "Human"),
-            ("MOUSE", 10090, "Mus musculus", "Mouse"),
-            ("RAT", 10116, "Rattus norvegicus", "Rat"),
-            ("ZEBRAFISH", 7955, "Danio rerio", "Zebrafish"),
-        ]
+        organism_data = {
+            "HUMAN": (9606, "Homo sapiens", "Human"),
+            "MOUSE": (10090, "Mus musculus", "Mouse"),
+            "RAT": (10116, "Rattus norvegicus", "Rat"),
+            "ZEBRAFISH": (7955, "Danio rerio", "Zebrafish"),
+        }
 
-        code, taxon, official, common = random.choice(organism_data)
+        # If code is specified, use matching data; otherwise pick randomly
+        if "code" in kwargs:
+            code = kwargs["code"]
+            if code in organism_data:
+                taxon, official, common = organism_data[code]
+            else:
+                # Use provided code but random other data
+                code_choice, (taxon, official, common) = random.choice(list(organism_data.items()))
+        else:
+            code, (taxon, official, common) = random.choice(list(organism_data.items()))
 
         defaults = {
             "code": code,
@@ -381,7 +464,8 @@ class OntologyFactory:
         }
         defaults.update(kwargs)
 
-        return Species.objects.create(**defaults)
+        species, created = Species.objects.get_or_create(code=defaults["code"], defaults=defaults)
+        return species
 
     @staticmethod
     def create_tissue(**kwargs) -> Tissue:
@@ -403,15 +487,16 @@ class OntologyFactory:
         }
         defaults.update(kwargs)
 
-        return Tissue.objects.create(**defaults)
+        tissue, created = Tissue.objects.get_or_create(identifier=defaults["identifier"], defaults=defaults)
+        return tissue
 
     @staticmethod
     def create_disease(**kwargs) -> HumanDisease:
         """Create a human disease record."""
         disease_data = [
-            ("MONDO_0007254", "BC", "breast carcinoma", "A carcinoma that arises from the breast."),
-            ("MONDO_0005233", "LC", "lung carcinoma", "A carcinoma that arises from the lung."),
-            ("MONDO_0007256", "CC", "colon carcinoma", "A carcinoma that arises from the colon."),
+            ("breast carcinoma", "BC", "MONDO:0007254", "A carcinoma that arises from the breast."),
+            ("lung carcinoma", "LC", "MONDO:0005233", "A carcinoma that arises from the lung."),
+            ("colon carcinoma", "CC", "MONDO:0007256", "A carcinoma that arises from the colon."),
         ]
 
         identifier, acronym, accession, definition = random.choice(disease_data)
@@ -426,7 +511,8 @@ class OntologyFactory:
         }
         defaults.update(kwargs)
 
-        return HumanDisease.objects.create(**defaults)
+        disease, created = HumanDisease.objects.get_or_create(identifier=defaults["identifier"], defaults=defaults)
+        return disease
 
     @staticmethod
     def create_subcellular_location(**kwargs) -> SubcellularLocation:
@@ -448,7 +534,10 @@ class OntologyFactory:
         }
         defaults.update(kwargs)
 
-        return SubcellularLocation.objects.create(**defaults)
+        location, created = SubcellularLocation.objects.get_or_create(
+            accession=defaults["accession"], defaults=defaults
+        )
+        return location
 
     @staticmethod
     def create_ms_term(**kwargs) -> MSUniqueVocabularies:
@@ -464,7 +553,10 @@ class OntologyFactory:
         defaults = {"accession": accession, "name": name, "definition": definition, "term_type": term_type}
         defaults.update(kwargs)
 
-        return MSUniqueVocabularies.objects.create(**defaults)
+        ms_term, created = MSUniqueVocabularies.objects.get_or_create(
+            accession=defaults["accession"], defaults=defaults
+        )
+        return ms_term
 
     @staticmethod
     def create_unimod(**kwargs) -> Unimod:
@@ -488,7 +580,8 @@ class OntologyFactory:
         }
         defaults.update(kwargs)
 
-        return Unimod.objects.create(**defaults)
+        unimod, created = Unimod.objects.get_or_create(accession=defaults["accession"], defaults=defaults)
+        return unimod
 
 
 class FavouriteMetadataOptionFactory:

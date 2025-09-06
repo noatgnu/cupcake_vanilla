@@ -6,9 +6,15 @@ from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
-from .async_views import AsyncExportViewSet, AsyncImportViewSet, AsyncTaskViewSet, cleanup_expired_files
+from .async_views import (
+    AsyncExportViewSet,
+    AsyncImportViewSet,
+    AsyncTaskViewSet,
+    AsyncValidationViewSet,
+    cleanup_expired_files,
+)
 from .chunked_upload import MetadataChunkedUploadView
-from .views import (
+from .viewsets import (
     CellOntologyViewSet,
     ChEBICompoundViewSet,
     FavouriteMetadataOptionViewSet,
@@ -66,6 +72,7 @@ router.register(r"sdrf-defaults", SDRFDefaultsViewSet, basename="sdrfdefaults")
 router.register(r"async-tasks", AsyncTaskViewSet, basename="asynctask")
 router.register(r"async-export", AsyncExportViewSet, basename="asyncexport")
 router.register(r"async-import", AsyncImportViewSet, basename="asyncimport")
+router.register(r"async-validation", AsyncValidationViewSet, basename="asyncvalidation")
 
 urlpatterns = [
     # DRF ViewSet endpoints (api/v1/ prefix comes from main urls.py)

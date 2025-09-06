@@ -10,11 +10,23 @@ from django.contrib.auth.password_validation import validate_password
 
 from rest_framework import serializers
 
-from .models import AccountMergeRequest, LabGroup, LabGroupInvitation, SiteConfig, UserOrcidProfile
+from .models import (
+    AccountMergeRequest,
+    Annotation,
+    AnnotationFolder,
+    LabGroup,
+    LabGroupInvitation,
+    RemoteHost,
+    ResourcePermission,
+    SiteConfig,
+    UserOrcidProfile,
+)
 
 
 class SiteConfigSerializer(serializers.ModelSerializer):
     """Serializer for site configuration settings."""
+
+    installed_apps = serializers.SerializerMethodField()
 
     class Meta:
         model = SiteConfig
@@ -26,11 +38,70 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "show_powered_by",
             "allow_user_registration",
             "enable_orcid_login",
+            "installed_apps",
             "created_at",
             "updated_at",
             "updated_by",
         ]
-        read_only_fields = ["created_at", "updated_at", "updated_by"]
+        read_only_fields = ["created_at", "updated_at", "updated_by", "installed_apps"]
+
+    def get_installed_apps(self, obj):
+        """Return information about which CUPCAKE apps are installed."""
+        from django.apps import apps
+        from django.conf import settings
+
+        # Get installed app names from Django registry
+        installed_app_names = [app.name for app in apps.get_app_configs()]
+
+        # Define the mapping of app configs to app information
+        cupcake_apps = {
+            "ccv": {
+                "name": "CUPCAKE Vanilla",
+                "code": "ccv",
+                "description": "Core metadata management and validation",
+                "installed": "ccv" in installed_app_names,
+            },
+            "ccc": {
+                "name": "CUPCAKE Core",
+                "code": "ccc",
+                "description": "Authentication, permissions, and core functionality",
+                "installed": "ccc" in installed_app_names,
+            },
+            "ccm": {
+                "name": "CUPCAKE Macaron",
+                "code": "ccm",
+                "description": "Instrument and reagent management",
+                "installed": "ccm" in installed_app_names
+                and hasattr(settings, "ENABLE_CUPCAKE_MACARON")
+                and settings.ENABLE_CUPCAKE_MACARON,
+            },
+            "ccmc": {
+                "name": "CUPCAKE Mint Chocolate",
+                "code": "ccmc",
+                "description": "Advanced data processing and analytics",
+                "installed": "ccmc" in installed_app_names
+                and hasattr(settings, "ENABLE_CUPCAKE_MINT_CHOCOLATE")
+                and settings.ENABLE_CUPCAKE_MINT_CHOCOLATE,
+            },
+            "ccsc": {
+                "name": "CUPCAKE Salted Caramel",
+                "code": "ccsc",
+                "description": "Sample management and tracking",
+                "installed": "ccsc" in installed_app_names
+                and hasattr(settings, "ENABLE_CUPCAKE_SALTED_CARAMEL")
+                and settings.ENABLE_CUPCAKE_SALTED_CARAMEL,
+            },
+            "ccrv": {
+                "name": "CUPCAKE Red Velvet",
+                "code": "ccrv",
+                "description": "Protocol management and experimental workflows",
+                "installed": "ccrv" in installed_app_names
+                and hasattr(settings, "ENABLE_CUPCAKE_RED_VELVET")
+                and settings.ENABLE_CUPCAKE_RED_VELVET,
+            },
+        }
+
+        return cupcake_apps
 
 
 class LabGroupSerializer(serializers.ModelSerializer):
@@ -555,3 +626,244 @@ class EmailChangeConfirmSerializer(serializers.Serializer):
     def get_new_email(self):
         """Get the new email from the validated token."""
         return getattr(self, "_new_email", None)
+
+
+class AnnotationFolderSerializer(serializers.ModelSerializer):
+    """Serializer for annotation folders with hierarchical organization."""
+
+    full_path = serializers.SerializerMethodField()
+    child_folders_count = serializers.SerializerMethodField()
+    annotations_count = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    can_view = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+    owner_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AnnotationFolder
+        fields = [
+            "id",
+            "folder_name",
+            "parent_folder",
+            "is_shared_document_folder",
+            "owner",
+            "owner_name",
+            "lab_group",
+            "visibility",
+            "is_active",
+            "is_locked",
+            "created_at",
+            "updated_at",
+            "full_path",
+            "child_folders_count",
+            "annotations_count",
+            "can_edit",
+            "can_view",
+            "can_delete",
+        ]
+        read_only_fields = ["created_at", "updated_at", "full_path", "child_folders_count", "annotations_count"]
+
+    def get_full_path(self, obj):
+        """Get the full hierarchical path."""
+        return obj.get_full_path()
+
+    def get_child_folders_count(self, obj):
+        """Get count of child folders."""
+        return obj.child_folders.filter(is_active=True).count()
+
+    def get_annotations_count(self, obj):
+        """Get count of annotations in this folder."""
+        return obj.annotations.filter(is_active=True).count()
+
+    def get_can_edit(self, obj):
+        """Check if current user can edit this folder."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_edit(request.user)
+        return False
+
+    def get_can_view(self, obj):
+        """Check if current user can view this folder."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_view(request.user)
+        return False
+
+    def get_can_delete(self, obj):
+        """Check if current user can delete this folder."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_delete(request.user)
+        return False
+
+    def get_owner_name(self, obj):
+        """Get owner display name."""
+        if obj.owner:
+            return obj.owner.get_full_name() or obj.owner.username
+        return None
+
+    def create(self, validated_data):
+        """Set owner to current user and default resource type."""
+        request = self.context["request"]
+        validated_data["owner"] = request.user
+        validated_data["resource_type"] = "file"
+        return super().create(validated_data)
+
+
+class AnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for annotations with file upload support."""
+
+    file_url = serializers.SerializerMethodField()
+    file_size = serializers.SerializerMethodField()
+    folder_path = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    can_view = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+    owner_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Annotation
+        fields = [
+            "id",
+            "annotation",
+            "annotation_type",
+            "file",
+            "file_url",
+            "file_size",
+            "folder",
+            "folder_path",
+            "transcribed",
+            "transcription",
+            "language",
+            "translation",
+            "scratched",
+            "owner",
+            "owner_name",
+            "lab_group",
+            "visibility",
+            "is_active",
+            "is_locked",
+            "created_at",
+            "updated_at",
+            "can_edit",
+            "can_view",
+            "can_delete",
+        ]
+        read_only_fields = ["created_at", "updated_at", "file_url", "file_size", "folder_path"]
+
+    def get_file_url(self, obj):
+        """Get file URL if file exists."""
+        if obj.file:
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.file.url)
+            return obj.file.url
+        return None
+
+    def get_file_size(self, obj):
+        """Get file size if file exists."""
+        if obj.file:
+            try:
+                return obj.file.size
+            except (OSError, ValueError):
+                return None
+        return None
+
+    def get_folder_path(self, obj):
+        """Get folder path if folder exists."""
+        if obj.folder:
+            return obj.folder.get_full_path()
+        return None
+
+    def get_can_edit(self, obj):
+        """Check if current user can edit this annotation."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_edit(request.user)
+        return False
+
+    def get_can_view(self, obj):
+        """Check if current user can view this annotation."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_view(request.user)
+        return False
+
+    def get_can_delete(self, obj):
+        """Check if current user can delete this annotation."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_delete(request.user)
+        return False
+
+    def get_owner_name(self, obj):
+        """Get owner display name."""
+        if obj.owner:
+            return obj.owner.get_full_name() or obj.owner.username
+        return None
+
+    def create(self, validated_data):
+        """Set owner to current user and default resource type."""
+        request = self.context["request"]
+        validated_data["owner"] = request.user
+        validated_data["resource_type"] = "file"
+        return super().create(validated_data)
+
+
+class RemoteHostSerializer(serializers.ModelSerializer):
+    """Serializer for remote host configuration."""
+
+    class Meta:
+        model = RemoteHost
+        fields = [
+            "id",
+            "host_name",
+            "host_port",
+            "host_protocol",
+            "host_description",
+            "host_token",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+        extra_kwargs = {"host_token": {"write_only": True}}  # Don't expose tokens in responses
+
+
+class ResourcePermissionSerializer(serializers.ModelSerializer):
+    """Serializer for resource permissions."""
+
+    user_username = serializers.CharField(source="user.username", read_only=True)
+    user_display_name = serializers.SerializerMethodField()
+    granted_by_username = serializers.CharField(source="granted_by.username", read_only=True)
+    resource_type_name = serializers.CharField(source="resource_content_type.name", read_only=True)
+    resource_model = serializers.CharField(source="resource_content_type.model", read_only=True)
+
+    class Meta:
+        model = ResourcePermission
+        fields = [
+            "id",
+            "user",
+            "user_username",
+            "user_display_name",
+            "resource_content_type",
+            "resource_type_name",
+            "resource_model",
+            "resource_object_id",
+            "role",
+            "granted_by",
+            "granted_by_username",
+            "granted_at",
+        ]
+        read_only_fields = ["id", "granted_by", "granted_at"]
+
+    def get_user_display_name(self, obj):
+        """Get user's display name."""
+        if obj.user.first_name and obj.user.last_name:
+            return f"{obj.user.first_name} {obj.user.last_name}"
+        return obj.user.username
+
+    def create(self, validated_data):
+        """Set granted_by to current user."""
+        request = self.context["request"]
+        validated_data["granted_by"] = request.user
+        return super().create(validated_data)

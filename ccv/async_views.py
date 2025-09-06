@@ -17,10 +17,22 @@ from ccv.models import MetadataTable
 from ccv.serializers import (
     AsyncTaskListSerializer,
     AsyncTaskStatusSerializer,
+    BulkExcelExportSerializer,
+    BulkExportSerializer,
     MetadataExportSerializer,
     MetadataImportSerializer,
+    MetadataValidationSerializer,
 )
 from ccv.task_models import AsyncTaskStatus, TaskResult
+from ccv.tasks import (
+    export_excel_template_task,
+    export_multiple_excel_template_task,
+    export_multiple_sdrf_task,
+    export_sdrf_task,
+    import_excel_task,
+    import_sdrf_task,
+    validate_metadata_table_task,
+)
 
 
 class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
@@ -228,15 +240,13 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
         )
 
         # Queue the task
-        queue = get_queue("default")
-        job = queue.enqueue(
-            "ccv.tasks.export_excel_template_task",
+        job = export_excel_template_task.delay(
             metadata_table_id=metadata_table.id,
             user_id=request.user.id,
             metadata_column_ids=data.get("metadata_column_ids"),
             include_pools=data.get("include_pools", True),
+            lab_group_ids=data.get("lab_group_ids"),
             task_id=str(task.id),
-            job_timeout="1h",
         )
 
         # Update task with job ID
@@ -288,14 +298,12 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
         )
 
         # Queue the task
-        queue = get_queue("default")
-        job = queue.enqueue(
-            "ccv.tasks.export_sdrf_task",
+        job = export_sdrf_task.delay(
             metadata_table_id=metadata_table.id,
             user_id=request.user.id,
+            metadata_column_ids=data.get("metadata_column_ids"),
             include_pools=data.get("include_pools", True),
             task_id=str(task.id),
-            job_timeout="1h",
         )
 
         # Update task with job ID
@@ -304,6 +312,136 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
 
         return Response(
             {"task_id": str(task.id), "message": "SDRF export task queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=False, methods=["post"])
+    def multiple_sdrf_files(self, request):
+        """Queue bulk SDRF files export task."""
+        serializer = BulkExportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        metadata_table_ids = data["metadata_table_ids"]
+
+        # Check that all tables exist and user has permission
+        metadata_tables = []
+        try:
+            for table_id in metadata_table_ids:
+                table = MetadataTable.objects.get(id=table_id)
+                if not table.can_view(request.user):
+                    return Response(
+                        {"error": f"Permission denied: cannot view metadata table {table_id}"},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                metadata_tables.append(table)
+        except MetadataTable.DoesNotExist:
+            return Response(
+                {"error": f"Metadata table {table_id} not found"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if RQ is enabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            return Response(
+                {"error": "Async task queuing is not enabled"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Create task record - use first table as primary reference
+        primary_table = metadata_tables[0] if metadata_tables else None
+        task = AsyncTaskStatus.objects.create(
+            task_type="EXPORT_MULTIPLE_SDRF",
+            user=request.user,
+            metadata_table=primary_table,
+            parameters={
+                "metadata_table_ids": metadata_table_ids,
+                "include_pools": data.get("include_pools", True),
+                "validate_sdrf": data.get("validate_sdrf", False),
+            },
+        )
+
+        # Queue the task with 2-hour timeout for bulk operations
+        job = export_multiple_sdrf_task.delay(
+            metadata_table_ids=metadata_table_ids,
+            user_id=request.user.id,
+            include_pools=data.get("include_pools", True),
+            validate_sdrf=data.get("validate_sdrf", False),
+            task_id=str(task.id),
+        )
+
+        # Update task with job ID
+        task.rq_job_id = job.id
+        task.save(update_fields=["rq_job_id"])
+
+        return Response(
+            {"task_id": str(task.id), "message": "Bulk SDRF export task queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=False, methods=["post"])
+    def multiple_excel_templates(self, request):
+        """Queue bulk Excel templates export task."""
+        serializer = BulkExcelExportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        metadata_table_ids = data["metadata_table_ids"]
+
+        # Check that all tables exist and user has permission
+        metadata_tables = []
+        try:
+            for table_id in metadata_table_ids:
+                table = MetadataTable.objects.get(id=table_id)
+                if not table.can_view(request.user):
+                    return Response(
+                        {"error": f"Permission denied: cannot view metadata table {table_id}"},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                metadata_tables.append(table)
+        except MetadataTable.DoesNotExist:
+            return Response(
+                {"error": f"Metadata table {table_id} not found"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if RQ is enabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            return Response(
+                {"error": "Async task queuing is not enabled"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Create task record - use first table as primary reference
+        primary_table = metadata_tables[0] if metadata_tables else None
+        task = AsyncTaskStatus.objects.create(
+            task_type="EXPORT_MULTIPLE_EXCEL",
+            user=request.user,
+            metadata_table=primary_table,
+            parameters={
+                "metadata_table_ids": metadata_table_ids,
+                "metadata_column_ids": data.get("metadata_column_ids"),
+                "include_pools": data.get("include_pools", True),
+                "lab_group_ids": data.get("lab_group_ids"),
+            },
+        )
+
+        # Queue the task with 2-hour timeout for bulk operations
+        job = export_multiple_excel_template_task.delay(
+            metadata_table_ids=metadata_table_ids,
+            user_id=request.user.id,
+            metadata_column_ids=data.get("metadata_column_ids"),
+            include_pools=data.get("include_pools", True),
+            lab_group_ids=data.get("lab_group_ids"),
+            task_id=str(task.id),
+        )
+
+        # Update task with job ID
+        task.rq_job_id = job.id
+        task.save(update_fields=["rq_job_id"])
+
+        return Response(
+            {"task_id": str(task.id), "message": "Bulk Excel templates export task queued successfully"},
             status=status.HTTP_202_ACCEPTED,
         )
 
@@ -363,16 +501,13 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
         )
 
         # Queue the task
-        queue = get_queue("default")
-        job = queue.enqueue(
-            "ccv.tasks.import_sdrf_task",
+        job = import_sdrf_task.delay(
             metadata_table_id=metadata_table.id,
             user_id=request.user.id,
             file_content=file_content,
             replace_existing=data.get("replace_existing", False),
             validate_ontologies=data.get("validate_ontologies", True),
             task_id=str(task.id),
-            job_timeout="1h",
         )
 
         # Update task with job ID
@@ -429,16 +564,13 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
         )
 
         # Queue the task
-        queue = get_queue("default")
-        job = queue.enqueue(
-            "ccv.tasks.import_excel_task",
+        job = import_excel_task.delay(
             metadata_table_id=metadata_table.id,
             user_id=request.user.id,
             file_data=file_data,
             replace_existing=data.get("replace_existing", False),
             validate_ontologies=data.get("validate_ontologies", True),
             task_id=str(task.id),
-            job_timeout="1h",
         )
 
         # Update task with job ID
@@ -447,6 +579,65 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
 
         return Response(
             {"task_id": str(task.id), "message": "Excel import task queued successfully"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class AsyncValidationViewSet(viewsets.GenericViewSet):
+    """
+    ViewSet for async validation operations.
+    """
+
+    serializer_class = MetadataValidationSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=["post"])
+    def metadata_table(self, request):
+        """Queue metadata table validation task."""
+        serializer = MetadataValidationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+
+        # Get metadata table and check permissions
+        try:
+            metadata_table = MetadataTable.objects.get(id=data["metadata_table_id"])
+        except MetadataTable.DoesNotExist:
+            return Response({"error": "Metadata table not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not metadata_table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot validate this metadata table"}, status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Create task record
+        task = AsyncTaskStatus.objects.create(
+            task_type="VALIDATE_TABLE",
+            user=request.user,
+            metadata_table=metadata_table,
+            # description=f"Validating metadata table: {metadata_table.name}",
+        )
+
+        # Prepare validation options
+        validation_options = {
+            "validate_sdrf_format": data.get("validate_sdrf_format", True),
+            "include_pools": data.get("include_pools", True),
+        }
+
+        # Queue validation task
+        job = validate_metadata_table_task.delay(
+            metadata_table_id=data["metadata_table_id"],
+            user_id=request.user.id,
+            validation_options=validation_options,
+            task_id=str(task.id),
+        )
+
+        # Store RQ job ID
+        task.rq_job_id = job.id
+        task.save(update_fields=["rq_job_id"])
+
+        return Response(
+            {"task_id": str(task.id), "message": "Metadata table validation task queued successfully"},
             status=status.HTTP_202_ACCEPTED,
         )
 

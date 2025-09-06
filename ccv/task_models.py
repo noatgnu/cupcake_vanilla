@@ -34,10 +34,13 @@ class AsyncTaskStatus(models.Model):
         ("EXPORT_SDRF", "Export SDRF File"),
         ("IMPORT_SDRF", "Import SDRF File"),
         ("IMPORT_EXCEL", "Import Excel File"),
+        ("EXPORT_MULTIPLE_SDRF", "Export Multiple SDRF Files"),
+        ("EXPORT_MULTIPLE_EXCEL", "Export Multiple Excel Templates"),
+        ("VALIDATE_TABLE", "Validate Metadata Table"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
+    task_type = models.CharField(max_length=25, choices=TASK_TYPE_CHOICES)
     status = models.CharField(max_length=10, choices=TASK_STATUS_CHOICES, default="QUEUED")
 
     # Task context

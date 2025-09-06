@@ -26,6 +26,30 @@ urlpatterns = [
     path("admin/rq/", include("django_rq.urls")),
 ]
 
+# Conditionally add CUPCAKE app URLs based on configuration
+if getattr(settings, "ENABLE_CUPCAKE_MACARON", True):
+    urlpatterns += [
+        path("api/v1/", include("ccm.urls")),  # CCM: Instrument & inventory endpoints
+    ]
+
+# Add CCMC (Communication) endpoints
+if getattr(settings, "ENABLE_CUPCAKE_MINT_CHOCOLATE", False):
+    urlpatterns += [
+        path("api/v1/", include("ccmc.urls")),  # CCMC: Communication & messaging endpoints
+    ]
+
+# Add CCSC (Billing) endpoints
+if getattr(settings, "ENABLE_CUPCAKE_SALTED_CARAMEL", True):
+    urlpatterns += [
+        path("api/v1/", include("ccsc.urls")),  # CCSC: Billing & financial management endpoints
+    ]
+
+# Add CCRV (Project & Protocol) endpoints
+if getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", True):
+    urlpatterns += [
+        path("api/v1/", include("ccrv.urls")),  # CCRV: Project & protocol management endpoints
+    ]
+
 # Serve media files during development
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -61,6 +61,7 @@ class MetadataTableSerializer(serializers.ModelSerializer):
             "column_count",
             "sample_range",
             "can_edit",
+            "source_app",
             "created_at",
             "updated_at",
         ]
@@ -110,6 +111,7 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
             "modifiers",
             "ontology_type",
             "ontology_options",
+            "staff_only",
             "created_at",
             "updated_at",
         ]
@@ -936,8 +938,9 @@ class OntologySuggestionSerializer(serializers.Serializer):
             return {
                 "id": str(data.get("taxon") or data.get("code", "")),
                 "value": data.get("official_name", ""),  # Species uses official_name as value
-                "display_name": data.get("official_name", ""),
-                "description": data.get("common_name", "") or "",
+                "display_name": data.get("common_name", "")
+                or data.get("official_name", ""),  # Use common_name for display
+                "description": data.get("official_name", "") or "",
                 "ontology_type": ontology_type,
                 "full_data": {
                     "code": data.get("code", ""),
@@ -965,9 +968,9 @@ class OntologySuggestionSerializer(serializers.Serializer):
 
         elif ontology_type == "human_disease":
             return {
-                "id": data.get("accession", ""),
-                "value": data.get("identifier", ""),  # Uses identifier as value (NT field)
-                "display_name": data.get("identifier", ""),  # Keep original identifier as display_name
+                "id": data.get("accession", ""),  # accession contains the code (MONDO:0007254)
+                "value": data.get("identifier", ""),  # identifier contains the name (breast carcinoma)
+                "display_name": data.get("identifier", ""),  # identifier contains the human readable name
                 "description": data.get("definition", "") or data.get("synonyms", "") or "",
                 "ontology_type": ontology_type,
                 "full_data": {
@@ -1275,7 +1278,22 @@ class AsyncTaskListSerializer(serializers.ModelSerializer):
             "duration",
             "error_message",
         ]
-        read_only_fields = "__all__"
+        read_only_fields = [
+            "id",
+            "task_type",
+            "task_type_display",
+            "status",
+            "status_display",
+            "metadata_table",
+            "metadata_table_name",
+            "progress_percentage",
+            "progress_description",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "duration",
+            "error_message",
+        ]
 
     def get_duration(self, obj):
         """Return task duration in seconds."""
@@ -1284,6 +1302,64 @@ class AsyncTaskListSerializer(serializers.ModelSerializer):
     def get_progress_percentage(self, obj):
         """Return progress as percentage."""
         return obj.progress_percentage
+
+
+class BulkExportSerializer(serializers.Serializer):
+    """Serializer for bulk metadata export requests."""
+
+    metadata_table_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        min_length=1,
+        max_length=50,
+        help_text="List of MetadataTable IDs to export (max 50 tables)",
+    )
+    include_pools = serializers.BooleanField(default=True, help_text="Whether to include sample pools in export")
+    validate_sdrf = serializers.BooleanField(default=False, help_text="Whether to validate SDRF format")
+
+
+class MetadataValidationSerializer(serializers.Serializer):
+    """Serializer for metadata table validation requests."""
+
+    metadata_table_id = serializers.IntegerField(help_text="ID of the metadata table to validate")
+    validate_sdrf_format = serializers.BooleanField(
+        default=True, help_text="Whether to validate SDRF format compliance"
+    )
+    validate_ontologies = serializers.BooleanField(default=True, help_text="Whether to validate ontology terms")
+    validate_structure = serializers.BooleanField(default=True, help_text="Whether to validate table structure")
+    include_pools = serializers.BooleanField(default=True, help_text="Whether to include sample pools in validation")
+    async_processing = serializers.BooleanField(
+        default=False, help_text="Whether to process the validation asynchronously via task queue"
+    )
+
+    def validate_metadata_table_id(self, value):
+        """Validate that the metadata table exists."""
+        try:
+            MetadataTable.objects.get(id=value)
+            return value
+        except MetadataTable.DoesNotExist:
+            raise serializers.ValidationError("Metadata table not found.")
+
+
+class BulkExcelExportSerializer(serializers.Serializer):
+    """Serializer for bulk Excel template export requests."""
+
+    metadata_table_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        min_length=1,
+        max_length=50,
+        help_text="List of MetadataTable IDs to export (max 50 tables)",
+    )
+    metadata_column_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        help_text="Optional list of specific column IDs to export",
+    )
+    include_pools = serializers.BooleanField(default=True, help_text="Whether to include sample pools in export")
+    lab_group_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        help_text="Optional list of lab group IDs for favourites",
+    )
 
 
 class TaskCreateResponseSerializer(serializers.Serializer):

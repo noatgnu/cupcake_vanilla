@@ -250,7 +250,7 @@ class Command(BaseCommand):
                 custom_filter = {}
                 template.enable_typeahead = True
                 template.ontology_options = []
-
+                template.possible_default_values = validator.params.get("examples", [])
                 for ontology in validator.params.get("ontologies", []):
                     if ontology == "ncbitaxon":
                         template.ontology_options.extend(["ncbi_taxonomy", "species"])

@@ -10,12 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, PatternFill, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.datavalidation import DataValidation
 from sdrf_pipelines.sdrf.schemas import SchemaRegistry
-from sdrf_pipelines.sdrf.sdrf import SDRFDataFrame
+from sdrf_pipelines.sdrf.sdrf import SDRFDataFrame, read_sdrf
 
 from .models import FavouriteMetadataOption, MetadataColumn, SamplePool, Schema
 
@@ -76,7 +72,7 @@ def sort_metadata(
             value = ""
 
             # Special handling for pooled sample column
-            if metadata.name.lower() == "pooled sample":
+            if "pooled sample" in metadata.name.lower():
                 sample_number_1_based = sample_idx + 1
                 if sample_number_1_based in pooled_sample_status:
                     value = pooled_sample_status[sample_number_1_based]
@@ -170,10 +166,10 @@ def sort_pool_metadata(
 
             if pool_metadata_column:
                 value = pool_metadata_column.value or ""
-            elif metadata.name.lower() == "source name":
+            elif "source name" in metadata.name.lower():
                 # Fallback: source name should be pool name
                 value = pool.pool_name
-            elif metadata.name.lower().startswith("characteristics[pooled sample"):
+            elif "pooled sample" in metadata.name.lower():
                 # Fallback: pooled sample should be SN= value
                 value = pool.sdrf_value
             else:
@@ -189,16 +185,27 @@ def sort_pool_metadata(
 def convert_sdrf_to_metadata(name: str, value: str) -> str:
     """
     Convert SDRF values to standardized metadata format.
-    Now handles favorite option format: [123] Human[*] -> Human
+    Handles SDRF ontology format: NT=<name>;AC=<accession> and favorite option format.
 
     Args:
         name: Metadata column name
         value: Raw value from SDRF
 
     Returns:
-        Converted value
+        Converted value with proper SDRF ontology parsing
     """
     value = value.strip()
+
+    # Handle SDRF ontology format: NT=<name>;AC=<accession>
+    if "NT=" in value:
+        parts = value.split(";")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("NT="):
+                # Extract the name part after NT=
+                name_value = part[3:]  # Remove "NT="
+                value = name_value
+                break
 
     # Handle favorite option format: [123] display_value[*] -> display_value
     if value.startswith("[") and "] " in value:
@@ -241,10 +248,10 @@ def validate_sdrf(data: List[List[str]]) -> List[str]:
     try:
         # Convert data to DataFrame format expected by sdrf-pipelines
         df_string = "\n".join(["\t".join(row) for row in data])
-        df = SDRFDataFrame.parse(io.StringIO(df_string))
+        df = SDRFDataFrame(read_sdrf(io.StringIO(df_string)))
 
         # Run validation
-        errors.extend(df.validate())
+        errors.extend(df.validate("minimum"))
         errors.extend(df.validate_experimental_design())
 
     except Exception as e:
@@ -346,212 +353,6 @@ def get_favourite_metadata_options(user: Any, lab_group: Any = None, metadata_na
         favourites[name_key].append(f"{fav.display_value or fav.value}[***]")
 
     return favourites
-
-
-def export_excel_template(
-    metadata_columns: List[MetadataColumn],
-    sample_number: int,
-    pools: List[SamplePool] = None,
-    favourites: Dict[str, List[str]] = None,
-    field_mask_mapping: Dict[str, str] = None,
-) -> Workbook:
-    """
-    Export metadata as Excel template with dropdowns and validation.
-
-    Args:
-        metadata_columns: List of metadata columns
-        sample_number: Number of samples
-        pools: Optional list of sample pools
-        favourites: Optional dictionary of favourite options
-        field_mask_mapping: Optional field name mappings
-
-    Returns:
-        Excel Workbook object
-    """
-    if favourites is None:
-        favourites = {}
-    if field_mask_mapping is None:
-        field_mask_mapping = {}
-
-    # Separate main and hidden metadata
-    main_metadata = [m for m in metadata_columns if not m.hidden]
-    hidden_metadata = [m for m in metadata_columns if m.hidden]
-
-    # Sort metadata
-    result_main, id_map_main = sort_metadata(main_metadata, sample_number)
-    result_hidden, id_map_hidden = sort_metadata(hidden_metadata, sample_number) if hidden_metadata else ([], {})
-
-    # Handle pools
-    has_pools = pools and len(pools) > 0
-    pool_result_main, pool_id_map_main = ([], {})
-
-    if has_pools:
-        pool_metadata = [m for m in metadata_columns if not m.hidden]  # Use same metadata for pools
-        pool_result_main, pool_id_map_main = sort_pool_metadata(pool_metadata, pools)
-
-    # Create workbook
-    wb = Workbook()
-    main_ws = wb.active
-    main_ws.title = "main"
-
-    # Create worksheets
-    hidden_ws = wb.create_sheet(title="hidden")
-    id_metadata_column_map_ws = wb.create_sheet(title="id_metadata_column_map")
-
-    # Pool worksheets
-    pool_main_ws = None
-    if has_pools:
-        pool_main_ws = wb.create_sheet(title="pool_main")
-
-    # Fill ID mapping worksheet
-    id_metadata_column_map_ws.append(["id", "column", "name", "type", "hidden"])
-    for k, v in id_map_main.items():
-        id_metadata_column_map_ws.append([k, v["column"], v["name"], v["type"], v["hidden"]])
-    for k, v in id_map_hidden.items():
-        id_metadata_column_map_ws.append([k, v["column"], v["name"], v["type"], v["hidden"]])
-
-    # Styling
-    fill = PatternFill(start_color="E6E6FA", end_color="E6E6FA", fill_type="solid")
-    thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin"),
-    )
-
-    # Fill main worksheet
-    if result_main:
-        # Add headers and data
-        main_ws.append(result_main[0])
-        main_work_area = f"A1:{get_column_letter(len(result_main[0]))}{sample_number + 1}"
-
-        for row in result_main[1:]:
-            main_ws.append(row)
-
-        # Apply styling
-        for row in main_ws[main_work_area]:
-            for cell in row:
-                cell.fill = fill
-                cell.border = thin_border
-
-        # Auto-adjust column widths
-        for col in main_ws.columns:
-            max_length = 0
-            column = col[0].column_letter
-            for cell in col:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(cell.value)
-                except (TypeError, AttributeError):
-                    pass
-            adjusted_width = max_length + 2
-            main_ws.column_dimensions[column].width = adjusted_width
-
-        # Add notes
-        note_texts = [
-            "Note: Empty cells will be filled with 'not applicable' or " "'not available' when submitted.",
-            "[*] User-specific favourite options.",
-            "[**] Lab group-recommended options.",
-            "[***] Global recommendations.",
-        ]
-
-        start_row = sample_number + 2
-        for i, note_text in enumerate(note_texts):
-            main_ws.merge_cells(
-                start_row=start_row + i,
-                start_column=1,
-                end_row=start_row + i,
-                end_column=len(result_main[0]),
-            )
-            note_cell = main_ws.cell(row=start_row + i, column=1)
-            note_cell.value = note_text
-            note_cell.alignment = Alignment(horizontal="left", vertical="center")
-
-        # Add dropdown validation
-        _add_dropdown_validation(main_ws, result_main[0], favourites, field_mask_mapping, sample_number)
-
-    # Fill hidden worksheet
-    if result_hidden:
-        hidden_ws.append(result_hidden[0])
-        for row in result_hidden[1:]:
-            hidden_ws.append(row)
-
-        # Apply styling and validation
-        _add_dropdown_validation(hidden_ws, result_hidden[0], favourites, field_mask_mapping, sample_number)
-
-    # Fill pool worksheet
-    if has_pools and pool_result_main:
-        pool_main_ws.append(pool_result_main[0])
-        for row in pool_result_main[1:]:
-            pool_main_ws.append(row)
-
-        # Apply styling and validation
-        _add_dropdown_validation(
-            pool_main_ws,
-            pool_result_main[0],
-            favourites,
-            field_mask_mapping,
-            len(pools),
-        )
-
-    return wb
-
-
-def _add_dropdown_validation(
-    worksheet,
-    headers: List[str],
-    favourites: Dict[str, List[str]],
-    field_mask_mapping: Dict[str, str],
-    row_count: int,
-) -> None:
-    """
-    Add dropdown validation to a worksheet.
-
-    Args:
-        worksheet: Excel worksheet object
-        headers: List of column headers
-        favourites: Dictionary of favourite options
-        field_mask_mapping: Field name mappings
-        row_count: Number of data rows
-    """
-    required_metadata_names = {"tissue", "organism part", "disease", "species"}
-
-    for i, header in enumerate(headers):
-        name_splitted = header.split("[")
-        if len(name_splitted) > 1:
-            name = name_splitted[1].replace("]", "")
-        else:
-            name = name_splitted[0]
-
-        required_column = name.lower() in required_metadata_names
-
-        # Apply field masking
-        name_capitalized = name.capitalize().replace("Ms1", "MS1").replace("Ms2", "MS2")
-        if name_capitalized in field_mask_mapping:
-            display_name = field_mask_mapping[name_capitalized]
-            if len(name_splitted) > 1:
-                worksheet.cell(row=1, column=i + 1).value = header.replace(
-                    name_splitted[1].rstrip("]"), display_name.lower()
-                )
-            else:
-                worksheet.cell(row=1, column=i + 1).value = display_name.lower()
-
-        # Build option list
-        option_list = []
-        if required_column:
-            option_list.append("not applicable")
-        else:
-            option_list.append("not available")
-
-        if name.lower() in favourites:
-            option_list.extend(favourites[name.lower()])
-
-        # Add validation
-        if option_list:
-            dv = DataValidation(type="list", formula1=f'"{",".join(option_list)}"', showDropDown=False)
-            col_letter = get_column_letter(i + 1)
-            worksheet.add_data_validation(dv)
-            dv.add(f"{col_letter}2:{col_letter}{row_count + 1}")
 
 
 # ===================================================================
@@ -754,125 +555,6 @@ def validate_sdrf_data_against_ontologies(
     return validation_results
 
 
-def get_ontology_suggestions_for_import(
-    column_name: str, column_type: str, search_term: str = "", limit: int = 20
-) -> List[Dict[str, Any]]:
-    """
-    Get ontology suggestions for import operations without requiring a MetadataColumn instance.
-
-    Args:
-        column_name: Name of the metadata column
-        column_type: Type of the metadata column
-        search_term: Optional search term to filter suggestions
-        limit: Maximum number of suggestions to return
-
-    Returns:
-        List of suggestion dictionaries
-    """
-    ontology_type = detect_ontology_type(column_name, column_type)
-    if not ontology_type:
-        return []
-
-    # Import ontology models dynamically to avoid circular imports
-    from django.db import models
-
-    from .models import HumanDisease, MSUniqueVocabularies, Species, SubcellularLocation, Tissue, Unimod
-
-    ontology_mapping = {
-        "species": Species,
-        "tissue": Tissue,
-        "disease": HumanDisease,
-        "subcellular_location": SubcellularLocation,
-        "ms_terms": MSUniqueVocabularies,
-        "unimod": Unimod,
-    }
-
-    model_class = ontology_mapping.get(ontology_type)
-    if not model_class:
-        return []
-
-    queryset = model_class.objects.all()
-
-    # Apply search filtering based on model type
-    if search_term:
-        if ontology_type == "species":
-            queryset = queryset.filter(
-                models.Q(official_name__icontains=search_term)
-                | models.Q(common_name__icontains=search_term)
-                | models.Q(code__icontains=search_term)
-            )
-        elif ontology_type in ["tissue", "disease", "subcellular_location"]:
-            queryset = queryset.filter(
-                models.Q(accession__icontains=search_term) | models.Q(synonyms__icontains=search_term)
-            )
-        elif ontology_type in ["ms_terms", "unimod"]:
-            queryset = queryset.filter(
-                models.Q(name__icontains=search_term) | models.Q(definition__icontains=search_term)
-            )
-
-    return list(queryset[:limit].values())
-
-
-def synchronize_pools_with_import_data(metadata_table, import_pools_data, metadata_columns, user):
-    """
-    Synchronize pools with import data for ccv (unified metadata system).
-    Adapted from original CUPCAKE to work with ccv's simplified structure.
-    """
-    from .models import SamplePool
-
-    # Get existing pools for this metadata table
-    existing_pools = SamplePool.objects.filter(metadata_table=metadata_table)
-    existing_pool_names = {pool.pool_name: pool for pool in existing_pools}
-    existing_pool_ids = {pool.id: pool for pool in existing_pools}
-
-    # Track pools found in import data
-    import_pool_names = {pool_data["pool_name"] for pool_data in import_pools_data}
-
-    # Process each pool from import data
-    for pool_data in import_pools_data:
-        pool_name = pool_data["pool_name"]
-        pool_id = pool_data.get("pool_id")
-        existing_pool = None
-
-        # Try to find existing pool by ID first (more reliable), then by name
-        if pool_id and pool_id in existing_pool_ids:
-            existing_pool = existing_pool_ids[pool_id]
-        elif pool_name in existing_pool_names:
-            existing_pool = existing_pool_names[pool_name]
-
-        if existing_pool:
-            # Update existing pool
-            existing_pool.pooled_only_samples = pool_data["pooled_only_samples"]
-            existing_pool.pooled_and_independent_samples = pool_data["pooled_and_independent_samples"]
-            existing_pool.is_reference = pool_data["is_reference"]
-            existing_pool.save()
-
-            # Clear existing metadata and recreate
-            existing_pool.metadata_columns.clear()
-
-            # Create new metadata for the updated pool
-            _create_pool_metadata_from_import(existing_pool, pool_data, metadata_columns)
-        else:
-            # Create new pool
-            new_pool = SamplePool.objects.create(
-                pool_name=pool_name,
-                pooled_only_samples=pool_data["pooled_only_samples"],
-                pooled_and_independent_samples=pool_data["pooled_and_independent_samples"],
-                is_reference=pool_data["is_reference"],
-                metadata_table=metadata_table,
-                created_by=user,
-            )
-
-            # Create metadata for the new pool
-            _create_pool_metadata_from_import(new_pool, pool_data, metadata_columns)
-
-    # Delete pools that are not in import data
-    pools_to_delete = [pool for pool_name, pool in existing_pool_names.items() if pool_name not in import_pool_names]
-
-    for pool in pools_to_delete:
-        pool.delete()
-
-
 def _calculate_most_common_value_for_column(data_rows, pooled_sample_indices, col_index, metadata_column):
     """
     Calculate the most common value for a column among pooled samples.
@@ -931,7 +613,7 @@ def create_pool_metadata_from_table_columns(pool):
     pool.metadata_columns.clear()
 
     for table_column in table_columns:
-        if table_column.name.lower() == "pooled sample":
+        if "pooled sample" in table_column.name.lower():
             # Set pooled sample column to SN= value
             pool_metadata_column = MetadataColumn.objects.create(
                 name=table_column.name,
@@ -940,7 +622,7 @@ def create_pool_metadata_from_table_columns(pool):
                 mandatory=table_column.mandatory,
                 hidden=table_column.hidden,
             )
-        elif table_column.name.lower() == "source name":
+        elif "source name" in table_column.name.lower():
             # Set source name column to pool name
             pool_metadata_column = MetadataColumn.objects.create(
                 name=table_column.name,
@@ -1017,98 +699,6 @@ def _calculate_most_common_value_for_pool_column(pool, table_column):
     most_common_value = value_counts.most_common(1)[0][0]
 
     return most_common_value
-
-
-def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
-    """Create metadata for a pool from import data (ccv unified version)."""
-    from .models import MetadataColumn
-
-    row = pool_data.get("metadata_row")
-    pool_name = pool_data["pool_name"]
-    sdrf_value = pool_data["sdrf_value"]
-    has_sn_pattern = sdrf_value.startswith("SN=")
-
-    # Get all data rows for calculating most common values when no SN= pattern
-    all_data_rows = pool_data.get("all_data_rows", [])
-    pooled_sample_indices = pool_data["pooled_only_samples"] + pool_data["pooled_and_independent_samples"]
-
-    for col_index, metadata_column in enumerate(metadata_columns):
-        if metadata_column.name.lower() == "characteristics[pooled sample]":
-            # Create pooled sample column with SN= value
-            pool_metadata_column = MetadataColumn.objects.create(
-                name=metadata_column.name,
-                type=metadata_column.type,
-                value=sdrf_value,
-                mandatory=metadata_column.mandatory,
-                hidden=metadata_column.hidden,
-            )
-        elif metadata_column.name.lower() == "source name":
-            # Create source name column with pool name
-            pool_metadata_column = MetadataColumn.objects.create(
-                name=metadata_column.name,
-                type=metadata_column.type,
-                value=pool_name,
-                mandatory=metadata_column.mandatory,
-                hidden=metadata_column.hidden,
-            )
-        else:
-            # Determine the value based on SN= pattern or most common value logic
-            if has_sn_pattern and row:
-                # Case 1: SN= pattern - use the SN= row's value directly
-                raw_value = row[col_index] if col_index < len(row) else ""
-            else:
-                # Case 2: No SN= pattern - calculate most common value among pooled samples
-                raw_value = _calculate_most_common_value_for_column(
-                    all_data_rows, pooled_sample_indices, col_index, metadata_column
-                )
-
-            processed_value = raw_value
-
-            # Process marker values for pools (same logic as main import)
-            if raw_value and isinstance(raw_value, str):
-                name = metadata_column.name.lower()
-                if raw_value.endswith("[*]"):
-                    processed_value = raw_value.replace("[*]", "")
-                    # Try to find user favourite value
-                    value_query = FavouriteMetadataOption.objects.filter(
-                        user_id=pool.created_by.id,
-                        name=name,
-                        display_value=processed_value,
-                        service_lab_group__isnull=True,
-                        lab_group__isnull=True,
-                    )
-                    if value_query.exists():
-                        processed_value = value_query.first().value
-                elif raw_value.endswith("[**]") or raw_value.endswith("[***]"):
-                    # Handle global/facility recommendations (simplified for ccv)
-                    marker = "[**]" if raw_value.endswith("[**]") else "[***]"
-                    processed_value = raw_value.replace(marker, "")
-                    value_query = FavouriteMetadataOption.objects.filter(
-                        name=name, display_value=processed_value, is_global=True
-                    )
-                    if value_query.exists():
-                        processed_value = value_query.first().value
-                elif raw_value.endswith("[****]"):
-                    # Project suggestion - just strip the marker
-                    processed_value = raw_value.replace("[****]", "")
-
-            # Handle special cases for empty/not applicable values (same logic as main table)
-            if not processed_value or processed_value.strip() == "":
-                if metadata_column.not_applicable:
-                    processed_value = "not applicable"
-                else:
-                    processed_value = "not available"
-
-            pool_metadata_column = MetadataColumn.objects.create(
-                name=metadata_column.name,
-                type=metadata_column.type,
-                value=processed_value,
-                mandatory=metadata_column.mandatory,
-                hidden=metadata_column.hidden,
-            )
-
-        # Add the metadata column to the pool
-        pool.metadata_columns.add(pool_metadata_column)
 
 
 def get_all_default_schema_names() -> List[str]:
@@ -1322,7 +912,7 @@ def update_pooled_sample_column_for_table(metadata_table):
 
     # Initialize all samples as "not pooled"
     pooled_sample_status = {}
-    sample_count = metadata_table.columns.first().row_count if metadata_table.columns.exists() else 0
+    sample_count = metadata_table.sample_count
 
     for i in range(1, sample_count + 1):
         pooled_sample_status[i] = "not pooled"
@@ -1332,9 +922,8 @@ def update_pooled_sample_column_for_table(metadata_table):
         # Samples that exist only in pools (pooled_only_samples)
         for sample_idx in pool.pooled_only_samples:
             if sample_idx in pooled_sample_status:
-                # Generate SN= value for this pool
-                sn_value = f"SN={pool.pool_name}"
-                pooled_sample_status[sample_idx] = sn_value
+                # Use the pool's sdrf_value which contains the correct SN= format with source names
+                pooled_sample_status[sample_idx] = pool.sdrf_value
 
         # Samples that exist both in pool and independently (pooled_and_independent_samples)
         for sample_idx in pool.pooled_and_independent_samples:
