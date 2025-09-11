@@ -412,7 +412,7 @@ class ExternalContactDetailsSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ExternalContactDetails
-        fields = ["id", "contact_type", "value", "is_primary", "notes", "created_at", "updated_at"]
+        fields = ["id", "contact_method_alt_name", "contact_type", "contact_value", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
@@ -420,69 +420,165 @@ class ExternalContactSerializer(serializers.ModelSerializer):
     """Serializer for ExternalContact model."""
 
     contact_details = ExternalContactDetailsSerializer(many=True, read_only=True)
+    owner_username = serializers.CharField(source="user.username", read_only=True)
 
     class Meta:
         model = ExternalContact
         fields = [
             "id",
-            "first_name",
-            "last_name",
-            "organization",
-            "role",
-            "notes",
+            "contact_name",
+            "user",
+            "owner_username",
             "contact_details",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at", "owner_username"]
 
 
 class SupportInformationSerializer(serializers.ModelSerializer):
     """Serializer for SupportInformation model."""
 
-    contact_name = serializers.CharField(source="contact.first_name", read_only=True)
-    contact_organization = serializers.CharField(source="contact.organization", read_only=True)
+    vendor_contacts = ExternalContactSerializer(many=True, read_only=True)
+    manufacturer_contacts = ExternalContactSerializer(many=True, read_only=True)
+    location_name = serializers.CharField(source="location.object_name", read_only=True)
 
     class Meta:
         model = SupportInformation
         fields = [
             "id",
-            "contact",
-            "contact_name",
-            "contact_organization",
-            "support_type",
-            "description",
-            "warranty_expiration",
-            "service_contract_number",
-            "notes",
-            "is_active",
+            "vendor_name",
+            "vendor_contacts",
+            "manufacturer_name",
+            "manufacturer_contacts",
+            "serial_number",
+            "maintenance_frequency_days",
+            "location",
+            "location_name",
+            "warranty_start_date",
+            "warranty_end_date",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at", "contact_name", "contact_organization"]
+        read_only_fields = [
+            "id",
+            "vendor_contacts",
+            "manufacturer_contacts",
+            "location_name",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class ReagentSubscriptionSerializer(serializers.ModelSerializer):
     """Serializer for ReagentSubscription model."""
 
-    reagent_name = serializers.CharField(source="reagent.name", read_only=True)
+    reagent_name = serializers.CharField(source="stored_reagent.reagent.name", read_only=True)
     user_username = serializers.CharField(source="user.username", read_only=True)
 
     class Meta:
         model = ReagentSubscription
         fields = [
             "id",
-            "reagent",
-            "reagent_name",
             "user",
             "user_username",
-            "subscription_type",
-            "threshold_quantity",
-            "is_active",
+            "stored_reagent",
+            "reagent_name",
+            "notify_on_low_stock",
+            "notify_on_expiry",
             "created_at",
-            "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at", "reagent_name", "user_username"]
+        read_only_fields = ["id", "created_at", "reagent_name", "user_username"]
+
+
+class InstrumentAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for InstrumentAnnotation model."""
+
+    instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
+    folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
+    annotation_name = serializers.CharField(source="annotation.name", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+
+    class Meta:
+        model = InstrumentAnnotation
+        fields = [
+            "id",
+            "instrument",
+            "instrument_name",
+            "folder",
+            "folder_name",
+            "annotation",
+            "annotation_name",
+            "annotation_type",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "instrument_name",
+            "folder_name",
+            "annotation_name",
+            "annotation_type",
+            "created_at",
+        ]
+
+
+class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for StoredReagentAnnotation model."""
+
+    stored_reagent_name = serializers.CharField(source="stored_reagent.reagent.name", read_only=True)
+    folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
+    annotation_name = serializers.CharField(source="annotation.name", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+
+    class Meta:
+        model = StoredReagentAnnotation
+        fields = [
+            "id",
+            "stored_reagent",
+            "stored_reagent_name",
+            "folder",
+            "folder_name",
+            "annotation",
+            "annotation_name",
+            "annotation_type",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "stored_reagent_name",
+            "folder_name",
+            "annotation_name",
+            "annotation_type",
+            "created_at",
+        ]
+
+
+class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for MaintenanceLogAnnotation model."""
+
+    maintenance_log_title = serializers.CharField(source="maintenance_log.maintenance_type", read_only=True)
+    annotation_name = serializers.CharField(source="annotation.name", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+
+    class Meta:
+        model = MaintenanceLogAnnotation
+        fields = [
+            "id",
+            "maintenance_log",
+            "maintenance_log_title",
+            "annotation",
+            "annotation_name",
+            "annotation_type",
+            "order",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "maintenance_log_title",
+            "annotation_name",
+            "annotation_type",
+            "created_at",
+        ]
 
 
 class ReagentActionSerializer(serializers.ModelSerializer):
@@ -537,79 +633,11 @@ class InstrumentJobDetailSerializer(InstrumentJobSerializer):
         fields = InstrumentJobSerializer.Meta.fields + ["user_details", "instrument_details", "staff_details"]
 
 
-class InstrumentAnnotationSerializer(serializers.ModelSerializer):
-    """Serializer for instrument annotations."""
-
-    instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
-    annotation_title = serializers.CharField(source="annotation.annotation", read_only=True)
-    folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
-
-    class Meta:
-        model = InstrumentAnnotation
-        fields = [
-            "id",
-            "instrument",
-            "instrument_name",
-            "annotation",
-            "annotation_title",
-            "folder",
-            "folder_name",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-
-class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
-    """Serializer for stored reagent annotations."""
-
-    reagent_name = serializers.CharField(source="stored_reagent.reagent.name", read_only=True)
-    annotation_title = serializers.CharField(source="annotation.annotation", read_only=True)
-    folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
-
-    class Meta:
-        model = StoredReagentAnnotation
-        fields = [
-            "id",
-            "stored_reagent",
-            "reagent_name",
-            "annotation",
-            "annotation_title",
-            "folder",
-            "folder_name",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-
-class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
-    """Serializer for maintenance log annotations."""
-
-    instrument_name = serializers.CharField(source="maintenance_log.instrument.instrument_name", read_only=True)
-    annotation_title = serializers.CharField(source="annotation.annotation", read_only=True)
-
-    class Meta:
-        model = MaintenanceLogAnnotation
-        fields = [
-            "id",
-            "maintenance_log",
-            "instrument_name",
-            "annotation",
-            "annotation_title",
-            "order",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-
 class InstrumentPermissionSerializer(serializers.ModelSerializer):
     """Serializer for instrument permissions."""
 
     user_username = serializers.CharField(source="user.username", read_only=True)
     user_display_name = serializers.SerializerMethodField()
-    granted_by_username = serializers.CharField(source="granted_by.username", read_only=True)
     instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
 
     class Meta:
@@ -621,21 +649,16 @@ class InstrumentPermissionSerializer(serializers.ModelSerializer):
             "user",
             "user_username",
             "user_display_name",
-            "permission_type",
-            "granted_by",
-            "granted_by_username",
-            "granted_at",
+            "can_view",
+            "can_book",
+            "can_manage",
+            "created_at",
+            "updated_at",
         ]
-        read_only_fields = ["id", "granted_by", "granted_at"]
+        read_only_fields = ["id", "created_at", "updated_at", "user_username", "user_display_name", "instrument_name"]
 
     def get_user_display_name(self, obj):
         """Get user's display name."""
         if obj.user.first_name and obj.user.last_name:
             return f"{obj.user.first_name} {obj.user.last_name}"
         return obj.user.username
-
-    def create(self, validated_data):
-        """Set granted_by to current user."""
-        request = self.context["request"]
-        validated_data["granted_by"] = request.user
-        return super().create(validated_data)

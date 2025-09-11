@@ -1227,53 +1227,6 @@ class FlexibleLimitEndpointsTest(APITestCase, QuickTestDataMixin):
             if "official_name" in item:
                 self.assertIn("Homo sapiens", item["official_name"])
 
-    def test_primary_cells_default_limit(self):
-        """Test primary_cells endpoint with default limit."""
-        url = reverse("ccv:cellontology-primary-cells")
-        response = self.client.get(url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        # Default limit should be 10
-        data = response.json()
-        self.assertLessEqual(len(data), 10)
-
-    def test_primary_cells_custom_limit(self):
-        """Test primary_cells endpoint with custom limit."""
-        url = reverse("ccv:cellontology-primary-cells")
-
-        # Test with limit=7
-        response = self.client.get(url, {"limit": "7"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        data = response.json()
-        self.assertLessEqual(len(data), 7)
-
-        # Test with very high limit
-        response = self.client.get(url, {"limit": "1000"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        data = response.json()
-        # Should still be reasonable (limited by actual data)
-        self.assertLessEqual(len(data), 1000)
-
-    def test_primary_cells_with_organism_filter(self):
-        """Test primary_cells endpoint with organism filter and limit."""
-        url = reverse("ccv:cellontology-primary-cells")
-
-        # Test with organism filter and limit
-        response = self.client.get(url, {"organism": "Mus musculus", "limit": "3"})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        data = response.json()
-        self.assertLessEqual(len(data), 3)
-
-        # All results should match the organism filter
-        for item in data:
-            if "official_name" in item:
-                self.assertIn("Mus musculus", item["official_name"])
-
     def test_search_endpoints_with_limits(self):
         """Test search endpoints that use flexible limits."""
         # Test the main search endpoints that have limit parameters
@@ -1312,8 +1265,6 @@ class FlexibleLimitEndpointsTest(APITestCase, QuickTestDataMixin):
         """Test that limit parameters are properly validated."""
         test_urls = [
             reverse("ccv:metadatacolumntemplate-popular-templates"),
-            reverse("ccv:cellontology-cell-lines"),
-            reverse("ccv:cellontology-primary-cells"),
         ]
 
         for url in test_urls:
@@ -1341,8 +1292,6 @@ class FlexibleLimitEndpointsTest(APITestCase, QuickTestDataMixin):
         """Test that limit behavior is consistent across all endpoints."""
         endpoints_with_limits = [
             reverse("ccv:metadatacolumntemplate-popular-templates"),
-            reverse("ccv:cellontology-cell-lines"),
-            reverse("ccv:cellontology-primary-cells"),
         ]
 
         for url in endpoints_with_limits:

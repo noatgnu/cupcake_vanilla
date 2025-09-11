@@ -4007,24 +4007,6 @@ class CellOntologyViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response({"results": serializer.data})
 
-    @action(detail=False, methods=["get"])
-    def primary_cells(self, request):
-        """Get primary cell types for proteomics experiments."""
-        queryset = self.get_queryset().filter(cell_line=False)
-        organism = request.GET.get("organism", "").strip()
-
-        if organism:
-            queryset = queryset.filter(organism__icontains=organism)
-
-        try:
-            limit = int(request.query_params.get("limit", 10))
-            limit = max(0, limit)  # Ensure non-negative
-        except (ValueError, TypeError):
-            limit = 10  # Default fallback
-        queryset = queryset[:limit]
-        serializer = self.get_serializer(queryset, many=True)
-        return Response({"results": serializer.data})
-
 
 class OntologySearchViewSet(viewsets.ViewSet):
     """Unified ontology search for SDRF validation."""

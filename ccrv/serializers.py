@@ -14,6 +14,7 @@ from ccm.models import Reagent
 from ccm.serializers import ReagentSerializer
 
 from .models import (
+    InstrumentUsageSessionAnnotation,
     Project,
     ProtocolModel,
     ProtocolRating,
@@ -22,6 +23,8 @@ from .models import (
     ProtocolStep,
     Session,
     SessionAnnotation,
+    SessionAnnotationFolder,
+    StepAnnotation,
     StepReagent,
     StepVariation,
     TimeKeeper,
@@ -631,7 +634,7 @@ class StepVariationSerializer(serializers.ModelSerializer):
 class TimeKeeperSerializer(serializers.ModelSerializer):
     """Serializer for TimeKeeper model with session and step details."""
 
-    session_title = serializers.CharField(source="session.session_title", read_only=True)
+    session_name = serializers.CharField(source="session.name", read_only=True)
     step_description = serializers.CharField(source="step.step_description", read_only=True)
     user_username = serializers.CharField(source="user.username", read_only=True)
     duration_formatted = serializers.SerializerMethodField()
@@ -642,7 +645,7 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
             "id",
             "start_time",
             "session",
-            "session_title",
+            "session_name",
             "step",
             "step_description",
             "user",
@@ -668,3 +671,82 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
             else:
                 return f"{seconds}s"
         return "0s"
+
+
+class StepAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for StepAnnotation model."""
+
+    session_name = serializers.CharField(source="session.name", read_only=True)
+    step_description = serializers.CharField(source="step.step_description", read_only=True)
+    annotation_name = serializers.CharField(source="annotation.name", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+
+    class Meta:
+        model = StepAnnotation
+        fields = [
+            "id",
+            "session",
+            "session_name",
+            "step",
+            "step_description",
+            "annotation",
+            "annotation_name",
+            "annotation_type",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "session_name",
+            "step_description",
+            "annotation_name",
+            "annotation_type",
+            "created_at",
+        ]
+
+
+class SessionAnnotationFolderSerializer(serializers.ModelSerializer):
+    """Serializer for SessionAnnotationFolder model."""
+
+    session_name = serializers.CharField(source="session.name", read_only=True)
+    folder_name = serializers.CharField(source="folder.name", read_only=True)
+
+    class Meta:
+        model = SessionAnnotationFolder
+        fields = [
+            "id",
+            "session",
+            "session_name",
+            "folder",
+            "folder_name",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "session_name",
+            "folder_name",
+            "created_at",
+        ]
+
+
+class InstrumentUsageSessionAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for InstrumentUsageSessionAnnotation model."""
+
+    session_annotation_details = SessionAnnotationSerializer(source="session_annotation", read_only=True)
+    instrument_name = serializers.CharField(source="instrument_usage.instrument.instrument_name", read_only=True)
+
+    class Meta:
+        model = InstrumentUsageSessionAnnotation
+        fields = [
+            "id",
+            "session_annotation",
+            "session_annotation_details",
+            "instrument_usage",
+            "instrument_name",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "session_annotation_details",
+            "instrument_name",
+            "created_at",
+        ]

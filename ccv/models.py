@@ -1205,6 +1205,7 @@ class MetadataColumn(models.Model):
         help_text="Custom filters to apply when querying the ontology",
     )
     suggested_values = models.JSONField(default=list, blank=True, help_text="Cached suggested values from ontology")
+    enable_typeahead = models.BooleanField(default=True, help_text="Enable typeahead suggestions in forms")
     staff_only = models.BooleanField(default=False, help_text="Whether only staff can edit this column")
     # Audit trail
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1508,7 +1509,7 @@ class MetadataColumn(models.Model):
             return model_class.objects.filter(
                 models.Q(accession__iexact=value) | models.Q(synonyms__icontains=value)
             ).exists()
-        elif self.ontology_type in ["ms_terms", "unimod"]:
+        elif self.ontology_type in ["ms_unique_vocabularies", "unimod"]:
             return model_class.objects.filter(models.Q(name__iexact=value) | models.Q(accession__iexact=value)).exists()
 
         return True
@@ -3293,15 +3294,13 @@ class MetadataColumnTemplate(AbstractResource):
         ("tissue", "Tissue"),
         ("human_disease", "Human Disease"),
         ("subcellular_location", "Subcellular Location"),
-        ("ms_terms", "MS Terms"),
+        ("ms_unique_vocabularies", "MS Unique Vocabularies"),
         ("unimod", "Unimod Modifications"),
         ("ncbi_taxonomy", "NCBI Taxonomy"),
         ("mondo", "MONDO Disease"),
         ("uberon", "UBERON Anatomy"),
-        ("subcellular_location", "Subcellular Location"),
         ("chebi", "ChEBI"),
         ("cell_ontology", "Cell Ontology"),
-        ("ms_unique_vocabularies", "MS Unique Vocabularies"),
         ("psi_ms", "PSI-MS Controlled Vocabulary"),
     ]
 

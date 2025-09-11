@@ -666,7 +666,7 @@ class SDRFTestDataBuilder:
                 "tissues": [OntologyFactory.create_tissue() for _ in range(4)],
                 "diseases": [OntologyFactory.create_disease() for _ in range(3)],
                 "locations": [OntologyFactory.create_subcellular_location() for _ in range(3)],
-                "ms_terms": [OntologyFactory.create_ms_term() for _ in range(5)],
+                "ms_unique_vocabularies": [OntologyFactory.create_ms_term() for _ in range(5)],
                 "modifications": [OntologyFactory.create_unimod() for _ in range(4)],
             }
             self.ontology_data.update(result["ontologies"])

@@ -40,7 +40,7 @@ from ccc.models import (
     SiteConfig,
     UserOrcidProfile,
 )
-from ccv.models import (  # Base classes for extension; Concrete implementations
+from ccv.models import (  # Base classes for extension; Concrete
     BaseMetadataTable,
     BaseMetadataTableTemplate,
     HumanDisease,

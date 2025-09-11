@@ -1,10 +1,10 @@
-"""
-ViewSets for CUPCAKE Core Macaron (CCM) models.
+"""ViewSets for CUPCAKE Core Macaron (CCM) models.
 
 Provides REST API endpoints for instrument management, jobs, usage tracking,
 and maintenance functionality.
 """
 
+from django.db import models
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -20,6 +20,7 @@ from .models import (
     ExternalContactDetails,
     Instrument,
     InstrumentJob,
+    InstrumentPermission,
     InstrumentUsage,
     MaintenanceLog,
     Reagent,
@@ -35,6 +36,7 @@ from .serializers import (
     InstrumentDetailSerializer,
     InstrumentJobDetailSerializer,
     InstrumentJobSerializer,
+    InstrumentPermissionSerializer,
     InstrumentSerializer,
     InstrumentUsageSerializer,
     MaintenanceLogSerializer,
@@ -112,7 +114,20 @@ class InstrumentViewSet(BaseViewSet):
 
         try:
             result = instrument.check_warranty_expiration()
-            return Response({"message": "Warranty check completed", "result": result})
+            # Extract warranty info from support information
+            warranty_expiration = None
+            if hasattr(instrument, "support_information") and instrument.support_information.exists():
+                support_info = instrument.support_information.first()
+                if support_info and support_info.warranty_end_date:
+                    warranty_expiration = support_info.warranty_end_date.isoformat()
+
+            return Response(
+                {
+                    "warrantyValid": not result,  # result is True if warranty is expiring/expired
+                    "warrantyExpiration": warranty_expiration,
+                    "message": "Warranty check completed",
+                }
+            )
         except Exception as e:
             return Response({"error": f"Warranty check failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -122,20 +137,26 @@ class InstrumentViewSet(BaseViewSet):
         instrument = self.get_object()
 
         try:
-            result = instrument.check_maintenance_due()
-            return Response({"message": "Maintenance check completed", "result": result})
+            result = instrument.check_upcoming_maintenance()
+            # Extract last maintenance info
+            last_maintenance = None
+            last_maintenance_log = (
+                instrument.maintenance_logs.filter(status="completed").order_by("-maintenance_date").first()
+            )
+            if last_maintenance_log and last_maintenance_log.maintenance_date:
+                last_maintenance = last_maintenance_log.maintenance_date.isoformat()
+
+            return Response(
+                {
+                    "maintenanceRequired": result,
+                    "lastMaintenance": last_maintenance,
+                    "message": "Maintenance check completed",
+                }
+            )
         except Exception as e:
             return Response(
                 {"error": f"Maintenance check failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-    @action(detail=False, methods=["get"])
-    def available(self, request):
-        """Get available instruments for booking."""
-        available_instruments = self.get_queryset().filter(enabled=True, accepts_bookings=True, is_vaulted=False)
-
-        serializer = self.get_serializer(available_instruments, many=True)
-        return Response(serializer.data)
 
     @action(detail=True, methods=["get"])
     def metadata(self, request, pk=None):
@@ -222,7 +243,7 @@ class InstrumentViewSet(BaseViewSet):
             return Response({"error": "No metadata table found for this instrument"}, status=status.HTTP_404_NOT_FOUND)
 
         column_id = request.data.get("column_id")
-        new_value = request.data.get("default_value", "")
+        new_value = request.data.get("value", "")
 
         if not column_id:
             return Response({"error": "column_id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -232,7 +253,7 @@ class InstrumentViewSet(BaseViewSet):
 
             column = get_object_or_404(MetadataColumn, id=column_id, metadata_table=instrument.metadata_table)
 
-            column.default_value = new_value
+            column.value = new_value
             column.save()
 
             return Response(
@@ -502,23 +523,17 @@ class StoredReagentViewSet(BaseViewSet):
 
     queryset = StoredReagent.objects.all()
     serializer_class = StoredReagentSerializer
-    filterset_fields = ["reagent", "storage_object", "is_available", "unit"]
+    filterset_fields = ["reagent", "storage_object", "quantity", "expiration_date"]
     search_fields = ["reagent__name", "notes", "unit"]
-    ordering_fields = ["quantity", "opened_date", "created_at"]
+    ordering_fields = ["quantity", "expiration_date", "created_at"]
     ordering = ["reagent__name"]
 
     @action(detail=False, methods=["get"])
-    def available(self, request):
-        """Get available stored reagents."""
-        available_reagents = self.get_queryset().filter(is_available=True, quantity__gt=0)
-
-        serializer = self.get_serializer(available_reagents, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=["get"])
     def low_stock(self, request):
-        """Get stored reagents with low stock (quantity < 10)."""
-        low_stock_reagents = self.get_queryset().filter(is_available=True, quantity__lt=10, quantity__gt=0)
+        """Get stored reagents with low stock based on individual threshold."""
+        low_stock_reagents = self.get_queryset().filter(
+            quantity__lte=models.F("low_stock_threshold"), low_stock_threshold__isnull=False, quantity__gt=0
+        )
 
         serializer = self.get_serializer(low_stock_reagents, many=True)
         return Response(serializer.data)
@@ -616,7 +631,7 @@ class StoredReagentViewSet(BaseViewSet):
             )
 
         column_id = request.data.get("column_id")
-        new_value = request.data.get("default_value", "")
+        new_value = request.data.get("value", "")
 
         if not column_id:
             return Response({"error": "column_id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -626,7 +641,7 @@ class StoredReagentViewSet(BaseViewSet):
 
             column = get_object_or_404(MetadataColumn, id=column_id, metadata_table=stored_reagent.metadata_table)
 
-            column.default_value = new_value
+            column.value = new_value
             column.save()
 
             return Response(
@@ -644,10 +659,10 @@ class ExternalContactViewSet(BaseViewSet):
 
     queryset = ExternalContact.objects.all()
     serializer_class = ExternalContactSerializer
-    filterset_fields = ["organization", "role"]
-    search_fields = ["first_name", "last_name", "organization", "role", "notes"]
-    ordering_fields = ["first_name", "last_name", "organization", "created_at"]
-    ordering = ["last_name", "first_name"]
+    filterset_fields = ["user"]
+    search_fields = ["contact_name"]
+    ordering_fields = ["contact_name", "created_at"]
+    ordering = ["contact_name"]
 
 
 class ExternalContactDetailsViewSet(BaseViewSet):
@@ -655,10 +670,10 @@ class ExternalContactDetailsViewSet(BaseViewSet):
 
     queryset = ExternalContactDetails.objects.all()
     serializer_class = ExternalContactDetailsSerializer
-    filterset_fields = ["contact_type", "is_primary"]
-    search_fields = ["value", "notes"]
-    ordering_fields = ["contact_type", "is_primary", "created_at"]
-    ordering = ["contact_type", "-is_primary"]
+    filterset_fields = ["contact_type"]
+    search_fields = ["contact_method_alt_name", "contact_value"]
+    ordering_fields = ["contact_type", "created_at"]
+    ordering = ["contact_type"]
 
 
 class SupportInformationViewSet(BaseViewSet):
@@ -666,10 +681,10 @@ class SupportInformationViewSet(BaseViewSet):
 
     queryset = SupportInformation.objects.all()
     serializer_class = SupportInformationSerializer
-    filterset_fields = ["support_type", "is_active", "warranty_expiration", "contact"]
-    search_fields = ["description", "service_contract_number", "notes", "contact__organization"]
-    ordering_fields = ["support_type", "warranty_expiration", "created_at"]
-    ordering = ["-warranty_expiration"]
+    filterset_fields = ["vendor_name", "manufacturer_name", "location", "warranty_start_date", "warranty_end_date"]
+    search_fields = ["vendor_name", "manufacturer_name", "serial_number"]
+    ordering_fields = ["warranty_start_date", "warranty_end_date", "created_at"]
+    ordering = ["-warranty_end_date"]
 
 
 class ReagentSubscriptionViewSet(BaseViewSet):
@@ -677,10 +692,10 @@ class ReagentSubscriptionViewSet(BaseViewSet):
 
     queryset = ReagentSubscription.objects.all()
     serializer_class = ReagentSubscriptionSerializer
-    filterset_fields = ["reagent", "user", "subscription_type", "is_active"]
-    search_fields = ["reagent__name", "user__username"]
-    ordering_fields = ["threshold_quantity", "created_at"]
-    ordering = ["reagent__name"]
+    filterset_fields = ["stored_reagent", "user", "notify_on_low_stock", "notify_on_expiry"]
+    search_fields = ["stored_reagent__reagent__name", "user__username"]
+    ordering_fields = ["created_at"]
+    ordering = ["stored_reagent__reagent__name"]
 
     def perform_create(self, serializer):
         """Set the user when creating subscription."""
@@ -700,10 +715,10 @@ class ReagentActionViewSet(BaseViewSet):
 
     queryset = ReagentAction.objects.all()
     serializer_class = ReagentActionSerializer
-    filterset_fields = ["stored_reagent", "user", "action_type"]
-    search_fields = ["stored_reagent__reagent__name", "notes"]
-    ordering_fields = ["performed_at", "quantity_change", "created_at"]
-    ordering = ["-performed_at"]
+    filterset_fields = ["reagent", "user", "action_type"]
+    search_fields = ["reagent__reagent__name", "notes"]
+    ordering_fields = ["quantity", "created_at"]
+    ordering = ["-created_at"]
 
     def perform_create(self, serializer):
         """Set the user when creating action record."""
@@ -721,3 +736,25 @@ class ReagentActionViewSet(BaseViewSet):
 
         serializer = self.get_serializer(user_actions, many=True)
         return Response(serializer.data)
+
+
+class InstrumentPermissionViewSet(BaseViewSet):
+    """ViewSet for InstrumentPermission model."""
+
+    queryset = InstrumentPermission.objects.all()
+    serializer_class = InstrumentPermissionSerializer
+    filterset_fields = ["instrument", "user", "can_view", "can_book", "can_manage"]
+    search_fields = ["instrument__instrument_name", "user__username"]
+    ordering_fields = ["created_at", "updated_at"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        """Filter permissions by user access."""
+        user = self.request.user
+        if user.is_staff:
+            return self.queryset
+        # Users can only see permissions for instruments they can manage
+        return self.queryset.filter(
+            Q(instrument__created_by=user)
+            | Q(instrument__instrumentpermission__user=user, instrument__instrumentpermission__can_manage=True)
+        ).distinct()

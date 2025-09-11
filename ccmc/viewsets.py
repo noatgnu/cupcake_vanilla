@@ -90,7 +90,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
         notification.mark_as_read()
 
-        return Response({"message": "Notification marked as read", "read_at": notification.read_at})
+        serializer = self.get_serializer(notification)
+        return Response(serializer.data)
 
     @action(detail=False, methods=["get"])
     def unread(self, request):
@@ -114,7 +115,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
             read_at=timezone.now(), delivery_status=DeliveryStatus.READ
         )
 
-        return Response({"message": f"Marked {updated_count} notifications as read"})
+        return Response({"success": True, "message": f"Marked {updated_count} notifications as read"})
 
     @action(detail=False, methods=["get"])
     def stats(self, request):

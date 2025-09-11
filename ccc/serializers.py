@@ -650,6 +650,7 @@ class AnnotationFolderSerializer(serializers.ModelSerializer):
             "owner_name",
             "lab_group",
             "visibility",
+            "resource_type",
             "is_active",
             "is_locked",
             "created_at",
@@ -661,7 +662,14 @@ class AnnotationFolderSerializer(serializers.ModelSerializer):
             "can_view",
             "can_delete",
         ]
-        read_only_fields = ["created_at", "updated_at", "full_path", "child_folders_count", "annotations_count"]
+        read_only_fields = [
+            "created_at",
+            "updated_at",
+            "full_path",
+            "child_folders_count",
+            "annotations_count",
+            "resource_type",
+        ]
 
     def get_full_path(self, obj):
         """Get the full hierarchical path."""
@@ -741,6 +749,7 @@ class AnnotationSerializer(serializers.ModelSerializer):
             "owner_name",
             "lab_group",
             "visibility",
+            "resource_type",
             "is_active",
             "is_locked",
             "created_at",
@@ -749,7 +758,7 @@ class AnnotationSerializer(serializers.ModelSerializer):
             "can_view",
             "can_delete",
         ]
-        read_only_fields = ["created_at", "updated_at", "file_url", "file_size", "folder_path"]
+        read_only_fields = ["created_at", "updated_at", "file_url", "file_size", "folder_path", "resource_type"]
 
     def get_file_url(self, obj):
         """Get file URL if file exists."""

@@ -442,7 +442,7 @@ def detect_ontology_type(column_name: str, column_type: str) -> Optional[str]:
         "mass accuracy",
     ]
     if any(pattern in name_lower for pattern in ms_patterns):
-        return "ms_terms"
+        return "ms_unique_vocabularies"
 
     # Unimod detection - be more specific to avoid false matches
     unimod_patterns = [

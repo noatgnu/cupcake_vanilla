@@ -45,7 +45,7 @@ class BillingAPITestCase(APITestCase):
         )
 
         # Create content type
-        self.content_type, _ = ContentType.objects.get_or_create(app_label="test", model="testmodel")
+        self.content_type, _ = ContentType.objects.get_or_create(app_label="ccm", model="instrument")
 
         # Create billable item type
         self.billable_item_type = BillableItemType.objects.create(
@@ -144,11 +144,12 @@ class BillableItemTypeAPITests(BillingAPITestCase):
         self.client.force_authenticate(user=self.regular_user)
 
         url = reverse("billableitemtype-by-content-type")
-        response = self.client.get(url, {"content_type": self.content_type.pk})
+        response = self.client.get(url, {"app_label": "ccm", "model": "instrument"})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(len(response.data) > 0)
-        self.assertEqual(response.data[0]["name"], "Instrument Usage")
+        self.assertIn("results", response.data)
+        self.assertTrue(len(response.data["results"]) > 0)
+        self.assertEqual(response.data["results"][0]["name"], "Instrument Usage")
 
 
 class ServicePriceAPITests(BillingAPITestCase):

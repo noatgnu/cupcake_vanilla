@@ -12,6 +12,7 @@ from .viewsets import (
     ExternalContactDetailsViewSet,
     ExternalContactViewSet,
     InstrumentJobViewSet,
+    InstrumentPermissionViewSet,
     InstrumentUsageViewSet,
     InstrumentViewSet,
     MaintenanceLogViewSet,
@@ -41,6 +42,7 @@ router.register(r"external-contact-details", ExternalContactDetailsViewSet, base
 router.register(r"support-information", SupportInformationViewSet, basename="supportinformation")
 router.register(r"reagent-subscriptions", ReagentSubscriptionViewSet, basename="reagentsubscription")
 router.register(r"reagent-actions", ReagentActionViewSet, basename="reagentaction")
+router.register(r"instrument-permissions", InstrumentPermissionViewSet, basename="instrumentpermission")
 
 # URL patterns
 urlpatterns = [

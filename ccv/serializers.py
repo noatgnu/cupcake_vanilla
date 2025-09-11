@@ -111,11 +111,14 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
             "modifiers",
             "ontology_type",
             "ontology_options",
+            "suggested_values",
+            "enable_typeahead",
+            "possible_default_values",
             "staff_only",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at", "custom_ontology_filters"]
+        read_only_fields = ["created_at", "updated_at", "suggested_values", "possible_default_values"]
 
     def validate_modifiers(self, value):
         """Validate that modifiers is a valid JSON structure."""
@@ -1200,6 +1203,7 @@ class OntologySuggestionSerializer(serializers.Serializer):
 class AsyncTaskStatusSerializer(serializers.ModelSerializer):
     """Serializer for AsyncTaskStatus model."""
 
+    user_username = serializers.CharField(source="user.username", read_only=True)
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     task_type_display = serializers.CharField(source="get_task_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
@@ -1214,6 +1218,8 @@ class AsyncTaskStatusSerializer(serializers.ModelSerializer):
             "task_type_display",
             "status",
             "status_display",
+            "user",
+            "user_username",
             "metadata_table",
             "metadata_table_name",
             "parameters",
@@ -1232,6 +1238,7 @@ class AsyncTaskStatusSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "user_username",
             "created_at",
             "started_at",
             "completed_at",
@@ -1254,6 +1261,7 @@ class AsyncTaskStatusSerializer(serializers.ModelSerializer):
 class AsyncTaskListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing async tasks."""
 
+    user_username = serializers.CharField(source="user.username", read_only=True)
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     task_type_display = serializers.CharField(source="get_task_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
@@ -1268,6 +1276,8 @@ class AsyncTaskListSerializer(serializers.ModelSerializer):
             "task_type_display",
             "status",
             "status_display",
+            "user",
+            "user_username",
             "metadata_table",
             "metadata_table_name",
             "progress_percentage",
@@ -1280,6 +1290,7 @@ class AsyncTaskListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "user_username",
             "task_type",
             "task_type_display",
             "status",

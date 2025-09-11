@@ -317,6 +317,54 @@ The Team
         lab_group.members.remove(request.user)
         return Response({"message": "Successfully left the lab group"})
 
+    @action(detail=True, methods=["post"])
+    def remove_member(self, request, pk=None):
+        """Remove a member from this lab group (admin/manager only)."""
+        lab_group = self.get_object()
+
+        # Check permissions - only staff, creator, or group managers can remove members
+        if not (request.user.is_staff or lab_group.is_creator(request.user) or lab_group.can_manage(request.user)):
+            return Response(
+                {"error": "You don't have permission to remove members from this lab group"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Get user_id from request data
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response(
+                {"error": "user_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from django.contrib.auth.models import User
+
+            user_to_remove = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Check if user is actually a member
+        if not lab_group.is_member(user_to_remove):
+            return Response(
+                {"error": "User is not a member of this lab group"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Creator cannot be removed
+        if lab_group.is_creator(user_to_remove):
+            return Response(
+                {"error": "Group creator cannot be removed. Transfer ownership first or delete the group."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Remove the member
+        lab_group.members.remove(user_to_remove)
+        return Response({"message": f"Successfully removed {user_to_remove.username} from {lab_group.name}"})
+
 
 class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):
     """ViewSet for managing lab group invitations."""

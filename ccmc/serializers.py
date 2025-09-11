@@ -195,9 +195,9 @@ class MessageDetailSerializer(MessageSerializer):
         return [
             {
                 "id": annotation.id,
-                "name": annotation.name,
+                "name": annotation.file.name if annotation.file else str(annotation),
                 "annotation_type": annotation.annotation_type,
-                "file_size": annotation.file_size,
+                "file_size": annotation.file.size if annotation.file else None,
                 "created_at": annotation.created_at,
             }
             for annotation in obj.annotations.all()

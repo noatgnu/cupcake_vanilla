@@ -414,7 +414,7 @@ class CCMViewSetTests(APITestCase):
             user=self.user,
         )
 
-        url = "/api/v1/instruments/available/"
+        url = "/api/v1/instruments/?enabled=true&is_vaulted=false"
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)

@@ -19,6 +19,7 @@ from ccc.models import RemoteHost
 from ccc.permissions import IsAdminUser, IsOwnerEditorViewerOrNoAccess, IsOwnerOrReadOnly
 
 from .models import (
+    InstrumentUsageSessionAnnotation,
     Project,
     ProtocolModel,
     ProtocolRating,
@@ -27,11 +28,14 @@ from .models import (
     ProtocolStep,
     Session,
     SessionAnnotation,
+    SessionAnnotationFolder,
+    StepAnnotation,
     StepReagent,
     StepVariation,
     TimeKeeper,
 )
 from .serializers import (
+    InstrumentUsageSessionAnnotationSerializer,
     ProjectCreateSerializer,
     ProjectSerializer,
     ProtocolModelCreateSerializer,
@@ -41,9 +45,11 @@ from .serializers import (
     ProtocolSectionSerializer,
     ProtocolStepSerializer,
     RemoteHostSerializer,
+    SessionAnnotationFolderSerializer,
     SessionAnnotationSerializer,
     SessionCreateSerializer,
     SessionSerializer,
+    StepAnnotationSerializer,
     StepReagentSerializer,
     StepVariationSerializer,
     TimeKeeperSerializer,
@@ -977,3 +983,51 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
             return Response(
                 {"error": f"Failed to update column value: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class StepAnnotationViewSet(ModelViewSet):
+    """ViewSet for StepAnnotation model."""
+
+    queryset = StepAnnotation.objects.all()
+    serializer_class = StepAnnotationSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ["session", "step", "annotation"]
+    search_fields = ["step__step_description", "annotation__name"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        """Filter annotations by user access permissions."""
+        user = self.request.user
+        return self.queryset.filter(session__user=user)
+
+
+class SessionAnnotationFolderViewSet(ModelViewSet):
+    """ViewSet for SessionAnnotationFolder model."""
+
+    queryset = SessionAnnotationFolder.objects.all()
+    serializer_class = SessionAnnotationFolderSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ["session", "folder"]
+    search_fields = ["folder__name"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        """Filter annotation folders by user access permissions."""
+        user = self.request.user
+        return self.queryset.filter(session__user=user)
+
+
+class InstrumentUsageSessionAnnotationViewSet(ModelViewSet):
+    """ViewSet for InstrumentUsageSessionAnnotation model."""
+
+    queryset = InstrumentUsageSessionAnnotation.objects.all()
+    serializer_class = InstrumentUsageSessionAnnotationSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ["session_annotation", "instrument_usage"]
+    search_fields = ["instrument_usage__instrument__instrument_name"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        """Filter instrument usage annotations by user access permissions."""
+        user = self.request.user
+        return self.queryset.filter(session_annotation__session__user=user)
