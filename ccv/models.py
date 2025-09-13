@@ -173,6 +173,140 @@ class MetadataTable(BaseMetadataTable):
             return f"1-{self.sample_count}"
         return "0"
 
+    def validate_sample_count_change(self, new_sample_count: int):
+        """
+        Validate changing sample count and return information about affected data.
+
+        Returns:
+            dict: {
+                'valid': bool,
+                'warnings': list,
+                'affected_modifiers': list,
+                'affected_pools': list,
+                'samples_to_remove': list
+            }
+        """
+        result = {
+            "valid": True,
+            "warnings": [],
+            "affected_modifiers": [],
+            "affected_pools": [],
+            "samples_to_remove": [],
+        }
+
+        if new_sample_count < 0:
+            result["valid"] = False
+            result["warnings"].append("Sample count cannot be negative")
+            return result
+
+        if new_sample_count >= self.sample_count:
+            # Increasing sample count - no data loss
+            return result
+
+        # Decreasing sample count - check for data loss
+        samples_to_remove = list(range(new_sample_count + 1, self.sample_count + 1))
+        result["samples_to_remove"] = samples_to_remove
+
+        if samples_to_remove:
+            result["warnings"].append(
+                f"Reducing sample count will remove samples {samples_to_remove[0]}-{samples_to_remove[-1]}"
+            )
+
+        # Check column modifiers
+        for column in self.columns.all():
+            if column.modifiers:
+                affected_modifiers = []
+                for i, modifier in enumerate(column.modifiers):
+                    if isinstance(modifier, dict) and "samples" in modifier:
+                        sample_indices = column._parse_sample_indices_from_modifier_string(modifier["samples"])
+                        invalid_indices = [idx for idx in sample_indices if idx > new_sample_count]
+                        if invalid_indices:
+                            affected_modifiers.append(
+                                {
+                                    "modifier_index": i,
+                                    "column_name": column.name,
+                                    "samples": modifier["samples"],
+                                    "invalid_indices": invalid_indices,
+                                    "value": modifier.get("value", ""),
+                                }
+                            )
+
+                if affected_modifiers:
+                    result["affected_modifiers"].extend(affected_modifiers)
+
+        # Check sample pools
+        for pool in self.sample_pools.all():
+            invalid_pooled_only = [s for s in pool.pooled_only_samples if s > new_sample_count]
+            invalid_pooled_and_independent = [s for s in pool.pooled_and_independent_samples if s > new_sample_count]
+
+            if invalid_pooled_only or invalid_pooled_and_independent:
+                result["affected_pools"].append(
+                    {
+                        "pool_name": pool.pool_name,
+                        "invalid_pooled_only": invalid_pooled_only,
+                        "invalid_pooled_and_independent": invalid_pooled_and_independent,
+                    }
+                )
+
+        if result["affected_modifiers"] or result["affected_pools"]:
+            result["warnings"].append("Some column modifiers and sample pools reference samples that will be removed")
+
+        return result
+
+    def apply_sample_count_change(self, new_sample_count: int):
+        """
+        Apply sample count change and clean up affected modifiers and pools.
+
+        This should only be called after validate_sample_count_change() confirms
+        the change is acceptable to the user.
+        """
+        old_sample_count = self.sample_count
+        self.sample_count = new_sample_count
+
+        if new_sample_count >= old_sample_count:
+            # No cleanup needed for increases
+            self.save(update_fields=["sample_count"])
+            return
+
+        # Clean up modifiers in columns
+        for column in self.columns.all():
+            if column.modifiers:
+                cleaned_modifiers = []
+                for modifier in column.modifiers:
+                    if isinstance(modifier, dict) and "samples" in modifier:
+                        sample_indices = column._parse_sample_indices_from_modifier_string(modifier["samples"])
+                        valid_indices = [idx for idx in sample_indices if idx <= new_sample_count]
+
+                        if valid_indices:
+                            # Keep modifier but update sample range
+                            cleaned_modifier = modifier.copy()
+                            cleaned_modifier["samples"] = column._format_sample_indices_to_string(valid_indices)
+                            cleaned_modifiers.append(cleaned_modifier)
+                        # If no valid indices, drop the modifier entirely
+                    else:
+                        # Keep non-sample modifiers as-is
+                        cleaned_modifiers.append(modifier)
+
+                column.modifiers = cleaned_modifiers
+                column.save(update_fields=["modifiers"])
+
+        # Clean up sample pools
+        for pool in self.sample_pools.all():
+            # Filter out invalid samples
+            pool.pooled_only_samples = [s for s in pool.pooled_only_samples if s <= new_sample_count]
+            pool.pooled_and_independent_samples = [
+                s for s in pool.pooled_and_independent_samples if s <= new_sample_count
+            ]
+
+            # Remove pools that no longer have any valid samples
+            if not pool.pooled_only_samples and not pool.pooled_and_independent_samples:
+                pool.delete()
+            else:
+                pool.save(update_fields=["pooled_only_samples", "pooled_and_independent_samples"])
+
+        # Save the updated sample count
+        self.save(update_fields=["sample_count"])
+
     def change_sample_index(self, old_index: int, new_index: int):
         """
         Change a sample's row index number and update all associated data.
@@ -514,7 +648,6 @@ class MetadataTable(BaseMetadataTable):
                 if schema_col_lower in column_map[section] and schema_col_lower not in processed_columns:
                     columns = column_map[section][schema_col_lower]
                     for column in columns:
-                        print(f"Setting position {current_position} for column {column.name}")
                         column.column_position = current_position
                         column.save(update_fields=["column_position"])
                         current_position += 1
@@ -523,14 +656,9 @@ class MetadataTable(BaseMetadataTable):
             for col_name, columns in column_map[section].items():
                 if col_name not in processed_columns:
                     for column in columns:
-                        print(f"Setting position {current_position} for column {column.name} (not in schema)")
                         column.column_position = current_position
                         column.save(update_fields=["column_position"])
                         current_position += 1
-
-        for col in self.columns.all():
-            print(f"Column: {col.name}, Position: {col.column_position}")
-        # Removed unnecessary second loop and variables
 
         return True
 

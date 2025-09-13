@@ -40,6 +40,14 @@ class MetadataTableSerializer(serializers.ModelSerializer):
     lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
     can_edit = serializers.SerializerMethodField()
 
+    # Field for confirming sample count changes that would remove data
+    sample_count_confirmed = serializers.BooleanField(
+        default=False,
+        write_only=True,
+        required=False,
+        help_text="Confirmation that user understands reducing sample count will remove data",
+    )
+
     class Meta:
         model = MetadataTable
         fields = [
@@ -47,6 +55,7 @@ class MetadataTableSerializer(serializers.ModelSerializer):
             "name",
             "description",
             "sample_count",
+            "sample_count_confirmed",
             "version",
             "owner",
             "owner_username",
@@ -83,6 +92,65 @@ class MetadataTableSerializer(serializers.ModelSerializer):
         if request and request.user:
             return obj.can_edit(request.user)
         return False
+
+    def validate(self, attrs):
+        """Validate sample count changes and require confirmation if data will be removed."""
+        # Check if sample_count is being updated
+        if "sample_count" in attrs:
+            new_sample_count = attrs["sample_count"]
+
+            # If updating an existing instance
+            if self.instance:
+                current_sample_count = self.instance.sample_count
+
+                # If reducing sample count, validate and require confirmation
+                if new_sample_count < current_sample_count:
+                    validation_result = self.instance.validate_sample_count_change(new_sample_count)
+
+                    # If there are warnings (data will be removed) and no confirmation
+                    if validation_result["warnings"] and not attrs.get("sample_count_confirmed", False):
+                        # Provide detailed error with information about what will be affected
+                        error_details = {
+                            "current_sample_count": current_sample_count,
+                            "new_sample_count": new_sample_count,
+                            "requires_confirmation": True,
+                            "validation_result": validation_result,
+                        }
+
+                        raise serializers.ValidationError(
+                            {
+                                "sample_count": f"Reducing sample count from {current_sample_count} to {new_sample_count} will remove data. Set sample_count_confirmed=true to proceed.",
+                                "sample_count_confirmation_details": error_details,
+                            }
+                        )
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        """Handle sample count updates with proper cleanup."""
+        # Remove the confirmation field from validated_data since it's not a model field
+        validated_data.pop("sample_count_confirmed", False)
+
+        # Check if sample_count is being updated
+        if "sample_count" in validated_data:
+            new_sample_count = validated_data["sample_count"]
+
+            # If reducing sample count, apply the change with cleanup
+            if new_sample_count < instance.sample_count:
+                # Remove sample_count from validated_data to handle it separately
+                validated_data.pop("sample_count")
+
+                # Update other fields first
+                for attr, value in validated_data.items():
+                    setattr(instance, attr, value)
+
+                # Apply sample count change with cleanup
+                instance.apply_sample_count_change(new_sample_count)
+
+                return instance
+
+        # For normal updates (no sample count reduction), use default behavior
+        return super().update(instance, validated_data)
 
 
 class MetadataColumnSerializer(serializers.ModelSerializer):
@@ -324,6 +392,38 @@ class MetadataImportSerializer(serializers.Serializer):
             MetadataTable.objects.get(id=value)
         except MetadataTable.DoesNotExist:
             raise serializers.ValidationError("Invalid metadata table ID.")
+        return value
+
+
+class ChunkedImportSerializer(serializers.Serializer):
+    """Serializer for chunked import requests."""
+
+    chunked_upload_id = serializers.UUIDField(help_text="ID of the completed chunked upload")
+    metadata_table_id = serializers.IntegerField(help_text="ID of the metadata table to import data into")
+    replace_existing = serializers.BooleanField(default=False, help_text="Whether to replace existing metadata columns")
+    validate_ontologies = serializers.BooleanField(default=True, help_text="Whether to validate ontology terms")
+    create_pools = serializers.BooleanField(
+        default=True, help_text="Whether to create sample pools from detected patterns"
+    )
+
+    def validate_metadata_table_id(self, value):
+        """Validate that the metadata table exists."""
+        try:
+            MetadataTable.objects.get(id=value)
+        except MetadataTable.DoesNotExist:
+            raise serializers.ValidationError("Invalid metadata table ID.")
+        return value
+
+    def validate_chunked_upload_id(self, value):
+        """Validate that the chunked upload exists and is complete."""
+        try:
+            from ccv.chunked_upload import MetadataFileUpload
+
+            upload = MetadataFileUpload.objects.get(id=value)
+            if upload.status != upload.COMPLETE:
+                raise serializers.ValidationError("Chunked upload is not complete.")
+        except MetadataFileUpload.DoesNotExist:
+            raise serializers.ValidationError("Invalid chunked upload ID.")
         return value
 
 
@@ -1378,3 +1478,18 @@ class TaskCreateResponseSerializer(serializers.Serializer):
 
     task_id = serializers.UUIDField(help_text="ID of the created task")
     message = serializers.CharField(help_text="Success message")
+
+
+class SampleCountValidationSerializer(serializers.Serializer):
+    """Serializer for validating sample count changes."""
+
+    new_sample_count = serializers.IntegerField(min_value=0, help_text="New sample count for the table")
+
+
+class SampleCountUpdateSerializer(serializers.Serializer):
+    """Serializer for updating sample count with confirmation."""
+
+    new_sample_count = serializers.IntegerField(min_value=0, help_text="New sample count for the table")
+    confirmed = serializers.BooleanField(
+        default=False, help_text="User confirmation that they understand data will be removed"
+    )

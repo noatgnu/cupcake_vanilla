@@ -151,16 +151,19 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
             }
         )
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[])
     def download(self, request, pk=None):
-        """Direct download endpoint with signed token verification."""
-        signed_token = request.GET.get("token")
+        """Direct download endpoint with signed token verification.
+
+        No authentication required - token contains all necessary validation.
+        """
+        signed_token = request.query_params.get("token")
 
         if not signed_token:
             return HttpResponse("Missing token", status=400)
 
-        # Verify the signed token
-        task_result = TaskResult.verify_download_token(signed_token, request.user)
+        # Verify the signed token (no user authentication required)
+        task_result = TaskResult.verify_download_token(signed_token)
 
         if not task_result:
             return HttpResponse("Invalid or expired token", status=403)

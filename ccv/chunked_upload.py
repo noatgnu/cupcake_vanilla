@@ -65,7 +65,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
         try:
             # Get processing parameters from request
             metadata_table_id = request.data.get("metadata_table_id")
-            create_pools = request.data.get("create_pools", True)
             replace_existing = request.data.get("replace_existing", False)
 
             if metadata_table_id:
@@ -79,36 +78,84 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             {"error": "Permission denied: cannot edit this metadata table"},
                             status=status.HTTP_403_FORBIDDEN,
                         )
-
                     # Process file based on type
-                    file_path = uploaded_file.file.path
                     filename = uploaded_file.filename or uploaded_file.file.name
                     file_ext = os.path.splitext(filename.lower())[1]
 
+                    # Create async task status for tracking
+                    from ccv.task_models import AsyncTaskStatus
+                    from ccv.tasks.import_tasks import import_excel_task, import_sdrf_task
+
                     if file_ext in [".xlsx", ".xls"]:
-                        result = self._process_excel_file(
-                            file_path,
-                            metadata_table,
-                            create_pools,
-                            replace_existing,
-                            request.user,
+                        task_type = "IMPORT_EXCEL"
+                        task_status = AsyncTaskStatus.objects.create(
+                            task_type=task_type,
+                            user=request.user,
+                            metadata_table=metadata_table,
+                            parameters={
+                                "filename": filename,
+                                "replace_existing": replace_existing,
+                                "file_size": uploaded_file.file.size,
+                            },
                         )
+
+                        with open(uploaded_file.file.path, "rb") as f:
+                            file_content = f.read()
+
+                        job = import_excel_task.delay(
+                            metadata_table_id=metadata_table_id,
+                            user_id=request.user.id,
+                            file_data=file_content,
+                            replace_existing=replace_existing,
+                            task_id=str(task_status.id),
+                            chunked_upload_id=str(uploaded_file.id),
+                        )
+
+                        # Update task with RQ job ID
+                        task_status.rq_job_id = job.id
+                        task_status.save(update_fields=["rq_job_id"])
+
                     elif file_ext in [".tsv", ".txt", ".sdrf"]:
-                        result = self._process_text_file(
-                            file_path,
-                            metadata_table,
-                            create_pools,
-                            replace_existing,
-                            request.user,
+                        task_type = "IMPORT_SDRF"
+                        task_status = AsyncTaskStatus.objects.create(
+                            task_type=task_type,
+                            user=request.user,
+                            metadata_table=metadata_table,
+                            parameters={
+                                "filename": filename,
+                                "replace_existing": replace_existing,
+                                "file_size": uploaded_file.file.size,
+                            },
                         )
+
+                        with open(uploaded_file.file.path, "rt") as f:
+                            file_content = f.read()
+
+                        job = import_sdrf_task.delay(
+                            metadata_table_id=metadata_table_id,
+                            user_id=request.user.id,
+                            file_content=file_content,
+                            replace_existing=replace_existing,
+                            task_id=str(task_status.id),
+                            chunked_upload_id=str(uploaded_file.id),
+                        )
+
+                        # Update task with RQ job ID
+                        task_status.rq_job_id = job.id
+                        task_status.save(update_fields=["rq_job_id"])
+
                     else:
-                        result = {"error": f"Unsupported file type: {file_ext}"}
-                        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+                        return Response(
+                            {"error": f"Unsupported file type: {file_ext}"}, status=status.HTTP_400_BAD_REQUEST
+                        )
 
-                    # Clean up uploaded file
-                    uploaded_file.delete()
-
-                    return Response(result, status=status.HTTP_200_OK)
+                    return Response(
+                        {
+                            "task_id": str(task_status.id),
+                            "message": f"{task_type.replace('_', ' ').title()} task queued successfully",
+                        },
+                        status=status.HTTP_202_ACCEPTED,
+                    )
 
                 except MetadataTable.DoesNotExist:
                     result = {"error": "Invalid metadata_table_id"}

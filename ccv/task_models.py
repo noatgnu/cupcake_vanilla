@@ -37,6 +37,8 @@ class AsyncTaskStatus(models.Model):
         ("EXPORT_MULTIPLE_SDRF", "Export Multiple SDRF Files"),
         ("EXPORT_MULTIPLE_EXCEL", "Export Multiple Excel Templates"),
         ("VALIDATE_TABLE", "Validate Metadata Table"),
+        ("REORDER_TABLE_COLUMNS", "Reorder Table Columns"),
+        ("REORDER_TEMPLATE_COLUMNS", "Reorder Template Columns"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -248,13 +250,15 @@ class TaskResult(models.Model):
         return signed_token, nginx_internal_path
 
     @classmethod
-    def verify_download_token(cls, signed_token, user):
+    def verify_download_token(cls, signed_token):
         """
         Verify a signed download token and return the TaskResult if valid.
 
+        The token contains all necessary authentication information - no additional
+        user verification needed since the token generation already validated permissions.
+
         Args:
             signed_token: The signed token to verify
-            user: The requesting user
 
         Returns:
             TaskResult instance if valid, None otherwise
@@ -269,9 +273,11 @@ class TaskResult(models.Model):
             # Parse payload
             task_id, user_id, file_path = payload.split(":", 2)
 
-            # Verify user matches
-            if str(user.id) != user_id:
-                return None
+            # Get task result using the user_id from the token
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            user = User.objects.get(id=user_id)
 
             # Get task result
             task_result = cls.objects.select_related("task").get(task__id=task_id, task__user=user, file=file_path)

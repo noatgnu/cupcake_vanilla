@@ -111,3 +111,17 @@ def create_error_result(error: Exception, task_id: Optional[str] = None) -> Dict
     import traceback
 
     return {"success": False, "error": str(error), "traceback": traceback.format_exc(), "task_id": task_id}
+
+
+def create_success_result(result_data: Dict[str, Any], task_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Create a standardized success result dictionary.
+
+    Args:
+        result_data: The result data
+        task_id: Optional task identifier
+
+    Returns:
+        Standardized success result dictionary
+    """
+    return {"success": True, "task_id": task_id, **result_data}

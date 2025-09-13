@@ -288,6 +288,54 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return Response({"message": "Column positions normalized successfully"})
 
+    @action(detail=True, methods=["post"])
+    def reorder_columns_by_schema_async(self, request, pk=None):
+        """Start async reordering of table columns by schema."""
+        from ccv.task_models import AsyncTaskStatus
+        from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_task
+
+        table = self.get_object()
+
+        if not table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        schema_ids = request.data.get("schema_ids", [])
+
+        # Create task record
+        task = AsyncTaskStatus.objects.create(
+            task_type="REORDER_TABLE_COLUMNS",
+            user=request.user,
+            metadata_table=table,
+            progress_current=0,
+            progress_total=100,
+            status="QUEUED",
+            parameters={"schema_ids": schema_ids},
+        )
+
+        # Queue the task using delay
+        job = reorder_metadata_table_columns_task.delay(
+            metadata_table_id=table.id,
+            user_id=request.user.id,
+            schema_ids=schema_ids if schema_ids else None,
+            task_id=str(task.id),
+        )
+
+        # Store job ID for tracking
+        task.rq_job_id = job.id
+        task.save()
+
+        return Response(
+            {
+                "task_id": str(task.id),
+                "message": "Column reordering task started",
+                "metadata_table_id": table.id,
+                "schema_ids": schema_ids,
+            }
+        )
+
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def admin_all_tables(self, request):
         """Admin endpoint to view all tables in the system."""
@@ -487,6 +535,90 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         if not instance.can_edit(self.request.user):
             raise PermissionDenied("You don't have permission to delete this metadata table")
         super().perform_destroy(instance)
+
+    @action(detail=True, methods=["post"])
+    def validate_sample_count_change(self, request, pk=None):
+        """
+        Validate a sample count change and return affected data information.
+        This allows the frontend to warn users about potential data loss.
+        """
+        from .serializers import SampleCountValidationSerializer
+
+        metadata_table = self.get_object()
+
+        # Check edit permissions
+        if not metadata_table.can_edit(request.user):
+            raise PermissionDenied("You don't have permission to edit this metadata table")
+
+        serializer = SampleCountValidationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        new_sample_count = serializer.validated_data["new_sample_count"]
+        validation_result = metadata_table.validate_sample_count_change(new_sample_count)
+
+        return Response(
+            {
+                "current_sample_count": metadata_table.sample_count,
+                "new_sample_count": new_sample_count,
+                **validation_result,
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def update_sample_count(self, request, pk=None):
+        """
+        Update the sample count with user confirmation.
+        This will clean up any modifiers and pools that reference invalid samples.
+        """
+        from .serializers import SampleCountUpdateSerializer
+
+        metadata_table = self.get_object()
+
+        # Check edit permissions
+        if not metadata_table.can_edit(request.user):
+            raise PermissionDenied("You don't have permission to edit this metadata table")
+
+        serializer = SampleCountUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        new_sample_count = serializer.validated_data["new_sample_count"]
+        confirmed = serializer.validated_data["confirmed"]
+
+        # Validate the change first
+        validation_result = metadata_table.validate_sample_count_change(new_sample_count)
+
+        if not validation_result["valid"]:
+            return Response(
+                {"error": "Invalid sample count change", "validation_result": validation_result},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # If there are warnings (data will be removed) and user hasn't confirmed
+        if validation_result["warnings"] and not confirmed:
+            return Response(
+                {
+                    "error": "Confirmation required",
+                    "message": "This change will remove data. Set confirmed=true to proceed.",
+                    "validation_result": validation_result,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Apply the change
+        old_sample_count = metadata_table.sample_count
+        metadata_table.apply_sample_count_change(new_sample_count)
+
+        return Response(
+            {
+                "message": f"Sample count updated from {old_sample_count} to {new_sample_count}",
+                "old_sample_count": old_sample_count,
+                "new_sample_count": new_sample_count,
+                "cleanup_performed": new_sample_count < old_sample_count,
+                "validation_result": validation_result,
+            }
+        )
 
 
 class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
@@ -1068,6 +1200,53 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         template.normalize_template_column_positions()
 
         return Response({"message": "Column positions normalized successfully"})
+
+    @action(detail=True, methods=["post"])
+    def reorder_columns_by_schema_async(self, request, pk=None):
+        """Start async reordering of template columns by schema."""
+        from ccv.task_models import AsyncTaskStatus
+        from ccv.tasks.reorder_tasks import reorder_metadata_table_template_columns_task
+
+        template = self.get_object()
+
+        if not template.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this template"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        schema_ids = request.data.get("schema_ids", [])
+
+        # Create task record
+        task = AsyncTaskStatus.objects.create(
+            task_type="REORDER_TEMPLATE_COLUMNS",
+            user=request.user,
+            progress_current=0,
+            progress_total=100,
+            status="QUEUED",
+            parameters={"schema_ids": schema_ids},
+        )
+
+        # Queue the task using delay
+        job = reorder_metadata_table_template_columns_task.delay(
+            template_id=template.id,
+            user_id=request.user.id,
+            schema_ids=schema_ids if schema_ids else None,
+            task_id=str(task.id),
+        )
+
+        # Store job ID for tracking
+        task.rq_job_id = job.id
+        task.save()
+
+        return Response(
+            {
+                "task_id": str(task.id),
+                "message": "Template column reordering task started",
+                "template_id": template.id,
+                "schema_ids": schema_ids,
+            }
+        )
 
     @action(detail=True, methods=["post"])
     def apply_to_metadata_table(self, request, pk=None):
@@ -2519,9 +2698,6 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                     # Get the updated pools list for response
                     created_pools = list(metadata_table.sample_pools.all())
 
-            for col in metadata_table.columns.all():
-                print(f"Column: {col.name}, Position: {col.column_position}")
-            # Reorganize columns based on schema order from template
             if table_template:
                 if table_template.user_columns:
                     schema_ids = set()
@@ -2532,10 +2708,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                     if schema_ids:
                         try:
                             metadata_table.reorder_columns_by_schema(schema_ids=list(schema_ids))
-                        except Exception as e:
-                            # Log error but don't fail the import
-                            print(f"Warning: Failed to reorder columns by schema: {e}")
-                            # Fall back to normalizing positions
+                        except Exception:
                             metadata_table.normalize_column_positions()
                     else:
                         # No schemas found, just normalize positions
@@ -2548,11 +2721,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                                 if schema_ids:
                                     try:
                                         pool.reorder_pool_columns_by_schema(schema_ids=list(schema_ids))
-                                    except Exception as e:
-                                        # Log error but don't fail the import, fall back to basic reordering
-                                        print(
-                                            f"Warning: Failed to reorder pool '{pool.pool_name}' columns by schema: {e}"
-                                        )
+                                    except Exception:
                                         pool.basic_pool_column_reordering()
                                 else:
                                     # No schemas found, use basic section-based ordering for pools

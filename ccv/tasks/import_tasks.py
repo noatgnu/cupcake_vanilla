@@ -22,6 +22,7 @@ def import_sdrf_task(
     replace_existing: bool = False,
     validate_ontologies: bool = True,
     task_id: str = None,
+    chunked_upload_id: str = None,
 ) -> Dict[str, Any]:
     r"""
     Async task for importing SDRF file with proper validation and pool creation.
@@ -48,11 +49,14 @@ def import_sdrf_task(
         replace_existing: Whether to replace existing data or skip duplicates
         validate_ontologies: Whether to validate ontology terms against vocabularies
         task_id: Optional UUID string for async task tracking
+        chunked_upload_id: Optional chunked upload ID for cleanup after processing
 
     Returns:
         Dict containing success status, import statistics, and any errors
     """
     try:
+        # Get task instance for progress tracking
+        task = None
         if task_id:
             try:
                 task = AsyncTaskStatus.objects.get(id=task_id)
@@ -60,8 +64,16 @@ def import_sdrf_task(
             except AsyncTaskStatus.DoesNotExist:
                 pass
 
+        # Update progress - loading metadata table
+        if task:
+            task.update_progress(5, 100, "Loading metadata table...")
+
         user = User.objects.get(id=user_id)
         metadata_table = MetadataTable.objects.get(id=metadata_table_id)
+
+        # Update progress - processing SDRF data
+        if task:
+            task.update_progress(20, 100, "Processing SDRF file content...")
 
         result = import_sdrf_data(
             file_content=file_content,
@@ -71,6 +83,20 @@ def import_sdrf_task(
             validate_ontologies=validate_ontologies,
             create_pools=True,
         )
+
+        # Update progress - finalizing
+        if task:
+            task.update_progress(95, 100, "Finalizing import...")
+
+        # Clean up chunked upload if provided
+        if chunked_upload_id:
+            try:
+                from ccv.chunked_upload import MetadataFileUpload
+
+                chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
+                chunked_upload.delete()
+            except Exception as e:
+                print(f"Warning: Failed to cleanup chunked upload {chunked_upload_id}: {e}")
 
         if task_id:
             try:
@@ -82,11 +108,22 @@ def import_sdrf_task(
                 raise
 
         result["task_id"] = task_id
+        result["chunked_upload_id"] = chunked_upload_id
         return result
 
     except Exception as e:
         print(f"Import task error: {str(e)}")
         print(f"Full traceback:\n{traceback.format_exc()}")
+
+        # Clean up chunked upload on failure
+        if chunked_upload_id:
+            try:
+                from ccv.chunked_upload import MetadataFileUpload
+
+                chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
+                chunked_upload.delete()
+            except Exception as cleanup_error:
+                print(f"Warning: Failed to cleanup chunked upload {chunked_upload_id}: {cleanup_error}")
 
         if task_id:
             try:
@@ -95,7 +132,13 @@ def import_sdrf_task(
             except AsyncTaskStatus.DoesNotExist:
                 pass
 
-        return {"success": False, "error": str(e), "traceback": traceback.format_exc(), "task_id": task_id}
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "task_id": task_id,
+            "chunked_upload_id": chunked_upload_id,
+        }
 
 
 @job("default", timeout=3600)
@@ -106,6 +149,7 @@ def import_excel_task(
     replace_existing: bool = False,
     validate_ontologies: bool = True,
     task_id: str = None,
+    chunked_upload_id: str = None,
 ) -> Dict[str, Any]:
     """
     Async task for importing Excel file with multi-sheet pool data processing.
@@ -134,11 +178,14 @@ def import_excel_task(
         replace_existing: Whether to replace existing data or skip duplicates
         validate_ontologies: Whether to validate ontology terms against vocabularies
         task_id: Optional UUID string for async task tracking
+        chunked_upload_id: Optional chunked upload ID for cleanup after processing
 
     Returns:
         Dict containing success status, import statistics including pools created
     """
     try:
+        # Get task instance for progress tracking
+        task = None
         if task_id:
             try:
                 task = AsyncTaskStatus.objects.get(id=task_id)
@@ -146,8 +193,16 @@ def import_excel_task(
             except AsyncTaskStatus.DoesNotExist:
                 pass
 
+        # Update progress - loading metadata table
+        if task:
+            task.update_progress(5, 100, "Loading metadata table...")
+
         user = User.objects.get(id=user_id)
         metadata_table = MetadataTable.objects.get(id=metadata_table_id)
+
+        # Update progress - processing Excel data
+        if task:
+            task.update_progress(20, 100, "Processing Excel file...")
 
         result = import_excel_data(
             file_data=file_data,
@@ -157,6 +212,20 @@ def import_excel_task(
             validate_ontologies=validate_ontologies,
             create_pools=True,
         )
+
+        # Update progress - finalizing
+        if task:
+            task.update_progress(95, 100, "Finalizing import...")
+
+        # Clean up chunked upload if provided
+        if chunked_upload_id:
+            try:
+                from ccv.chunked_upload import MetadataFileUpload
+
+                chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
+                chunked_upload.delete()
+            except Exception as e:
+                print(f"Warning: Failed to cleanup chunked upload {chunked_upload_id}: {e}")
 
         if task_id:
             try:
@@ -170,11 +239,22 @@ def import_excel_task(
                 raise
 
         result["task_id"] = task_id
+        result["chunked_upload_id"] = chunked_upload_id
         return result
 
     except Exception as e:
         print(f"Import task error: {str(e)}")
         print(f"Full traceback:\n{traceback.format_exc()}")
+
+        # Clean up chunked upload on failure
+        if chunked_upload_id:
+            try:
+                from ccv.chunked_upload import MetadataFileUpload
+
+                chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
+                chunked_upload.delete()
+            except Exception as cleanup_error:
+                print(f"Warning: Failed to cleanup chunked upload {chunked_upload_id}: {cleanup_error}")
 
         if task_id:
             try:
@@ -183,4 +263,10 @@ def import_excel_task(
             except AsyncTaskStatus.DoesNotExist:
                 pass
 
-        return {"success": False, "error": str(e), "traceback": traceback.format_exc(), "task_id": task_id}
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "task_id": task_id,
+            "chunked_upload_id": chunked_upload_id,
+        }
