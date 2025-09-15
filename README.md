@@ -1,7 +1,15 @@
 # CUPCAKE Metadata
 
-CUPCAKE (Comprehensive User-friendly Platform for Collaborative and Knowledge-based Experimental data management) is a Django package for managing scientific metadata, user collaboration, and SDRF-compliant data processing.
+CUPCAKE (Comprehensive User-friendly Platform for Collaborative and Knowledge-based Experimental data management) is a modular Django system for managing scientific metadata, user collaboration, laboratory instruments, and inventory management with SDRF-compliant data processing.
 
+## Configuration Options
+
+CUPCAKE offers flexible configuration options:
+
+- **Metadata Management Only**: Use CCC (Core) + CCV (Vanilla) for SDRF metadata management without instrument/inventory features
+- **Full Laboratory Management**: Add CCM (Macaron) for comprehensive instrument booking and inventory tracking
+
+See [CONFIGURATION_GUIDE.md](./CONFIGURATION_GUIDE.md) for detailed setup instructions.
 
 ## Start
 
@@ -25,9 +33,12 @@ INSTALLED_APPS = [
     'simple_history',
     'corsheaders',
 
-    # CUPCAKE apps
-    'ccc',  # CUPCAKE Core - User & Lab Management
-    'ccv',  # CUPCAKE Vanilla - Metadata Management
+    # CUPCAKE apps - Core (always required)
+    'ccc.apps.CccConfig',  # CUPCAKE Core - User & Lab Management
+    'ccv.apps.CcvConfig',  # CUPCAKE Vanilla - Metadata Management
+
+    # CUPCAKE apps - Optional (can be conditionally loaded)
+    'ccm.apps.CcmConfig',  # CUPCAKE Macaron - Instruments & Inventory
 
     # Your apps
     'your_app',

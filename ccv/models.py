@@ -1412,7 +1412,7 @@ class MetadataColumn(models.Model):
                         for lookup, value in filter_value.items():
                             filter_kwargs = {f"{lookup}__{case_insensitive_search_type}": value}
                             queryset = queryset.filter(**filter_kwargs)
-
+        print(self.custom_ontology_filters)
         # Apply search filtering based on search_type and model type
         if search_term:
             search_queries = []
@@ -3562,7 +3562,6 @@ class MetadataColumnTemplate(AbstractResource):
                         for lookup, value in filter_value.items():
                             filter_kwargs = {f"{lookup}__{case_insensitive_search_type}": value}
                             queryset = queryset.filter(**filter_kwargs)
-
         # Apply search filtering based on search_type and model type
         if search_term:
             search_queries = []

@@ -106,8 +106,11 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
                 job = queue.job_class.fetch(task.rq_job_id, connection=queue.connection)
                 if job:
                     job.cancel()
-            except Exception:
-                pass  # Job might not exist or be cancellable
+            except Exception as e:
+                return Response(
+                    {"error": f"Failed to cancel RQ job: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
         task.cancel()
 

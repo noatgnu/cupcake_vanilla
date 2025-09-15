@@ -1041,7 +1041,7 @@ class OntologySuggestionSerializer(serializers.Serializer):
             return {
                 "id": str(data.get("taxon") or data.get("code", "")),
                 "value": data.get("official_name", ""),  # Species uses official_name as value
-                "display_name": data.get("common_name", "")
+                "display_name": data.get("official_name", "")
                 or data.get("official_name", ""),  # Use common_name for display
                 "description": data.get("official_name", "") or "",
                 "ontology_type": ontology_type,
@@ -1233,7 +1233,7 @@ class OntologySuggestionSerializer(serializers.Serializer):
             return {
                 "id": data.get("identifier", ""),  # UBERON:XXXXXXX
                 "value": data.get("identifier", ""),
-                "display_name": data.get("name", ""),  # Keep original name as display_name
+                "display_name": data.get("name", ""),
                 "description": data.get("definition", "") or "",
                 "ontology_type": ontology_type,
                 "full_data": {
@@ -1252,9 +1252,9 @@ class OntologySuggestionSerializer(serializers.Serializer):
 
         elif ontology_type in ["cell_ontology", "cellosaurus"]:
             return {
-                "id": data.get("identifier", ""),  # CL:XXXXXXX or CVCL_XXXX
+                "id": data.get("identifier", ""),
                 "value": data.get("identifier", ""),
-                "display_name": data.get("name", ""),  # Keep original name as display_name
+                "display_name": data.get("name", ""),
                 "description": data.get("definition", "") or data.get("organism", "") or "",
                 "ontology_type": ontology_type,
                 "full_data": {
