@@ -58,7 +58,7 @@ try:
 
     # Configure py-pglite for persistent storage
     PGLITE_CONFIG = PGliteConfig(
-        data_dir=PGLITE_DATA_DIR,  # Persistent storage in Electron app data
+        work_dir=PGLITE_DATA_DIR,  # Persistent storage in Electron app data
         use_tcp=True,
         tcp_host="127.0.0.1",
         tcp_port=55432,  # Use py-pglite default port to avoid conflicts
