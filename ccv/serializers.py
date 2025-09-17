@@ -126,6 +126,12 @@ class MetadataTableSerializer(serializers.ModelSerializer):
 
         return attrs
 
+    def create(self, validated_data):
+        """Handle creation with sample_count_confirmed field removal."""
+        # Remove the confirmation field from validated_data since it's not a model field
+        validated_data.pop("sample_count_confirmed", False)
+        return super().create(validated_data)
+
     def update(self, instance, validated_data):
         """Handle sample count updates with proper cleanup."""
         # Remove the confirmation field from validated_data since it's not a model field

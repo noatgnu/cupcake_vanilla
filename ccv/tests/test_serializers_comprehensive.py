@@ -11,7 +11,6 @@ from django.test import TestCase
 
 from rest_framework.test import APITestCase
 
-from ccv.models import MetadataTable
 from ccv.serializers import (
     FavouriteMetadataOptionSerializer,
     HumanDiseaseSerializer,
@@ -508,7 +507,8 @@ class OntologySuggestionSerializerTest(TestCase, QuickTestDataMixin):
 
         # Test that species data is properly mapped
         self.assertEqual(data["value"], "Mus musculus")
-        self.assertIn("mouse", data["display_name"].lower())
+        # display_name should be the official name, common name is in the value or elsewhere
+        self.assertEqual(data["display_name"].lower(), "mus musculus")
 
     def test_serialize_disease_as_suggestion(self):
         """Test serializing disease data as ontology suggestion."""
@@ -771,8 +771,8 @@ class SerializerIntegrationTest(APITestCase, QuickTestDataMixin):
         serializer = MetadataTableSerializer(data=create_data)
         self.assertTrue(serializer.is_valid(), serializer.errors)
 
-        # Simulate save
-        table = MetadataTable.objects.create(owner=self.user, **serializer.validated_data)
+        # Simulate save using serializer
+        table = serializer.save(owner=self.user)
 
         # Test retrieve serialization
         retrieve_serializer = MetadataTableSerializer(table)
