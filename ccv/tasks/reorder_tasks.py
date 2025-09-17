@@ -15,6 +15,136 @@ from .base_task import task_with_tracking
 from .task_utils import create_success_result, get_user_and_table, mark_task_success
 
 
+def reorder_metadata_table_columns_sync(
+    metadata_table_id: int,
+    user_id: int,
+    schema_ids: list[int] = None,
+) -> Dict[str, Any]:
+    """
+    Synchronous version of metadata table column reordering.
+
+    Args:
+        metadata_table_id: ID of the metadata table to reorder
+        user_id: ID of the user performing the operation
+        schema_ids: List of schema IDs to use for reordering (optional)
+
+    Returns:
+        Dictionary containing success status and results
+    """
+    try:
+        # Get user and metadata table
+        user, metadata_table = get_user_and_table(user_id, metadata_table_id)
+
+        # Check permissions
+        if not metadata_table.can_edit(user):
+            return {
+                "success": False,
+                "error": "Permission denied: cannot edit this metadata table",
+            }
+
+        # Perform reordering
+        if schema_ids:
+            metadata_table.reorder_columns_by_schema(schema_ids=schema_ids)
+        else:
+            # Use basic reordering if no schema IDs provided
+            if hasattr(metadata_table, "basic_column_reordering"):
+                metadata_table.basic_column_reordering()
+            else:
+                metadata_table.normalize_column_positions()
+
+        # Apply same reordering to sample pools
+        for pool in metadata_table.sample_pools.all():
+            if pool.metadata_columns.exists():
+                if schema_ids:
+                    try:
+                        pool.reorder_pool_columns_by_schema(schema_ids=schema_ids)
+                    except Exception:
+                        pool.basic_pool_column_reordering()
+                else:
+                    pool.basic_pool_column_reordering()
+
+        # Save and complete
+        metadata_table.save()
+
+        result_data = {
+            "metadata_table_id": metadata_table_id,
+            "reordered_columns": metadata_table.columns.count(),
+            "reordered_pools": metadata_table.sample_pools.count(),
+            "schema_ids_used": schema_ids or [],
+        }
+
+        return {
+            "success": True,
+            "result": result_data,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Column reordering failed: {str(e)}",
+            "exception_type": type(e).__name__,
+            "exception_args": e.args,
+        }
+
+
+def reorder_metadata_table_template_columns_sync(
+    template_id: int,
+    user_id: int,
+    schema_ids: list[int] = None,
+) -> Dict[str, Any]:
+    """
+    Synchronous version of metadata table template column reordering.
+
+    Args:
+        template_id: ID of the metadata table template to reorder
+        user_id: ID of the user performing the operation
+        schema_ids: List of schema IDs to use for reordering (optional)
+
+    Returns:
+        Dictionary containing success status and results
+    """
+    try:
+        # Get user and template
+        user = User.objects.get(id=user_id)
+        template = MetadataTableTemplate.objects.get(id=template_id)
+
+        # Check permissions
+        if not template.can_edit(user):
+            return {
+                "success": False,
+                "error": "Permission denied: cannot edit this template",
+            }
+
+        # Perform reordering
+        if schema_ids:
+            template.reorder_columns_by_schema(schema_ids=schema_ids)
+        else:
+            # Use basic reordering if no schema IDs provided
+            template.normalize_column_positions()
+
+        # Save and complete
+        template.save()
+
+        result_data = {
+            "template_id": template_id,
+            "reordered_columns": template.template_columns.count(),
+            "schema_ids_used": schema_ids or [],
+        }
+
+        return {
+            "success": True,
+            "result": result_data,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Template column reordering failed: {str(e)}",
+            "exception_type": type(e).__name__,
+            "exception_args": e.args,
+        }
+
+
 @job("default", timeout=1800)
 @task_with_tracking
 def reorder_metadata_table_columns_task(
@@ -39,61 +169,35 @@ def reorder_metadata_table_columns_task(
         # Update progress
         if task_id:
             task = AsyncTaskStatus.objects.get(id=task_id)
-            task.update_progress(10, description="Loading metadata table")
+            task.update_progress(10, description="Starting column reordering")
 
-        # Get user and metadata table
-        user, metadata_table = get_user_and_table(user_id, metadata_table_id)
+        # Update progress
+        if task_id:
+            task.update_progress(50, description="Performing column reordering")
 
-        # Check permissions
-        if not metadata_table.can_edit(user):
+        # Use sync function for core logic
+        result = reorder_metadata_table_columns_sync(
+            metadata_table_id=metadata_table_id,
+            user_id=user_id,
+            schema_ids=schema_ids,
+        )
+
+        if not result["success"]:
             return {
                 "success": False,
-                "error": "Permission denied: cannot edit this metadata table",
+                "error": result["error"],
                 "task_id": task_id,
             }
 
         # Update progress
         if task_id:
-            task.update_progress(25, description="Starting column reordering")
-
-        # Perform reordering
-        if schema_ids:
-            metadata_table.reorder_columns_by_schema(schema_ids=schema_ids)
-        else:
-            # Use basic reordering if no schema IDs provided
-            if hasattr(metadata_table, "basic_column_reordering"):
-                metadata_table.basic_column_reordering()
-            else:
-                metadata_table.normalize_column_positions()
-
-        # Update progress
-        if task_id:
-            task.update_progress(75, description="Updating sample pools")
-
-        # Apply same reordering to sample pools
-        for pool in metadata_table.sample_pools.all():
-            if pool.metadata_columns.exists():
-                if schema_ids:
-                    try:
-                        pool.reorder_pool_columns_by_schema(schema_ids=schema_ids)
-                    except Exception:
-                        pool.basic_pool_column_reordering()
-                else:
-                    pool.basic_pool_column_reordering()
-
-        # Update progress
-        if task_id:
             task.update_progress(95, description="Finalizing reordering")
 
-        # Save and complete
-        metadata_table.save()
+        # Get user for notification
+        user = User.objects.get(id=user_id)
+        from ccv.models import MetadataTable
 
-        result_data = {
-            "metadata_table_id": metadata_table_id,
-            "reordered_columns": metadata_table.columns.count(),
-            "reordered_pools": metadata_table.sample_pools.count(),
-            "schema_ids_used": schema_ids or [],
-        }
+        metadata_table = MetadataTable.objects.get(id=metadata_table_id)
 
         # Send notification
         notification_service = NotificationService()
@@ -105,9 +209,9 @@ def reorder_metadata_table_columns_task(
         )
 
         # Mark task as successful
-        mark_task_success(task_id, result_data)
+        mark_task_success(task_id, result["result"])
 
-        return create_success_result(result_data, task_id)
+        return create_success_result(result["result"], task_id)
 
     except Exception as e:
         error_msg = f"Column reordering failed: {str(e)}"
@@ -157,43 +261,33 @@ def reorder_metadata_table_template_columns_task(
         # Update progress
         if task_id:
             task = AsyncTaskStatus.objects.get(id=task_id)
-            task.update_progress(10, description="Loading metadata table template")
+            task.update_progress(10, description="Starting template column reordering")
 
-        # Get user and template
-        user = User.objects.get(id=user_id)
-        template = MetadataTableTemplate.objects.get(id=template_id)
+        # Update progress
+        if task_id:
+            task.update_progress(50, description="Performing template column reordering")
 
-        # Check permissions
-        if not template.can_edit(user):
+        # Use sync function for core logic
+        result = reorder_metadata_table_template_columns_sync(
+            template_id=template_id,
+            user_id=user_id,
+            schema_ids=schema_ids,
+        )
+
+        if not result["success"]:
             return {
                 "success": False,
-                "error": "Permission denied: cannot edit this template",
+                "error": result["error"],
                 "task_id": task_id,
             }
 
         # Update progress
         if task_id:
-            task.update_progress(25, description="Starting template column reordering")
-
-        # Perform reordering
-        if schema_ids:
-            template.reorder_columns_by_schema(schema_ids=schema_ids)
-        else:
-            # Use basic reordering if no schema IDs provided
-            template.normalize_column_positions()
-
-        # Update progress
-        if task_id:
             task.update_progress(95, description="Finalizing template reordering")
 
-        # Save and complete
-        template.save()
-
-        result_data = {
-            "template_id": template_id,
-            "reordered_columns": template.template_columns.count(),
-            "schema_ids_used": schema_ids or [],
-        }
+        # Get user and template for notification
+        user = User.objects.get(id=user_id)
+        template = MetadataTableTemplate.objects.get(id=template_id)
 
         # Send notification
         notification_service = NotificationService()
@@ -205,9 +299,9 @@ def reorder_metadata_table_template_columns_task(
         )
 
         # Mark task as successful
-        mark_task_success(task_id, result_data)
+        mark_task_success(task_id, result["result"])
 
-        return create_success_result(result_data, task_id)
+        return create_success_result(result["result"], task_id)
 
     except Exception as e:
         error_msg = f"Template column reordering failed: {str(e)}"

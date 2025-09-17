@@ -165,6 +165,9 @@ pre-commit = "^3.6.0"
 django-stubs = "^4.2.0"
 types-requests = "^2.31.0"
 
+[tool.poetry.group.electron.dependencies]
+py-pglite = {extras = ["django"], version = "^1.1.1"}
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

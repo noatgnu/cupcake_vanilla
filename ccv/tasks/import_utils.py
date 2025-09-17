@@ -647,9 +647,12 @@ def import_sdrf_data(
                 metadata_type = header_lower.split("[")[0].strip()
                 name = header_lower.strip()
             else:
-                metadata_type = "special"
                 name = header_lower.strip()
-            name = name.replace("_", " ")
+                # Use proper column type detection logic
+                if name == "source name":
+                    metadata_type = "source_name"
+                else:
+                    metadata_type = "special"
             # Count usage of this column name
             if name not in column_name_usage:
                 column_name_usage[name] = 0

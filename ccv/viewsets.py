@@ -336,6 +336,85 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["post"])
+    def reorder_columns_by_schema(self, request, pk=None):
+        """Reorder table columns by schema (sync or async based on environment)."""
+        from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_sync
+
+        table = self.get_object()
+
+        if not table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        schema_ids = request.data.get("schema_ids", [])
+        force_async = request.data.get("async_processing", False)
+
+        # Check if async processing is requested and RQ is enabled
+        if force_async:
+            if not getattr(settings, "ENABLE_RQ_TASKS", False):
+                return Response(
+                    {"error": "Async task queuing is not enabled"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            # Delegate to async endpoint
+            return self.reorder_columns_by_schema_async(request, pk)
+
+        # Auto-detect environment: use sync if RQ is disabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            # Sync execution
+            result = reorder_metadata_table_columns_sync(
+                metadata_table_id=table.id,
+                user_id=request.user.id,
+                schema_ids=schema_ids if schema_ids else None,
+            )
+
+            if result["success"]:
+                return Response(
+                    {
+                        "message": "Column reordering completed successfully",
+                        "metadata_table_id": table.id,
+                        "schema_ids": schema_ids,
+                        "result": result["result"],
+                    }
+                )
+            else:
+                return Response(
+                    {"error": result["error"]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            # Default to async when RQ is available
+            return self.reorder_columns_by_schema_async(request, pk)
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
+    def system_info(self, request):
+        """Get system configuration information for frontend environment detection."""
+        from django.conf import settings
+
+        info = {
+            "async_tasks_enabled": getattr(settings, "ENABLE_RQ_TASKS", False),
+            "is_electron_environment": getattr(settings, "IS_ELECTRON_ENVIRONMENT", False),
+            "sync_operations_only": getattr(settings, "SYNC_OPERATIONS_ONLY", False),
+        }
+
+        # Add Electron-specific information if available
+        if hasattr(settings, "ELECTRON_SETTINGS"):
+            electron_settings = getattr(settings, "ELECTRON_SETTINGS", {})
+            info.update(
+                {
+                    "electron_settings": {
+                        "database_backend": electron_settings.get("DATABASE_BACKEND"),
+                        "pglite_available": electron_settings.get("PGLITE_AVAILABLE", False),
+                        "sync_operations_only": electron_settings.get("SYNC_OPERATIONS_ONLY", False),
+                    }
+                }
+            )
+
+        return Response(info)
+
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def admin_all_tables(self, request):
         """Admin endpoint to view all tables in the system."""
@@ -564,6 +643,77 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 **validation_result,
             }
         )
+
+    @action(detail=True, methods=["post"])
+    def validate_metadata_table(self, request, pk=None):
+        """Validate metadata table (sync or async based on environment)."""
+        from ccv.tasks.validation_tasks import validate_metadata_table_sync
+
+        metadata_table = self.get_object()
+
+        if not metadata_table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        validation_options = request.data.get("validation_options", {})
+        force_async = request.data.get("async_processing", False)
+
+        # Check if async processing is requested and RQ is enabled
+        if force_async:
+            if not getattr(settings, "ENABLE_RQ_TASKS", False):
+                return Response(
+                    {"error": "Async task queuing is not enabled"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            # Delegate to async endpoint
+            from .async_views import AsyncValidationViewSet
+
+            async_view = AsyncValidationViewSet()
+            # Prepare data for async view
+            async_request_data = {
+                "metadata_table_id": metadata_table.id,
+                "validation_options": validation_options,
+            }
+            request._full_data = async_request_data
+            return async_view.metadata_table(request)
+
+        # Auto-detect environment: use sync if RQ is disabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            # Sync execution
+            result = validate_metadata_table_sync(
+                metadata_table_id=metadata_table.id,
+                user_id=request.user.id,
+                validation_options=validation_options,
+            )
+
+            if result["success"]:
+                return Response(
+                    {
+                        "message": "Validation completed successfully",
+                        "metadata_table_id": metadata_table.id,
+                        "validation_options": validation_options,
+                        "result": result["result"],
+                    }
+                )
+            else:
+                return Response(
+                    {"error": result["error"]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            # Default to async when RQ is available
+            from .async_views import AsyncValidationViewSet
+
+            async_view = AsyncValidationViewSet()
+            # Prepare data for async view
+            async_request_data = {
+                "metadata_table_id": metadata_table.id,
+                "validation_options": validation_options,
+            }
+            request._full_data = async_request_data
+            return async_view.metadata_table(request)
 
     @action(detail=True, methods=["post"])
     def update_sample_count(self, request, pk=None):
@@ -1247,6 +1397,59 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 "schema_ids": schema_ids,
             }
         )
+
+    @action(detail=True, methods=["post"])
+    def reorder_columns_by_schema(self, request, pk=None):
+        """Reorder template columns by schema (sync or async based on environment)."""
+        from ccv.tasks.reorder_tasks import reorder_metadata_table_template_columns_sync
+
+        template = self.get_object()
+
+        if not template.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this template"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        schema_ids = request.data.get("schema_ids", [])
+        force_async = request.data.get("async_processing", False)
+
+        # Check if async processing is requested and RQ is enabled
+        if force_async:
+            if not getattr(settings, "ENABLE_RQ_TASKS", False):
+                return Response(
+                    {"error": "Async task queuing is not enabled"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            # Delegate to async endpoint
+            return self.reorder_columns_by_schema_async(request, pk)
+
+        # Auto-detect environment: use sync if RQ is disabled
+        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+            # Sync execution
+            result = reorder_metadata_table_template_columns_sync(
+                template_id=template.id,
+                user_id=request.user.id,
+                schema_ids=schema_ids if schema_ids else None,
+            )
+
+            if result["success"]:
+                return Response(
+                    {
+                        "message": "Template column reordering completed successfully",
+                        "template_id": template.id,
+                        "schema_ids": schema_ids,
+                        "result": result["result"],
+                    }
+                )
+            else:
+                return Response(
+                    {"error": result["error"]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            # Default to async when RQ is available
+            return self.reorder_columns_by_schema_async(request, pk)
 
     @action(detail=True, methods=["post"])
     def apply_to_metadata_table(self, request, pk=None):
@@ -2500,9 +2703,12 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                     metadata_type = header_lower.split("[")[0].strip()
                     name = header_lower.strip()
                 else:
-                    metadata_type = "special"
+                    # Handle "source name" specifically, everything else remains "special"
                     name = header_lower.strip()
-                name = name.replace("_", " ")
+                    if name == "source name":
+                        metadata_type = "source_name"
+                    else:
+                        metadata_type = "special"
                 # Count usage of this column name
                 if name not in column_name_usage:
                     column_name_usage[name] = 0
@@ -3087,9 +3293,13 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             else:
                 metadata_type = "special"
         else:
-            # Plain header name - this is special (not one of the standard SDRF metadata types)
+            # Plain header name - handle "source name" specifically, everything else is "special"
             name = header
-            metadata_type = "special"
+            header_lower = header.lower().strip()
+            if header_lower == "source name":
+                metadata_type = "source_name"
+            else:
+                metadata_type = "special"
 
         # Create metadata column with proper naming (match original CUPCAKE)
         metadata_column = MetadataColumn.objects.create(
