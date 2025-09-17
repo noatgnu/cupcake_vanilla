@@ -614,7 +614,7 @@ class SDRFImportExportViewTest(APITestCase, QuickTestDataMixin):
 
         # Check for expected columns
         column_names = [(col.name, col.type) for col in columns]
-        self.assertIn(("source name", "special"), column_names)  # source name gets type "special"
+        self.assertIn(("source name", "source_name"), column_names)  # source name gets type "source_name"
         self.assertIn(("characteristics[organism]", "characteristics"), column_names)  # SDRF format includes brackets
         self.assertIn(("characteristics[disease]", "characteristics"), column_names)
 

@@ -116,19 +116,34 @@ CACHES = {
     }
 }
 
-# DISABLE ALL ASYNC TASK FUNCTIONALITY FOR ELECTRON
-ENABLE_RQ_TASKS = False
-RQ_QUEUES = {}
-
-# Remove async-related apps and async views
-INSTALLED_APPS = [  # noqa: F405
-    app
-    for app in INSTALLED_APPS  # noqa: F405
-    if not any(async_app in app.lower() for async_app in ["django_rq", "celery", "django_q", "kombu", "rq"])
-]
-
-# Also exclude async views from URL routing by setting a flag
-EXCLUDE_ASYNC_URLS = True
+# RQ (Redis Queue) configuration for async tasks in Electron
+# Use fakeredis for embedded environment to avoid Redis dependency
+RQ_QUEUES = {
+    "default": {
+        "HOST": "localhost",
+        "PORT": 6379,
+        "DB": 0,
+        "PASSWORD": "",
+        "DEFAULT_TIMEOUT": 360,
+        "CONNECTION_CLASS": "fakeredis.FakeRedis",
+    },
+    "high": {
+        "HOST": "localhost",
+        "PORT": 6379,
+        "DB": 0,
+        "PASSWORD": "",
+        "DEFAULT_TIMEOUT": 500,
+        "CONNECTION_CLASS": "fakeredis.FakeRedis",
+    },
+    "low": {
+        "HOST": "localhost",
+        "PORT": 6379,
+        "DB": 0,
+        "PASSWORD": "",
+        "DEFAULT_TIMEOUT": 500,
+        "CONNECTION_CLASS": "fakeredis.FakeRedis",
+    },
+}
 
 # Static files configuration for Electron
 STATIC_URL = "/static/"
@@ -259,7 +274,7 @@ ELECTRON_SETTINGS = {
     "PGLITE_DATA_DIR": PGLITE_DATA_DIR,
     "ENABLE_AUTO_MIGRATION": True,
     "ENABLE_COLLECTSTATIC": True,
-    "SYNC_OPERATIONS_ONLY": True,
+    "SYNC_OPERATIONS_ONLY": False,
     "IS_ELECTRON_ENVIRONMENT": True,
 }
 

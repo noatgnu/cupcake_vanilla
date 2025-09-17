@@ -1,7 +1,6 @@
 """
 Async task management views for handling export/import operations via RQ.
 """
-from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
 
@@ -227,13 +226,6 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Check if RQ is enabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
-            return Response(
-                {"error": "Async task queuing is not enabled"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
         # Create task record
         task = AsyncTaskStatus.objects.create(
             task_type="EXPORT_EXCEL",
@@ -284,13 +276,6 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             return Response(
                 {"error": "Permission denied: cannot view this metadata table"},
                 status=status.HTTP_403_FORBIDDEN,
-            )
-
-        # Check if RQ is enabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
-            return Response(
-                {"error": "Async task queuing is not enabled"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         # Create task record
@@ -345,13 +330,6 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             return Response(
                 {"error": f"Metadata table {table_id} not found"},
                 status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Check if RQ is enabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
-            return Response(
-                {"error": "Async task queuing is not enabled"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         # Create task record - use first table as primary reference
@@ -409,13 +387,6 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             return Response(
                 {"error": f"Metadata table {table_id} not found"},
                 status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Check if RQ is enabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
-            return Response(
-                {"error": "Async task queuing is not enabled"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         # Create task record - use first table as primary reference
@@ -484,13 +455,6 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Check if RQ is enabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
-            return Response(
-                {"error": "Async task queuing is not enabled"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
         # Read file content
         file_content = data["file"].read().decode("utf-8")
 
@@ -545,13 +509,6 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
             return Response(
                 {"error": "Permission denied: cannot edit this metadata table"},
                 status=status.HTTP_403_FORBIDDEN,
-            )
-
-        # Check if RQ is enabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
-            return Response(
-                {"error": "Async task queuing is not enabled"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         # Read file data

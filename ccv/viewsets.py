@@ -6,7 +6,6 @@ import io
 import json
 import re
 
-from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models
 from django.db.models import Q
@@ -352,18 +351,13 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         schema_ids = request.data.get("schema_ids", [])
         force_async = request.data.get("async_processing", False)
 
-        # Check if async processing is requested and RQ is enabled
+        # Check if async processing is requested
         if force_async:
-            if not getattr(settings, "ENABLE_RQ_TASKS", False):
-                return Response(
-                    {"error": "Async task queuing is not enabled"},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
             # Delegate to async endpoint
             return self.reorder_columns_by_schema_async(request, pk)
 
-        # Auto-detect environment: use sync if RQ is disabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+        # Default to sync execution
+        if True:
             # Sync execution
             result = reorder_metadata_table_columns_sync(
                 metadata_table_id=table.id,
@@ -395,7 +389,7 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         from django.conf import settings
 
         info = {
-            "async_tasks_enabled": getattr(settings, "ENABLE_RQ_TASKS", False),
+            "async_tasks_enabled": True,
             "is_electron_environment": getattr(settings, "IS_ELECTRON_ENVIRONMENT", False),
             "sync_operations_only": getattr(settings, "SYNC_OPERATIONS_ONLY", False),
         }
@@ -660,13 +654,8 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         validation_options = request.data.get("validation_options", {})
         force_async = request.data.get("async_processing", False)
 
-        # Check if async processing is requested and RQ is enabled
+        # Check if async processing is requested
         if force_async:
-            if not getattr(settings, "ENABLE_RQ_TASKS", False):
-                return Response(
-                    {"error": "Async task queuing is not enabled"},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
             # Delegate to async endpoint
             from .async_views import AsyncValidationViewSet
 
@@ -679,8 +668,8 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             request._full_data = async_request_data
             return async_view.metadata_table(request)
 
-        # Auto-detect environment: use sync if RQ is disabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+        # Default to sync execution
+        if True:
             # Sync execution
             result = validate_metadata_table_sync(
                 metadata_table_id=metadata_table.id,
@@ -1414,18 +1403,13 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         schema_ids = request.data.get("schema_ids", [])
         force_async = request.data.get("async_processing", False)
 
-        # Check if async processing is requested and RQ is enabled
+        # Check if async processing is requested
         if force_async:
-            if not getattr(settings, "ENABLE_RQ_TASKS", False):
-                return Response(
-                    {"error": "Async task queuing is not enabled"},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
             # Delegate to async endpoint
             return self.reorder_columns_by_schema_async(request, pk)
 
-        # Auto-detect environment: use sync if RQ is disabled
-        if not getattr(settings, "ENABLE_RQ_TASKS", False):
+        # Default to sync execution
+        if True:
             # Sync execution
             result = reorder_metadata_table_template_columns_sync(
                 template_id=template.id,
@@ -1978,14 +1962,8 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Check if async processing is requested and RQ is enabled
+        # Check if async processing is requested
         if data.get("async_processing", False):
-            if not getattr(settings, "ENABLE_RQ_TASKS", False):
-                return Response(
-                    {"error": "Async task queuing is not enabled"},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
-
             # Queue async task
             from .async_views import AsyncExportViewSet
 
@@ -2590,14 +2568,8 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
         data = serializer.validated_data
 
-        # Check if async processing is requested and RQ is enabled
+        # Check if async processing is requested
         if data.get("async_processing", False):
-            if not getattr(settings, "ENABLE_RQ_TASKS", False):
-                return Response(
-                    {"error": "Async task queuing is not enabled"},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
-
             # Queue async task
             from .async_views import AsyncImportViewSet
 
@@ -2969,14 +2941,8 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
         data = serializer.validated_data
 
-        # Check if async processing is requested and RQ is enabled
+        # Check if async processing is requested
         if data.get("async_processing", False):
-            if not getattr(settings, "ENABLE_RQ_TASKS", False):
-                return Response(
-                    {"error": "Async task queuing is not enabled"},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
-
             # Queue async task
             from .async_views import AsyncImportViewSet
 
@@ -3400,14 +3366,8 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check if async processing is requested and RQ is enabled
+        # Check if async processing is requested
         if data.get("async_processing", False):
-            if not getattr(settings, "ENABLE_RQ_TASKS", False):
-                return Response(
-                    {"error": "Async task queuing is not enabled"},
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
-
             # Queue async task
             from .async_views import AsyncExportViewSet
 

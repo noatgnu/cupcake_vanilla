@@ -2,21 +2,17 @@
 URL configuration for CUPCAKE Vanilla metadata API.
 """
 
-from django.conf import settings
 from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
-# Conditionally import async views only if RQ is enabled
-if getattr(settings, "ENABLE_RQ_TASKS", False):
-    from .async_views import (
-        AsyncExportViewSet,
-        AsyncImportViewSet,
-        AsyncTaskViewSet,
-        AsyncValidationViewSet,
-        cleanup_expired_files,
-    )
-
+from .async_views import (
+    AsyncExportViewSet,
+    AsyncImportViewSet,
+    AsyncTaskViewSet,
+    AsyncValidationViewSet,
+    cleanup_expired_files,
+)
 from .chunked_upload import MetadataChunkedUploadView
 from .viewsets import (
     CellOntologyViewSet,
@@ -72,12 +68,11 @@ router.register(r"ontology/search", OntologySearchViewSet, basename="ontologysea
 router.register(r"schemas", SchemaViewSet, basename="schema")
 router.register(r"sdrf-defaults", SDRFDefaultsViewSet, basename="sdrfdefaults")
 
-# Async task endpoints (only if RQ is enabled)
-if getattr(settings, "ENABLE_RQ_TASKS", False):
-    router.register(r"async-tasks", AsyncTaskViewSet, basename="asynctask")
-    router.register(r"async-export", AsyncExportViewSet, basename="asyncexport")
-    router.register(r"async-import", AsyncImportViewSet, basename="asyncimport")
-    router.register(r"async-validation", AsyncValidationViewSet, basename="asyncvalidation")
+# Async task endpoints
+router.register(r"async-tasks", AsyncTaskViewSet, basename="asynctask")
+router.register(r"async-export", AsyncExportViewSet, basename="asyncexport")
+router.register(r"async-import", AsyncImportViewSet, basename="asyncimport")
+router.register(r"async-validation", AsyncValidationViewSet, basename="asyncvalidation")
 
 urlpatterns = [
     # DRF ViewSet endpoints (api/v1/ prefix comes from main urls.py)
@@ -95,12 +90,11 @@ urlpatterns = [
     ),
 ]
 
-# Add admin endpoint for cleaning up expired files (only if RQ is enabled)
-if getattr(settings, "ENABLE_RQ_TASKS", False):
-    urlpatterns.append(
-        path(
-            "cleanup-expired-files/",
-            cleanup_expired_files,
-            name="cleanup-expired-files",
-        )
+# Add admin endpoint for cleaning up expired files
+urlpatterns.append(
+    path(
+        "cleanup-expired-files/",
+        cleanup_expired_files,
+        name="cleanup-expired-files",
     )
+)

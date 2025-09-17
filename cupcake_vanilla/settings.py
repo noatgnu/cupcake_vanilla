@@ -185,8 +185,6 @@ RQ_QUEUES = {
     },
 }
 
-# Enable/disable RQ task queuing (can be configured per environment)
-ENABLE_RQ_TASKS = os.environ.get("ENABLE_RQ_TASKS", "True").lower() in ("true", "1", "yes", "on")
 
 # Task result file settings
 TASK_RESULT_EXPIRE_DAYS = int(os.environ.get("TASK_RESULT_EXPIRE_DAYS", "7"))  # Files expire after 7 days

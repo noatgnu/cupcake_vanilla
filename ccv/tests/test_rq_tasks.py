@@ -44,7 +44,6 @@ class RQTaskTestCase(TestCase):
         )
 
 
-@override_settings(ENABLE_RQ_TASKS=True)
 class AsyncExportTestCase(RQTaskTestCase):
     """Test cases for async export functionality."""
 
@@ -142,9 +141,8 @@ class AsyncExportTestCase(RQTaskTestCase):
         response = other_client.post(url, json.dumps(data), content_type="application/json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    @override_settings(ENABLE_RQ_TASKS=False)
-    def test_async_export_disabled_returns_503(self):
-        """Test that async export returns 503 when RQ is disabled."""
+    def test_async_export_always_enabled(self):
+        """Test that async export is always available."""
         url = "/api/v1/async-export/excel_template/"
         data = {
             "metadata_table_id": self.table.id,
@@ -155,11 +153,10 @@ class AsyncExportTestCase(RQTaskTestCase):
         import json
 
         response = self.client.post(url, json.dumps(data), content_type="application/json")
-        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
-        self.assertIn("Async task queuing is not enabled", response.data["error"])
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertIn("task_id", response.data)
 
 
-@override_settings(ENABLE_RQ_TASKS=True)
 class AsyncImportTestCase(RQTaskTestCase):
     """Test cases for async import functionality."""
 
@@ -372,7 +369,6 @@ class AsyncTaskStatusTestCase(RQTaskTestCase):
 class SyncToAsyncIntegrationTestCase(RQTaskTestCase):
     """Test integration between sync and async endpoints."""
 
-    @override_settings(ENABLE_RQ_TASKS=True)
     def test_sync_excel_export_with_async_param(self):
         """Test that sync export endpoint can route to async when requested."""
         url = "/api/v1/metadata-management/export_excel_template/"
@@ -392,9 +388,8 @@ class SyncToAsyncIntegrationTestCase(RQTaskTestCase):
         self.assertIn("task_id", response.data)
         self.assertIn("message", response.data)
 
-    @override_settings(ENABLE_RQ_TASKS=False)
-    def test_sync_export_with_async_param_disabled(self):
-        """Test that sync export returns error when async is requested but disabled."""
+    def test_sync_export_with_async_param_enabled(self):
+        """Test that sync export redirects to async when async is requested."""
         url = "/api/v1/metadata-management/export_excel_template/"
         data = {
             "metadata_table_id": self.table.id,
@@ -406,8 +401,8 @@ class SyncToAsyncIntegrationTestCase(RQTaskTestCase):
         import json
 
         response = self.client.post(url, json.dumps(data), content_type="application/json")
-        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
-        self.assertIn("Async task queuing is not enabled", response.data["error"])
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertIn("task_id", response.data)
 
 
 class TaskModelTestCase(TestCase):
@@ -486,7 +481,6 @@ class TaskModelTestCase(TestCase):
         self.assertEqual(task.file_result, result)
 
 
-@override_settings(ENABLE_RQ_TASKS=True)
 class AsyncValidationViewTestCase(RQTaskTestCase):
     """Test async validation view functionality."""
 
@@ -561,7 +555,6 @@ class AsyncValidationViewTestCase(RQTaskTestCase):
         response = self.client.post(url, data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @override_settings(ENABLE_RQ_TASKS=False)
     def test_async_validation_rq_disabled(self):
         """Test validation when RQ is disabled (should still work via sync fallback)."""
         url = "/api/v1/async-validation/metadata_table/"

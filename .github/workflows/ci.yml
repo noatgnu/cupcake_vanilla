@@ -153,7 +153,6 @@ jobs:
         from django.conf import settings
         print('✅ Electron settings loaded successfully')
         print(f'Database backend: {getattr(settings, \"ELECTRON_SETTINGS\", {}).get(\"DATABASE_BACKEND\", \"unknown\")}')
-        print(f'Async tasks enabled: {getattr(settings, \"ENABLE_RQ_TASKS\", \"unknown\")}')
         print(f'Is Electron environment: {getattr(settings, \"IS_ELECTRON_ENVIRONMENT\", \"unknown\")}')
         "
 
@@ -195,7 +194,6 @@ jobs:
         from ccv.tasks.validation_tasks import validate_metadata_table_sync
         from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_sync
         print('✅ Testing sync task functionality')
-        print(f'ENABLE_RQ_TASKS: {getattr(settings, \"ENABLE_RQ_TASKS\", \"unknown\")}')
         print('✅ Sync task functions imported successfully')
         print('✅ Electron environment configured for sync operations')
         "
@@ -215,7 +213,7 @@ jobs:
 
         # Simulate system info endpoint response
         info = {
-            'async_tasks_enabled': getattr(settings, 'ENABLE_RQ_TASKS', False),
+            'async_tasks_enabled': True,
             'is_electron_environment': getattr(settings, 'IS_ELECTRON_ENVIRONMENT', False),
             'sync_operations_only': getattr(settings, 'SYNC_OPERATIONS_ONLY', False),
         }
@@ -300,7 +298,6 @@ jobs:
         django.setup()
         from django.conf import settings
         print('✅ Testing normal environment')
-        print(f'ENABLE_RQ_TASKS: {getattr(settings, \"ENABLE_RQ_TASKS\", False)}')
         print(f'Database engine: {settings.DATABASES[\"default\"][\"ENGINE\"]}')
         print('✅ Normal environment configured for async operations')
         "
@@ -318,7 +315,6 @@ jobs:
         django.setup()
         from django.conf import settings
         print('✅ Testing Electron environment')
-        print(f'ENABLE_RQ_TASKS: {getattr(settings, \"ENABLE_RQ_TASKS\", True)}')
         print(f'IS_ELECTRON_ENVIRONMENT: {getattr(settings, \"IS_ELECTRON_ENVIRONMENT\", False)}')
         db_backend = getattr(settings, \"ELECTRON_SETTINGS\", {}).get(\"DATABASE_BACKEND\", \"unknown\")
         print(f'Database backend: {db_backend}')

@@ -167,6 +167,7 @@ types-requests = "^2.31.0"
 
 [tool.poetry.group.electron.dependencies]
 py-pglite = {extras = ["django"], version = "^0.5.3"}
+fakeredis = "^2.20.0"
 
 [build-system]
 requires = ["poetry-core"]
