@@ -161,22 +161,49 @@ jobs:
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
         ELECTRON_DEBUG: true
         SECRET_KEY: test-electron-secret-key
+        ELECTRON_APP_DATA: /tmp/electron-test  # Set this to indicate real Electron environment
       run: |
+        # Create electron app data directory
+        mkdir -p /tmp/electron-test/cupcake-vanilla/database
+
         poetry run python -c "
         import os
+        import tempfile
+        from py_pglite import PGliteConfig, PGliteManager
+
+        # Start py-pglite service
+        data_dir = '/tmp/electron-test/cupcake-vanilla/database'
+        config = PGliteConfig(
+            work_dir=data_dir,
+            use_tcp=True,
+            tcp_host='127.0.0.1',
+            tcp_port=55432,
+            extensions=[]
+        )
+
+        manager = PGliteManager(config)
+        manager.__enter__()
+        print('✅ py-pglite started successfully')
+
+        # Test Django settings
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
         import django
         django.setup()
-        from cupcake_vanilla.settings_electron import PGLITE_AVAILABLE, get_database_info
-        print('✅ Testing py-pglite integration')
-        if PGLITE_AVAILABLE:
-            print('✅ py-pglite is available')
-            db_info = get_database_info()
-            print(f'Database info: {db_info}')
-        else:
-            print('⚠️  py-pglite not available, using SQLite fallback')
-            db_info = get_database_info()
-            print(f'Fallback database info: {db_info}')
+        from django.conf import settings
+        from cupcake_vanilla.settings_electron import get_database_info, check_database_status
+
+        print('✅ Testing py-pglite integration with Django')
+        print(f'PGLITE_AVAILABLE: {getattr(settings, \"PGLITE_AVAILABLE\", False)}')
+        db_info = get_database_info()
+        print(f'Database info: {db_info}')
+
+        # Test database connection
+        db_status = check_database_status()
+        print(f'Database connection status: {db_status}')
+
+        # Cleanup
+        manager.__exit__(None, None, None)
+        print('✅ py-pglite stopped successfully')
         "
 
     - name: Test sync task functionality in Electron environment

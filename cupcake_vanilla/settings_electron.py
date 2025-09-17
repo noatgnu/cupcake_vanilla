@@ -54,38 +54,62 @@ PGLITE_AVAILABLE = False
 PGLITE_MANAGER = None
 
 try:
+    import socket
+
     from py_pglite import PGliteConfig, PGliteManager
 
-    # Configure py-pglite for persistent storage
-    PGLITE_CONFIG = PGliteConfig(
-        work_dir=PGLITE_DATA_DIR,  # Persistent storage in Electron app data
-        use_tcp=True,
-        tcp_host="127.0.0.1",
-        tcp_port=55432,  # Use py-pglite default port to avoid conflicts
-        extensions=[],  # Add ["pgvector"] or other extensions if needed
-    )
+    # Test if we can actually use py-pglite by trying to connect to the port
+    # In CI/testing environments, py-pglite might be installed but not usable
+    def test_pglite_connectivity():
+        """Test if py-pglite is running on the expected port."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(("127.0.0.1", 55432))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
 
-    # Initialize py-pglite manager (will be started in AppConfig)
-    PGLITE_MANAGER = PGliteManager(PGLITE_CONFIG)
+    # Only use py-pglite if it's actually running or we're in a real Electron environment
+    # Check for actual Electron environment vs CI testing
+    in_real_electron = os.environ.get("ELECTRON_APP_DATA") is not None
+    pglite_running = test_pglite_connectivity()
 
-    # Database configuration using py-pglite
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": "cupcake_vanilla",
-            "USER": "postgres",
-            "PASSWORD": "postgres",
-            "HOST": "127.0.0.1",
-            "PORT": "55432",
-            "OPTIONS": {
-                "sslmode": "disable",
-                "connect_timeout": 10,
-            },
+    if in_real_electron or pglite_running:
+        # Configure py-pglite for persistent storage
+        PGLITE_CONFIG = PGliteConfig(
+            work_dir=PGLITE_DATA_DIR,  # Persistent storage in Electron app data
+            use_tcp=True,
+            tcp_host="127.0.0.1",
+            tcp_port=55432,  # Use py-pglite default port to avoid conflicts
+            extensions=[],  # Add ["pgvector"] or other extensions if needed
+        )
+
+        # Initialize py-pglite manager (will be started in AppConfig)
+        PGLITE_MANAGER = PGliteManager(PGLITE_CONFIG)
+
+        # Database configuration using py-pglite
+        DATABASES = {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": "cupcake_vanilla",
+                "USER": "postgres",
+                "PASSWORD": "postgres",
+                "HOST": "127.0.0.1",
+                "PORT": "55432",
+                "OPTIONS": {
+                    "sslmode": "disable",
+                    "connect_timeout": 10,
+                },
+            }
         }
-    }
 
-    PGLITE_AVAILABLE = True
-    print(f"py-pglite configured with data directory: {PGLITE_DATA_DIR}")
+        PGLITE_AVAILABLE = True
+        print(f"py-pglite configured with data directory: {PGLITE_DATA_DIR}")
+    else:
+        # Fall back to SQLite in testing/CI environments
+        raise ImportError("py-pglite installed but not running, falling back to SQLite")
 
 except ImportError as e:
     # Fallback to SQLite if py-pglite is not available
