@@ -120,12 +120,15 @@ CACHES = {
 ENABLE_RQ_TASKS = False
 RQ_QUEUES = {}
 
-# Remove async-related apps
+# Remove async-related apps and async views
 INSTALLED_APPS = [  # noqa: F405
     app
     for app in INSTALLED_APPS  # noqa: F405
     if not any(async_app in app.lower() for async_app in ["django_rq", "celery", "django_q", "kombu", "rq"])
 ]
+
+# Also exclude async views from URL routing by setting a flag
+EXCLUDE_ASYNC_URLS = True
 
 # Static files configuration for Electron
 STATIC_URL = "/static/"
