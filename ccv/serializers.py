@@ -149,6 +149,7 @@ class MetadataTableSerializer(serializers.ModelSerializer):
                 # Update other fields first
                 for attr, value in validated_data.items():
                     setattr(instance, attr, value)
+                instance.save()
 
                 # Apply sample count change with cleanup
                 instance.apply_sample_count_change(new_sample_count)
