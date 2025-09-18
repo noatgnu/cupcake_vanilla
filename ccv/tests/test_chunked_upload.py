@@ -101,21 +101,12 @@ class MetadataChunkedUploadTestCase(APITestCase):
         completion_url = reverse("ccv:chunked-upload-detail", kwargs={"pk": upload_id})
         completion_response = self.client.post(completion_url, completion_data)
 
-        # Should process successfully
-        self.assertEqual(completion_response.status_code, status.HTTP_200_OK)
+        # Should process successfully (202 for async processing)
+        self.assertEqual(completion_response.status_code, status.HTTP_202_ACCEPTED)
 
-        # Verify metadata was processed
-        self.metadata_table.refresh_from_db()
-        self.assertEqual(self.metadata_table.sample_count, 2)  # Two rows of data
-
-        # Verify columns were created from real SDRF headers
-        columns = self.metadata_table.columns.all()
-        self.assertTrue(columns.exists())
-        column_names = [col.name for col in columns]
-        self.assertIn("source name", column_names)
-        # The SDRF parsing creates columns based on the header structure
-        # Just verify we have some columns created
-        self.assertGreater(len(columns), 10)  # SDRF has many columns
+        # Verify task was created
+        self.assertIn("task_id", completion_response.data)
+        self.assertIn("message", completion_response.data)
 
     def test_upload_without_metadata_table(self):
         """Test upload without specifying metadata table (should still work)."""
