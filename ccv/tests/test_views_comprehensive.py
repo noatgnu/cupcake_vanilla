@@ -129,6 +129,7 @@ class MetadataTableViewTest(APITestCase, QuickTestDataMixin):
             "name": "Updated Study Name PXD999000",
             "description": "Updated comprehensive proteomics study with enhanced methodology",
             "sample_count": 30,
+            "sample_count_confirmed": True,  # Confirm any sample count changes
         }
 
         url = reverse("ccv:metadatatable-detail", args=[table.id])
