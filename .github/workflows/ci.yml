@@ -241,11 +241,10 @@ jobs:
                 print(f'stderr: {e.stderr}')
                 raise
 
-            # Test core applications
+            # Test all applications
             test_modules = [
                 ('CCC (Core Authentication)', 'ccc.tests'),
-                ('CCV Base Tests', 'ccv.tests.test_base'),
-                ('CCV RQ Tasks', 'ccv.tests.test_rq_tasks'),
+                ('CCV (Vanilla Core)', 'ccv.tests'),
                 ('CCM (Macaron)', 'ccm.tests'),
                 ('CCMC (Mint Chocolate)', 'ccmc.tests'),
                 ('CCRV (Red Velvet)', 'ccrv.tests'),
@@ -255,10 +254,14 @@ jobs:
             for name, module in test_modules:
                 print(f'\\n📋 Testing {name}...')
                 try:
+                    # Set environment for subprocess
+                    env = os.environ.copy()
+                    env['PYTHONPATH'] = '.'
+
                     result = subprocess.run([
                         'poetry', 'run', 'python', 'manage.py', 'test',
                         module, '--keepdb', '--verbosity=1'
-                    ], check=True, capture_output=True, text=True)
+                    ], check=True, capture_output=True, text=True, env=env)
                     print(f'✅ {name} tests passed')
                 except subprocess.CalledProcessError as e:
                     print(f'❌ {name} tests failed:')
