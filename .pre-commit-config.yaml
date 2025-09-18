@@ -1,3 +1,22 @@
+# Global exclusions for all hooks
+exclude: |
+  (?x)^(
+    \.venv/.*|
+    venv/.*|
+    env/.*|
+    \.env/.*|
+    node_modules/.*|
+    \.git/.*|
+    __pycache__/.*|
+    \.pytest_cache/.*|
+    \.coverage.*|
+    build/.*|
+    dist/.*|
+    \.idea/.*|
+    \.vscode/.*|
+    migrations/.*
+  )$
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
