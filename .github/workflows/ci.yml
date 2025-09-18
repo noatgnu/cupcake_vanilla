@@ -141,9 +141,6 @@ jobs:
         import django
         django.setup()
         from django.conf import settings
-        print('✅ Electron settings loaded successfully')
-        print(f'Database backend: {getattr(settings, \"ELECTRON_SETTINGS\", {}).get(\"DATABASE_BACKEND\", \"unknown\")}')
-        print(f'Is Electron environment: {getattr(settings, \"IS_ELECTRON_ENVIRONMENT\", \"unknown\")}')
         "
 
     - name: Test py-pglite functionality
@@ -151,9 +148,8 @@ jobs:
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
         ELECTRON_DEBUG: true
         SECRET_KEY: test-electron-secret-key
-        ELECTRON_APP_DATA: /tmp/electron-test  # Set this to indicate real Electron environment
+        ELECTRON_APP_DATA: /tmp/electron-test
       run: |
-        # Create electron app data directory
         mkdir -p /tmp/electron-test/cupcake-vanilla/database
 
         poetry run python -c "
@@ -161,7 +157,6 @@ jobs:
         import tempfile
         from py_pglite import PGliteConfig, PGliteManager
 
-        # Start py-pglite service
         data_dir = '/tmp/electron-test/cupcake-vanilla/database'
         config = PGliteConfig(
             work_dir=data_dir,
@@ -173,27 +168,16 @@ jobs:
 
         manager = PGliteManager(config)
         manager.__enter__()
-        print('✅ py-pglite started successfully')
 
-        # Test Django settings
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
         import django
         django.setup()
         from django.conf import settings
         from cupcake_vanilla.settings_electron import get_database_info, check_database_status
 
-        print('✅ Testing py-pglite integration with Django')
-        print(f'PGLITE_AVAILABLE: {getattr(settings, \"PGLITE_AVAILABLE\", False)}')
         db_info = get_database_info()
-        print(f'Database info: {db_info}')
-
-        # Test database connection
         db_status = check_database_status()
-        print(f'Database connection status: {db_status}')
-
-        # Cleanup
         manager.__exit__(None, None, None)
-        print('✅ py-pglite stopped successfully')
         "
 
     - name: Run tests for all applications under Electron conditions
@@ -207,11 +191,9 @@ jobs:
         ENABLE_CUPCAKE_RED_VELVET: true
         ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
-        # Run each test application with py-pglite context
         poetry run python -c "
         import os
         from py_pglite import PGliteConfig, PGliteManager
-        import subprocess
         import sys
 
         data_dir = '/tmp/electron-test/cupcake-vanilla/database'
@@ -224,55 +206,21 @@ jobs:
         )
 
         manager = PGliteManager(config)
+        manager.__enter__()
+        " &
 
-        try:
-            manager.__enter__()
-            print('✅ py-pglite started for testing')
+        sleep 5
 
-            # Run migrations
-            print('Running migrations...')
-            try:
-                result = subprocess.run(['poetry', 'run', 'python', 'manage.py', 'migrate'],
-                                      check=True, capture_output=True, text=True)
-                print('✅ Migrations completed')
-            except subprocess.CalledProcessError as e:
-                print(f'❌ Migration failed:')
-                print(f'stdout: {e.stdout}')
-                print(f'stderr: {e.stderr}')
-                raise
+        poetry run python manage.py migrate
 
-            # Test all applications
-            test_modules = [
-                ('CCC (Core Authentication)', 'ccc.tests'),
-                ('CCV (Vanilla Core)', 'ccv.tests'),
-                ('CCM (Macaron)', 'ccm.tests'),
-                ('CCMC (Mint Chocolate)', 'ccmc.tests'),
-                ('CCRV (Red Velvet)', 'ccrv.tests'),
-                ('CCSC (Salted Caramel)', 'ccsc.tests'),
-            ]
+        poetry run python manage.py test ccc.tests --keepdb --verbosity=1 || echo "CCC tests failed"
+        poetry run python manage.py test ccv.tests --keepdb --verbosity=1 || echo "CCV tests failed"
+        poetry run python manage.py test ccm.tests --keepdb --verbosity=1 || echo "CCM tests failed"
+        poetry run python manage.py test ccmc.tests --keepdb --verbosity=1 || echo "CCMC tests failed"
+        poetry run python manage.py test ccrv.tests --keepdb --verbosity=1 || echo "CCRV tests failed"
+        poetry run python manage.py test ccsc.tests --keepdb --verbosity=1 || echo "CCSC tests failed"
 
-            for name, module in test_modules:
-                print(f'\\n📋 Testing {name}...')
-                try:
-                    # Set environment for subprocess
-                    env = os.environ.copy()
-                    env['PYTHONPATH'] = '.'
-
-                    result = subprocess.run([
-                        'poetry', 'run', 'python', 'manage.py', 'test',
-                        module, '--keepdb', '--verbosity=1'
-                    ], check=True, capture_output=True, text=True, env=env)
-                    print(f'✅ {name} tests passed')
-                except subprocess.CalledProcessError as e:
-                    print(f'❌ {name} tests failed:')
-                    print(f'stdout: {e.stdout}')
-                    print(f'stderr: {e.stderr}')
-                    # Continue with other tests
-
-        finally:
-            manager.__exit__(None, None, None)
-            print('✅ py-pglite stopped successfully')
-        "
+        pkill -f "py-pglite" || true
 
     - name: Test sync task functionality in Electron environment
       env:
@@ -288,9 +236,6 @@ jobs:
         from django.conf import settings
         from ccv.tasks.validation_tasks import validate_metadata_table_sync
         from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_sync
-        print('✅ Testing sync task functionality')
-        print('✅ Sync task functions imported successfully')
-        print('✅ Electron environment configured for sync operations')
         "
 
     - name: Test system info endpoint simulation
@@ -306,7 +251,6 @@ jobs:
         django.setup()
         from django.conf import settings
 
-        # Simulate system info endpoint response
         info = {
             'async_tasks_enabled': True,
             'is_electron_environment': getattr(settings, 'IS_ELECTRON_ENVIRONMENT', False),
@@ -322,10 +266,6 @@ jobs:
                     'sync_operations_only': electron_settings.get('SYNC_OPERATIONS_ONLY', False),
                 }
             })
-
-        print('✅ System info for Electron environment:')
-        for key, value in info.items():
-            print(f'  {key}: {value}')
         "
 
   test-environment-switching:
@@ -392,9 +332,6 @@ jobs:
         import django
         django.setup()
         from django.conf import settings
-        print('✅ Testing normal environment')
-        print(f'Database engine: {settings.DATABASES[\"default\"][\"ENGINE\"]}')
-        print('✅ Normal environment configured for async operations')
         "
 
     - name: Test Electron environment with sync-only operations
@@ -409,11 +346,6 @@ jobs:
         import django
         django.setup()
         from django.conf import settings
-        print('✅ Testing Electron environment')
-        print(f'IS_ELECTRON_ENVIRONMENT: {getattr(settings, \"IS_ELECTRON_ENVIRONMENT\", False)}')
-        db_backend = getattr(settings, \"ELECTRON_SETTINGS\", {}).get(\"DATABASE_BACKEND\", \"unknown\")
-        print(f'Database backend: {db_backend}')
-        print('✅ Electron environment configured for sync operations')
         "
 
     - name: Test sync/async parity functions
@@ -429,13 +361,7 @@ jobs:
         import django
         django.setup()
 
-        # Test that both sync and async functions are available
         from ccv.tasks.validation_tasks import validate_metadata_table_sync, validate_metadata_table_task
         from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_sync, reorder_metadata_table_columns_task
         from ccv.tasks.reorder_tasks import reorder_metadata_table_template_columns_sync, reorder_metadata_table_template_columns_task
-
-        print('✅ Testing sync/async parity')
-        print('✅ All sync functions imported successfully')
-        print('✅ All async functions imported successfully')
-        print('✅ Sync/async parity verified')
         "
