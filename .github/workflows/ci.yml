@@ -80,18 +80,14 @@ jobs:
         SECRET_KEY: test-secret-key
         DEBUG: True
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings
+        ENABLE_CUPCAKE_MACARON: true
+        ENABLE_CUPCAKE_MINT_CHOCOLATE: true
+        ENABLE_CUPCAKE_RED_VELVET: true
+        ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
         poetry run python manage.py migrate
-        poetry run pytest --cov=ccv --cov-report=xml --cov-report=term-missing
+        poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      if: matrix.python-version == '3.11'
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
 
   test-electron:
     runs-on: ubuntu-latest
