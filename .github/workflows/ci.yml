@@ -186,8 +186,9 @@ jobs:
         import django
         django.setup()
         from django.conf import settings
-        from cupcake_vanilla.settings_electron import get_database_info, check_database_status
+        from cupcake_vanilla.settings_electron import get_database_info, check_database_status, configure_pglite_django
 
+        print('Configuring py-pglite for Django:', configure_pglite_django())
         print('Database backend:', settings.DATABASE_BACKEND)
         print('Database info:', get_database_info())
         print('Database status:', check_database_status())
@@ -237,7 +238,16 @@ jobs:
 
         echo "py-pglite is ready for Django"
 
-        # Run migrations
+        # Configure py-pglite for Django and run migrations
+        poetry run python -c "
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
+        import django
+        django.setup()
+        from cupcake_vanilla.settings_electron import configure_pglite_django
+        print('Configuring py-pglite for Django:', configure_pglite_django())
+        "
+
         poetry run python manage.py migrate
 
         # Run all tests

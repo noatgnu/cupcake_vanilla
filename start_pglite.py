@@ -140,11 +140,22 @@ class PGLiteManager:
                         connect_timeout=5,
                         sslmode="disable",
                     )
-                    # Test a simple query
+                    # Test a simple query and ensure database exists
                     with conn.cursor() as cursor:
                         cursor.execute("SELECT 1")
                         result = cursor.fetchone()
                         self._log(f"Query result: {result}")
+
+                        # Try to create cupcake_vanilla database if it doesn't exist
+                        try:
+                            cursor.execute("CREATE DATABASE cupcake_vanilla")
+                            self._log("Created cupcake_vanilla database")
+                        except psycopg2.Error as e:
+                            if "already exists" in str(e):
+                                self._log("cupcake_vanilla database already exists")
+                            else:
+                                self._log(f"Database creation note: {e}")
+
                     conn.close()
                     self._log("Connection test successful")
                     return True

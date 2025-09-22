@@ -49,20 +49,17 @@ ALLOWED_HOSTS = [
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
-# Database Configuration - py-pglite only
+# Database Configuration - py-pglite Django backend
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": "postgres",  # Use default postgres database for py-pglite
+        "ENGINE": "py_pglite.django.backend",
+        "NAME": "postgres",
         "USER": "postgres",
         "PASSWORD": "postgres",
         "HOST": "127.0.0.1",
         "PORT": "55432",
         "OPTIONS": {
             "sslmode": "disable",
-            "connect_timeout": 30,
-            "application_name": "cupcake_vanilla",
-            "client_encoding": "UTF8",
         },
     }
 }
@@ -264,6 +261,21 @@ def check_database_status():
         return True
     except Exception as e:
         print(f"Database connection failed: {e}")
+        return False
+
+
+def configure_pglite_django():
+    """Configure Django for py-pglite integration"""
+    try:
+        from py_pglite.django import configure_django_for_pglite
+
+        configure_django_for_pglite()
+        return True
+    except ImportError:
+        print("py-pglite Django integration not available")
+        return False
+    except Exception as e:
+        print(f"Error configuring py-pglite for Django: {e}")
         return False
 
 
