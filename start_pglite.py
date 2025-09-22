@@ -126,29 +126,41 @@ class PGLiteManager:
         try:
             import psycopg2
 
+            self._log(f"Testing connection to py-pglite on {self.host}:{self.port}")
+
             for attempt in range(timeout):
                 try:
+                    self._log(f"Connection attempt {attempt + 1}/{timeout}")
                     conn = psycopg2.connect(
                         host=self.host,
                         port=self.port,
                         database="postgres",
                         user="postgres",
                         password="postgres",
-                        connect_timeout=2,
+                        connect_timeout=5,
                     )
                     # Test a simple query
                     with conn.cursor() as cursor:
                         cursor.execute("SELECT 1")
-                        cursor.fetchone()
+                        result = cursor.fetchone()
+                        self._log(f"Query result: {result}")
                     conn.close()
+                    self._log("Connection test successful")
                     return True
-                except (psycopg2.OperationalError, psycopg2.DatabaseError):
+                except (psycopg2.OperationalError, psycopg2.DatabaseError) as e:
+                    self._log(f"Connection attempt {attempt + 1} failed: {e}")
                     if attempt < timeout - 1:
-                        time.sleep(1)
+                        time.sleep(2)  # Increased wait time between attempts
+                        continue
+                    return False
+                except Exception as e:
+                    self._log(f"Unexpected error during connection test: {e}")
+                    if attempt < timeout - 1:
+                        time.sleep(2)
                         continue
                     return False
         except ImportError:
-            # psycopg2 not available, just check port
+            self._log("psycopg2 not available, just checking port")
             return self._is_port_in_use()
 
         return False

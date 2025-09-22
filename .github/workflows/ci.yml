@@ -154,14 +154,17 @@ jobs:
         # Test starting py-pglite in foreground (works better in CI)
         poetry run python start_pglite.py --verbose &
         PGLITE_PID=$!
-        sleep 10
+        sleep 15
 
         # Verify it's running and test connection
         echo "Checking if py-pglite is running..."
         poetry run python start_pglite.py --status
 
-        echo "Testing database connection..."
-        if ! poetry run python start_pglite.py --test-connection; then
+        echo "Waiting additional time for py-pglite to initialize..."
+        sleep 10
+
+        echo "Testing database connection with verbose output..."
+        if ! poetry run python start_pglite.py --test-connection --verbose; then
           echo "py-pglite connection test failed, checking logs and processes..."
           ps aux | grep pglite || true
           ls -la /tmp/electron-test/cupcake-vanilla/database/
@@ -210,14 +213,17 @@ jobs:
         # Start py-pglite using the independent script in foreground mode
         poetry run python start_pglite.py --verbose &
         PGLITE_PID=$!
-        sleep 15
+        sleep 20
 
         # Verify py-pglite is running and ready for connections
         echo "Checking py-pglite status..."
         poetry run python start_pglite.py --status
 
-        echo "Testing database connection..."
-        if ! poetry run python start_pglite.py --test-connection; then
+        echo "Waiting for py-pglite to fully initialize..."
+        sleep 10
+
+        echo "Testing database connection with verbose output..."
+        if ! poetry run python start_pglite.py --test-connection --verbose; then
           echo "py-pglite connection test failed, checking logs and processes..."
           ps aux | grep pglite || true
           ls -la /tmp/electron-test/cupcake-vanilla/database/
