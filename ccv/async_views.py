@@ -89,31 +89,67 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["delete"])
     def cancel(self, request, pk=None):
-        """Cancel a queued or running task."""
+        """Cancel a queued/running task or delete a completed task."""
         try:
             task = self.get_queryset().get(id=pk)
         except AsyncTaskStatus.DoesNotExist:
             return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        # If task is completed, delete it
         if task.status in ["SUCCESS", "FAILURE", "CANCELLED"]:
-            return Response({"error": "Task cannot be cancelled"}, status=status.HTTP_400_BAD_REQUEST)
+            # Clean up associated file if exists
+            if hasattr(task, "file_result") and task.file_result.file:
+                try:
+                    task.file_result.cleanup_expired()
+                except Exception:
+                    pass
 
-        # Try to cancel RQ job
-        if task.rq_job_id:
-            try:
-                queue = get_queue(task.queue_name)
-                job = queue.job_class.fetch(task.rq_job_id, connection=queue.connection)
-                if job:
-                    job.cancel()
-            except Exception as e:
-                return Response(
-                    {"error": f"Failed to cancel RQ job: {str(e)}"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
+            # Delete the task
+            task.delete()
+            return Response({"message": "Task deleted successfully"})
 
-        task.cancel()
+        # If task is still running, cancel it
+        if task.status in ["QUEUED", "STARTED"]:
+            # Try to cancel RQ job
+            if task.rq_job_id:
+                try:
+                    queue = get_queue(task.queue_name)
+                    job = queue.job_class.fetch(task.rq_job_id, connection=queue.connection)
+                    if job:
+                        job.cancel()
+                except Exception:
+                    # If RQ job cannot be cancelled (e.g., already finished), continue with task cancellation
+                    pass
 
-        return Response({"message": "Task cancelled successfully"})
+            task.cancel()
+            return Response({"message": "Task cancelled successfully"})
+
+        return Response({"error": "Invalid task status"}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=["delete"])
+    def cleanup_completed(self, request):
+        """Delete all completed, failed, and cancelled tasks for the user."""
+        user_tasks = self.get_queryset()
+
+        # Filter tasks that can be deleted
+        deletable_tasks = user_tasks.filter(status__in=["SUCCESS", "FAILURE", "CANCELLED"])
+
+        if not deletable_tasks.exists():
+            return Response({"message": "No completed tasks to delete"})
+
+        # Clean up associated files
+        for task in deletable_tasks:
+            if hasattr(task, "file_result") and task.file_result.file:
+                try:
+                    task.file_result.cleanup_expired()
+                except Exception:
+                    pass
+
+        # Count and delete
+        deleted_count = deletable_tasks.count()
+        deletable_tasks.delete()
+
+        return Response({"message": f"Deleted {deleted_count} completed tasks"})
 
     @action(detail=True, methods=["get"])
     def download_url(self, request, pk=None):

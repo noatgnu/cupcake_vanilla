@@ -189,7 +189,20 @@ def _find_or_create_matching_column(
     if occurrence_number <= len(existing_columns):
         existing_column = existing_columns[occurrence_number - 1]
         existing_column.column_position = column_position
-        existing_column.save(update_fields=["column_position"])
+
+        # Preserve template settings if the existing column has a template
+        update_fields = ["column_position"]
+        if existing_column.template and not existing_column.ontology_type:
+            # If column has template but missing ontology settings, inherit them
+            template_column = existing_column.template
+            if template_column.ontology_type:
+                existing_column.ontology_type = template_column.ontology_type
+                update_fields.append("ontology_type")
+            if template_column.custom_ontology_filters:
+                existing_column.custom_ontology_filters = template_column.custom_ontology_filters
+                update_fields.append("custom_ontology_filters")
+
+        existing_column.save(update_fields=update_fields)
         return existing_column
     else:
         template_column = None

@@ -127,7 +127,7 @@ def reorder_metadata_table_template_columns_sync(
 
         result_data = {
             "template_id": template_id,
-            "reordered_columns": template.template_columns.count(),
+            "reordered_columns": template.user_columns.count(),
             "schema_ids_used": schema_ids or [],
         }
 
@@ -298,7 +298,10 @@ def reorder_metadata_table_template_columns_task(
             title="Template Column Reordering Complete",
         )
 
-        # Mark task as successful
+        # Update progress to 100% and mark task as successful
+        if task_id:
+            task.update_progress(100, description="Template column reordering complete")
+
         mark_task_success(task_id, result["result"])
 
         return create_success_result(result["result"], task_id)

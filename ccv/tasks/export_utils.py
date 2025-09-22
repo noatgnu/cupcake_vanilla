@@ -434,7 +434,15 @@ def _add_dropdown_validation(
 
         # Add validation
         if option_list:
-            dv = DataValidation(type="list", formula1=f'"{",".join(option_list)}"', showDropDown=False)
+            # Ensure "not applicable" and "not available" stay lowercase
+            processed_options = []
+            for option in option_list:
+                if option.lower() in ["not applicable", "not available"]:
+                    processed_options.append(option.lower())
+                else:
+                    processed_options.append(option)
+
+            dv = DataValidation(type="list", formula1=f'"{",".join(processed_options)}"', showDropDown=False)
             col_letter = get_column_letter(i + 1)
             worksheet.add_data_validation(dv)
             dv.add(f"{col_letter}2:{col_letter}{row_count + 1}")
