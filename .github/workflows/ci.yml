@@ -151,21 +151,23 @@ jobs:
         # Test connection info display
         poetry run python start_pglite.py --connection-info
 
-        # Test starting py-pglite as daemon
-        poetry run python start_pglite.py --daemon --verbose
-        sleep 5
+        # Test starting py-pglite in foreground (works better in CI)
+        poetry run python start_pglite.py --verbose &
+        PGLITE_PID=$!
+        sleep 10
 
         # Verify it's running
-        poetry run python start_pglite.py --status
-
-        # If not running, check logs for debugging
         if ! poetry run python start_pglite.py --status; then
-          echo "py-pglite failed to start, checking logs..."
+          echo "py-pglite failed to start, checking logs and processes..."
+          ps aux | grep pglite || true
           ls -la /tmp/electron-test/cupcake-vanilla/database/
           if [ -f /tmp/electron-test/cupcake-vanilla/database/pglite.log ]; then
             echo "=== py-pglite log ==="
             cat /tmp/electron-test/cupcake-vanilla/database/pglite.log
           fi
+          # Kill background process if it's still running
+          kill $PGLITE_PID 2>/dev/null || true
+          exit 1
         fi
 
         # Test Django settings with running py-pglite
@@ -183,7 +185,10 @@ jobs:
         "
 
         # Stop py-pglite
-        poetry run python start_pglite.py --stop
+        poetry run python start_pglite.py --stop || true
+        if [ ! -z "$PGLITE_PID" ]; then
+          kill $PGLITE_PID 2>/dev/null || true
+        fi
 
     - name: Run tests for all applications under Electron conditions
       env:
@@ -196,26 +201,22 @@ jobs:
         ENABLE_CUPCAKE_RED_VELVET: true
         ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
-        # Start py-pglite using the independent script
-        poetry run python start_pglite.py --daemon --verbose
-        sleep 10
+        # Start py-pglite using the independent script in foreground mode
+        poetry run python start_pglite.py --verbose &
+        PGLITE_PID=$!
+        sleep 15
 
-        # Verify py-pglite is running, fallback to foreground if daemon failed
+        # Verify py-pglite is running
         if ! poetry run python start_pglite.py --status; then
-          echo "Daemon mode failed, trying foreground mode..."
-          poetry run python start_pglite.py --verbose &
-          PGLITE_PID=$!
-          sleep 10
-
-          if ! poetry run python start_pglite.py --status; then
-            echo "py-pglite failed to start in both modes, checking logs..."
-            ls -la /tmp/electron-test/cupcake-vanilla/database/
-            if [ -f /tmp/electron-test/cupcake-vanilla/database/pglite.log ]; then
-              echo "=== py-pglite log ==="
-              cat /tmp/electron-test/cupcake-vanilla/database/pglite.log
-            fi
-            exit 1
+          echo "py-pglite failed to start, checking logs and processes..."
+          ps aux | grep pglite || true
+          ls -la /tmp/electron-test/cupcake-vanilla/database/
+          if [ -f /tmp/electron-test/cupcake-vanilla/database/pglite.log ]; then
+            echo "=== py-pglite log ==="
+            cat /tmp/electron-test/cupcake-vanilla/database/pglite.log
           fi
+          kill $PGLITE_PID 2>/dev/null || true
+          exit 1
         fi
 
         # Run migrations

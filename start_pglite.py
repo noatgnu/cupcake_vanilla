@@ -252,8 +252,20 @@ class PGLiteManager:
             # Write PID file early
             self._write_pid_file(os.getpid())
 
-            manager = PGliteManager(config)
-            manager.__enter__()
+            try:
+                manager = PGliteManager(config)
+                manager.__enter__()
+
+                # Log successful startup
+                with open(self.log_file, "a") as f:
+                    f.write(f"py-pglite manager started successfully on {self.host}:{self.port}\n")
+                    f.flush()
+            except Exception as e:
+                # Log startup error
+                with open(self.log_file, "a") as f:
+                    f.write(f"Failed to start py-pglite manager: {e}\n")
+                    f.flush()
+                raise
 
             # Register cleanup
             def cleanup():
