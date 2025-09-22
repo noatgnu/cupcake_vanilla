@@ -124,60 +124,7 @@ jobs:
     - name: Install project with Electron dependencies
       run: poetry install --no-interaction --with electron
 
-    - name: Test Electron environment configuration
-      env:
-        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
-        ELECTRON_DEBUG: true
-        SECRET_KEY: test-electron-secret-key
-      run: |
-        poetry run python manage.py check --settings=cupcake_vanilla.settings_electron
-        poetry run python -c "
-        import os
-        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
-        import django
-        django.setup()
-        from django.conf import settings
-        "
-
-    - name: Test py-pglite startup script
-      env:
-        ELECTRON_APP_DATA: /tmp/electron-test
-      run: |
-        mkdir -p /tmp/electron-test/cupcake-vanilla/database
-
-        # Test the independent startup script
-        poetry run python start_pglite.py --status || echo "py-pglite not running (expected)"
-
-        # Test connection info display
-        poetry run python start_pglite.py --connection-info
-
-        # Test starting py-pglite in foreground (works better in CI)
-        poetry run python start_pglite.py --verbose &
-        PGLITE_PID=$!
-        sleep 15
-
-        echo "Checking if py-pglite is running..."
-        poetry run python start_pglite.py --status
-
-        echo "Waiting for py-pglite to initialize..."
-        sleep 10
-
-        poetry run python -c "
-        import os
-        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
-        import django
-        django.setup()
-        from cupcake_vanilla.settings_electron import check_database_status
-        assert check_database_status(), 'Database connection failed'
-        "
-
-        # Stop py-pglite
-        poetry run python start_pglite.py --stop || true
-        if [ ! -z "$PGLITE_PID" ]; then
-          kill $PGLITE_PID 2>/dev/null || true
-        fi
-
-    - name: Run tests for all applications under Electron conditions
+    - name: Run Django tests with py-pglite (Electron environment)
       env:
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
         ELECTRON_DEBUG: true
@@ -188,120 +135,19 @@ jobs:
         ENABLE_CUPCAKE_RED_VELVET: true
         ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
-        # Start py-pglite using the independent script in foreground mode
+        mkdir -p /tmp/electron-test/cupcake-vanilla/database
+
         poetry run python start_pglite.py --verbose &
         PGLITE_PID=$!
         sleep 20
 
-        # Verify py-pglite is running and ready for connections
-        echo "Checking py-pglite status..."
         poetry run python start_pglite.py --status
-
-        echo "Waiting for py-pglite to fully initialize..."
         sleep 10
 
-        echo "py-pglite is ready for Django"
-
         poetry run python manage.py migrate
+        poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --keepdb --verbosity=2
 
-        # Run all tests
-        poetry run python manage.py test ccc.tests --keepdb --verbosity=1 || echo "CCC tests failed"
-        poetry run python manage.py test ccv.tests --keepdb --verbosity=1 || echo "CCV tests failed"
-        poetry run python manage.py test ccm.tests --keepdb --verbosity=1 || echo "CCM tests failed"
-        poetry run python manage.py test ccmc.tests --keepdb --verbosity=1 || echo "CCMC tests failed"
-        poetry run python manage.py test ccrv.tests --keepdb --verbosity=1 || echo "CCRV tests failed"
-        poetry run python manage.py test ccsc.tests --keepdb --verbosity=1 || echo "CCSC tests failed"
-
-        # Stop py-pglite cleanly
         poetry run python start_pglite.py --stop || true
-
-        # Also kill any background processes as fallback
         if [ ! -z "$PGLITE_PID" ]; then
           kill $PGLITE_PID 2>/dev/null || true
         fi
-        pkill -f "start_pglite.py" 2>/dev/null || true
-
-
-
-
-
-
-  test-environment-switching:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.11]
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: cupcake_vanilla_pass
-          POSTGRES_USER: cupcake_vanilla
-          POSTGRES_DB: cupcake_vanilla_db
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install Poetry
-      uses: snok/install-poetry@v1
-      with:
-        version: latest
-        virtualenvs-create: true
-        virtualenvs-in-project: true
-
-    - name: Install dependencies with Electron group
-      run: poetry install --no-interaction --with electron
-
-    - name: Test normal environment with async tasks
-      env:
-        DATABASE_URL: postgresql://cupcake_vanilla:cupcake_vanilla_pass@localhost:5432/cupcake_vanilla_db
-        REDIS_URL: redis://localhost:6379/0
-        SECRET_KEY: test-secret-key
-        DEBUG: True
-        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings
-      run: |
-        poetry run python manage.py migrate
-        poetry run python -c "
-        import os
-        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings')
-        import django
-        django.setup()
-        from django.conf import settings
-        "
-
-    - name: Test Electron environment with sync-only operations
-      env:
-        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
-        ELECTRON_DEBUG: true
-        SECRET_KEY: test-electron-secret-key
-      run: |
-        poetry run python -c "
-        import os
-        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
-        import django
-        django.setup()
-        from django.conf import settings
-        "
