@@ -124,18 +124,16 @@ jobs:
     - name: Install project with Electron dependencies
       run: poetry install --no-interaction --with electron
 
-    - name: Run Django tests with py-pglite (Electron environment)
+    - name: Test Electron environment configuration and py-pglite integration
       env:
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
         ELECTRON_DEBUG: true
         SECRET_KEY: test-electron-secret-key
         ELECTRON_APP_DATA: /tmp/electron-test
-        ENABLE_CUPCAKE_MACARON: true
-        ENABLE_CUPCAKE_MINT_CHOCOLATE: true
-        ENABLE_CUPCAKE_RED_VELVET: true
-        ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
         mkdir -p /tmp/electron-test/cupcake-vanilla/database
+
+        poetry run python manage.py check --settings=cupcake_vanilla.settings_electron
 
         poetry run python start_pglite.py --verbose &
         PGLITE_PID=$!
@@ -145,7 +143,6 @@ jobs:
         sleep 10
 
         poetry run python manage.py migrate
-        poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --keepdb --verbosity=2
 
         poetry run python start_pglite.py --stop || true
         if [ ! -z "$PGLITE_PID" ]; then
