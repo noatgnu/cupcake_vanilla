@@ -220,9 +220,18 @@ class PGLiteManager:
             # Fork to create daemon
             pid = os.fork()
             if pid > 0:
-                # Parent process
-                print(f"py-pglite daemon started with PID {pid}")
-                return True
+                # Parent process - wait a moment for daemon to start
+                time.sleep(2)
+
+                # Check if daemon actually started successfully
+                for _ in range(10):  # Wait up to 10 seconds
+                    if self._is_port_in_use():
+                        print(f"py-pglite daemon started successfully with PID {pid}")
+                        return True
+                    time.sleep(1)
+
+                print(f"py-pglite daemon started with PID {pid} but port not accessible")
+                return False
 
             # Child process - become daemon
             os.setsid()
@@ -240,11 +249,11 @@ class PGLiteManager:
             # Start py-pglite in daemon
             from py_pglite import PGliteManager
 
+            # Write PID file early
+            self._write_pid_file(os.getpid())
+
             manager = PGliteManager(config)
             manager.__enter__()
-
-            # Write PID file
-            self._write_pid_file(os.getpid())
 
             # Register cleanup
             def cleanup():
@@ -267,6 +276,7 @@ class PGLiteManager:
             return False
         except Exception as e:
             print(f"Error in daemon: {e}")
+            self._remove_pid_file()
             return False
 
     def stop(self):
