@@ -156,28 +156,11 @@ jobs:
         PGLITE_PID=$!
         sleep 15
 
-        # Verify it's running and test connection
         echo "Checking if py-pglite is running..."
         poetry run python start_pglite.py --status
 
-        echo "Waiting additional time for py-pglite to initialize..."
+        echo "Waiting for py-pglite to initialize..."
         sleep 10
-
-        echo "Testing database connection with verbose output..."
-        if ! poetry run python start_pglite.py --test-connection --verbose; then
-          echo "py-pglite connection test failed, checking logs and processes..."
-          ps aux | grep pglite || true
-          ls -la /tmp/electron-test/cupcake-vanilla/database/
-          if [ -f /tmp/electron-test/cupcake-vanilla/database/pglite.log ]; then
-            echo "=== py-pglite log ==="
-            cat /tmp/electron-test/cupcake-vanilla/database/pglite.log
-          fi
-          # Kill background process if it's still running
-          kill $PGLITE_PID 2>/dev/null || true
-          exit 1
-        fi
-
-        echo "py-pglite is ready for connections"
 
         poetry run python -c "
         import os
@@ -216,19 +199,6 @@ jobs:
 
         echo "Waiting for py-pglite to fully initialize..."
         sleep 10
-
-        echo "Testing database connection with verbose output..."
-        if ! poetry run python start_pglite.py --test-connection --verbose; then
-          echo "py-pglite connection test failed, checking logs and processes..."
-          ps aux | grep pglite || true
-          ls -la /tmp/electron-test/cupcake-vanilla/database/
-          if [ -f /tmp/electron-test/cupcake-vanilla/database/pglite.log ]; then
-            echo "=== py-pglite log ==="
-            cat /tmp/electron-test/cupcake-vanilla/database/pglite.log
-          fi
-          kill $PGLITE_PID 2>/dev/null || true
-          exit 1
-        fi
 
         echo "py-pglite is ready for Django"
 

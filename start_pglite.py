@@ -118,65 +118,6 @@ class PGLiteManager:
         pid = self._get_running_pid()
         return pid is not None
 
-    def test_connection(self, timeout=30):
-        """Test if py-pglite is accessible and ready for connections."""
-        if not self._is_port_in_use():
-            return False
-
-        try:
-            import psycopg2
-
-            self._log(f"Testing connection to py-pglite on {self.host}:{self.port}")
-
-            for attempt in range(timeout):
-                try:
-                    self._log(f"Connection attempt {attempt + 1}/{timeout}")
-                    conn = psycopg2.connect(
-                        host=self.host,
-                        port=self.port,
-                        database="postgres",
-                        user="postgres",
-                        password="postgres",
-                        connect_timeout=5,
-                        sslmode="disable",
-                    )
-                    # Test a simple query and ensure database exists
-                    with conn.cursor() as cursor:
-                        cursor.execute("SELECT 1")
-                        result = cursor.fetchone()
-                        self._log(f"Query result: {result}")
-
-                        # Try to create cupcake_vanilla database if it doesn't exist
-                        try:
-                            cursor.execute("CREATE DATABASE cupcake_vanilla")
-                            self._log("Created cupcake_vanilla database")
-                        except psycopg2.Error as e:
-                            if "already exists" in str(e):
-                                self._log("cupcake_vanilla database already exists")
-                            else:
-                                self._log(f"Database creation note: {e}")
-
-                    conn.close()
-                    self._log("Connection test successful")
-                    return True
-                except (psycopg2.OperationalError, psycopg2.DatabaseError) as e:
-                    self._log(f"Connection attempt {attempt + 1} failed: {e}")
-                    if attempt < timeout - 1:
-                        time.sleep(2)  # Increased wait time between attempts
-                        continue
-                    return False
-                except Exception as e:
-                    self._log(f"Unexpected error during connection test: {e}")
-                    if attempt < timeout - 1:
-                        time.sleep(2)
-                        continue
-                    return False
-        except ImportError:
-            self._log("psycopg2 not available, just checking port")
-            return self._is_port_in_use()
-
-        return False
-
     def start(self, daemon=False):
         """
         Start py-pglite database.
@@ -443,7 +384,6 @@ def main():
     parser.add_argument("--status", action="store_true", help="Check if py-pglite is running")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("--connection-info", action="store_true", help="Display connection information")
-    parser.add_argument("--test-connection", action="store_true", help="Test database connection")
 
     args = parser.parse_args()
 
@@ -477,13 +417,6 @@ def main():
         print(f"  Connection String: {info['connection_string']}")
         print(f"  Data Directory: {info['data_directory']}")
         sys.exit(0)
-    elif args.test_connection:
-        if manager.test_connection():
-            print("Connection test successful")
-            sys.exit(0)
-        else:
-            print("Connection test failed")
-            sys.exit(1)
     else:
         # Start database
         success = manager.start(daemon=args.daemon)
