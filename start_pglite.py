@@ -138,6 +138,7 @@ class PGLiteManager:
                         user="postgres",
                         password="postgres",
                         connect_timeout=5,
+                        sslmode="disable",
                     )
                     # Test a simple query
                     with conn.cursor() as cursor:
