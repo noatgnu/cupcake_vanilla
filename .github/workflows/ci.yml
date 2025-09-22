@@ -281,8 +281,14 @@ jobs:
         # Test cleanup_completed method
         assert hasattr(viewset, 'cleanup_completed'), 'cleanup_completed method should exist'
 
-        # Test destroy method
-        assert hasattr(viewset, 'destroy'), 'destroy method should exist'
+        # Test that cancel action is properly configured for DELETE method
+        cancel_action = getattr(viewset.__class__, 'cancel', None)
+        assert cancel_action is not None, 'cancel action should exist'
+
+        # Verify the action is configured for DELETE method
+        action_kwargs = getattr(cancel_action, 'kwargs', {})
+        methods = action_kwargs.get('methods', [])
+        assert 'delete' in [m.lower() for m in methods], 'cancel action should accept DELETE method'
 
         print('Task deletion functionality tests passed')
         "
