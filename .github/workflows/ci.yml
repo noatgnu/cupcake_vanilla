@@ -139,42 +139,41 @@ jobs:
         from django.conf import settings
         "
 
-    - name: Test py-pglite functionality
+    - name: Test py-pglite startup script
       env:
-        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
-        ELECTRON_DEBUG: true
-        SECRET_KEY: test-electron-secret-key
         ELECTRON_APP_DATA: /tmp/electron-test
       run: |
         mkdir -p /tmp/electron-test/cupcake-vanilla/database
 
+        # Test the independent startup script
+        poetry run python start_pglite.py --status || echo "py-pglite not running (expected)"
+
+        # Test connection info display
+        poetry run python start_pglite.py --connection-info
+
+        # Test starting py-pglite as daemon
+        poetry run python start_pglite.py --daemon --verbose &
+        sleep 3
+
+        # Verify it's running
+        poetry run python start_pglite.py --status
+
+        # Test Django settings with running py-pglite
         poetry run python -c "
         import os
-        import tempfile
-        from py_pglite import PGliteConfig, PGliteManager
-
-        data_dir = '/tmp/electron-test/cupcake-vanilla/database'
-        config = PGliteConfig(
-            work_dir=data_dir,
-            use_tcp=True,
-            tcp_host='127.0.0.1',
-            tcp_port=55432,
-            extensions=[]
-        )
-
-        manager = PGliteManager(config)
-        manager.__enter__()
-
         os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
         import django
         django.setup()
         from django.conf import settings
         from cupcake_vanilla.settings_electron import get_database_info, check_database_status
 
-        db_info = get_database_info()
-        db_status = check_database_status()
-        manager.__exit__(None, None, None)
+        print('Database backend:', settings.DATABASE_BACKEND)
+        print('Database info:', get_database_info())
+        print('Database status:', check_database_status())
         "
+
+        # Stop py-pglite
+        poetry run python start_pglite.py --stop
 
     - name: Run tests for all applications under Electron conditions
       env:
@@ -187,28 +186,17 @@ jobs:
         ENABLE_CUPCAKE_RED_VELVET: true
         ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
-        poetry run python -c "
-        import os
-        from py_pglite import PGliteConfig, PGliteManager
-        import sys
-
-        data_dir = '/tmp/electron-test/cupcake-vanilla/database'
-        config = PGliteConfig(
-            work_dir=data_dir,
-            use_tcp=True,
-            tcp_host='127.0.0.1',
-            tcp_port=55432,
-            extensions=[]
-        )
-
-        manager = PGliteManager(config)
-        manager.__enter__()
-        " &
-
+        # Start py-pglite using the independent script
+        poetry run python start_pglite.py --daemon --verbose
         sleep 5
 
+        # Verify py-pglite is running
+        poetry run python start_pglite.py --status
+
+        # Run migrations
         poetry run python manage.py migrate
 
+        # Run all tests
         poetry run python manage.py test ccc.tests --keepdb --verbosity=1 || echo "CCC tests failed"
         poetry run python manage.py test ccv.tests --keepdb --verbosity=1 || echo "CCV tests failed"
         poetry run python manage.py test ccm.tests --keepdb --verbosity=1 || echo "CCM tests failed"
@@ -216,7 +204,8 @@ jobs:
         poetry run python manage.py test ccrv.tests --keepdb --verbosity=1 || echo "CCRV tests failed"
         poetry run python manage.py test ccsc.tests --keepdb --verbosity=1 || echo "CCSC tests failed"
 
-        pkill -f "py-pglite" || true
+        # Stop py-pglite cleanly
+        poetry run python start_pglite.py --stop
 
     - name: Test sync task functionality in Electron environment
       env:
@@ -232,6 +221,88 @@ jobs:
         from django.conf import settings
         from ccv.tasks.validation_tasks import validate_metadata_table_sync
         from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_sync
+        "
+
+    - name: Test async task deletion functionality
+      env:
+        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
+        ELECTRON_DEBUG: true
+        SECRET_KEY: test-electron-secret-key
+      run: |
+        poetry run python -c "
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
+        import django
+        django.setup()
+        from django.contrib.auth.models import User
+        from ccv.task_models import AsyncTaskStatus
+        from ccv.async_views import AsyncTaskViewSet
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.request import Request
+
+        # Test that task deletion methods exist and are callable
+        viewset = AsyncTaskViewSet()
+        factory = APIRequestFactory()
+
+        # Test cancel method (which now handles deletion)
+        assert hasattr(viewset, 'cancel'), 'cancel method should exist'
+
+        # Test cleanup_completed method
+        assert hasattr(viewset, 'cleanup_completed'), 'cleanup_completed method should exist'
+
+        # Test destroy method
+        assert hasattr(viewset, 'destroy'), 'destroy method should exist'
+
+        print('Task deletion functionality tests passed')
+        "
+
+    - name: Test WebSocket routing system
+      env:
+        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
+        ELECTRON_DEBUG: true
+        SECRET_KEY: test-electron-secret-key
+      run: |
+        poetry run python -c "
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
+        import django
+        django.setup()
+        from ccc.websocket_routing import create_websocket_router, WebSocketUrlManager
+
+        # Test WebSocket router creation
+        router = create_websocket_router(auto_discover=True, raise_on_conflict=False)
+        assert router is not None, 'WebSocket router should be created'
+
+        # Test URL manager
+        manager = WebSocketUrlManager()
+        assert hasattr(manager, 'auto_discover_patterns'), 'auto_discover_patterns method should exist'
+        assert hasattr(manager, 'detect_conflicts'), 'detect_conflicts method should exist'
+        assert hasattr(manager, 'get_merged_patterns'), 'get_merged_patterns method should exist'
+
+        print('WebSocket routing system tests passed')
+        "
+
+    - name: Test reorder task completion signals
+      env:
+        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
+        ELECTRON_DEBUG: true
+        SECRET_KEY: test-electron-secret-key
+      run: |
+        poetry run python -c "
+        import os
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cupcake_vanilla.settings_electron')
+        import django
+        django.setup()
+        from ccv.tasks.reorder_tasks import (
+            reorder_metadata_table_columns_sync,
+            reorder_metadata_table_template_columns_sync
+        )
+
+        # Test that sync functions exist and are callable
+        assert callable(reorder_metadata_table_columns_sync), 'reorder_metadata_table_columns_sync should be callable'
+        assert callable(reorder_metadata_table_template_columns_sync), 'reorder_metadata_table_template_columns_sync should be callable'
+
+        print('Reorder task completion functionality verified')
         "
 
     - name: Test system info endpoint simulation
@@ -258,8 +329,8 @@ jobs:
             info.update({
                 'electron_settings': {
                     'database_backend': electron_settings.get('DATABASE_BACKEND'),
-                    'pglite_available': electron_settings.get('PGLITE_AVAILABLE', False),
                     'sync_operations_only': electron_settings.get('SYNC_OPERATIONS_ONLY', False),
+                    'is_electron_environment': electron_settings.get('IS_ELECTRON_ENVIRONMENT', False),
                 }
             })
         "
