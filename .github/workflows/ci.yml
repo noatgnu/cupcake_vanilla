@@ -156,9 +156,13 @@ jobs:
         PGLITE_PID=$!
         sleep 10
 
-        # Verify it's running
-        if ! poetry run python start_pglite.py --status; then
-          echo "py-pglite failed to start, checking logs and processes..."
+        # Verify it's running and test connection
+        echo "Checking if py-pglite is running..."
+        poetry run python start_pglite.py --status
+
+        echo "Testing database connection..."
+        if ! poetry run python start_pglite.py --test-connection; then
+          echo "py-pglite connection test failed, checking logs and processes..."
           ps aux | grep pglite || true
           ls -la /tmp/electron-test/cupcake-vanilla/database/
           if [ -f /tmp/electron-test/cupcake-vanilla/database/pglite.log ]; then
@@ -169,6 +173,8 @@ jobs:
           kill $PGLITE_PID 2>/dev/null || true
           exit 1
         fi
+
+        echo "py-pglite is ready for connections"
 
         # Test Django settings with running py-pglite
         poetry run python -c "
@@ -206,9 +212,13 @@ jobs:
         PGLITE_PID=$!
         sleep 15
 
-        # Verify py-pglite is running
-        if ! poetry run python start_pglite.py --status; then
-          echo "py-pglite failed to start, checking logs and processes..."
+        # Verify py-pglite is running and ready for connections
+        echo "Checking py-pglite status..."
+        poetry run python start_pglite.py --status
+
+        echo "Testing database connection..."
+        if ! poetry run python start_pglite.py --test-connection; then
+          echo "py-pglite connection test failed, checking logs and processes..."
           ps aux | grep pglite || true
           ls -la /tmp/electron-test/cupcake-vanilla/database/
           if [ -f /tmp/electron-test/cupcake-vanilla/database/pglite.log ]; then
@@ -218,6 +228,8 @@ jobs:
           kill $PGLITE_PID 2>/dev/null || true
           exit 1
         fi
+
+        echo "py-pglite is ready for Django"
 
         # Run migrations
         poetry run python manage.py migrate

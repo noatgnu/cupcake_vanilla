@@ -118,6 +118,41 @@ class PGLiteManager:
         pid = self._get_running_pid()
         return pid is not None
 
+    def test_connection(self, timeout=30):
+        """Test if py-pglite is accessible and ready for connections."""
+        if not self._is_port_in_use():
+            return False
+
+        try:
+            import psycopg2
+
+            for attempt in range(timeout):
+                try:
+                    conn = psycopg2.connect(
+                        host=self.host,
+                        port=self.port,
+                        database="postgres",
+                        user="postgres",
+                        password="postgres",
+                        connect_timeout=2,
+                    )
+                    # Test a simple query
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT 1")
+                        cursor.fetchone()
+                    conn.close()
+                    return True
+                except (psycopg2.OperationalError, psycopg2.DatabaseError):
+                    if attempt < timeout - 1:
+                        time.sleep(1)
+                        continue
+                    return False
+        except ImportError:
+            # psycopg2 not available, just check port
+            return self._is_port_in_use()
+
+        return False
+
     def start(self, daemon=False):
         """
         Start py-pglite database.
@@ -384,6 +419,7 @@ def main():
     parser.add_argument("--status", action="store_true", help="Check if py-pglite is running")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("--connection-info", action="store_true", help="Display connection information")
+    parser.add_argument("--test-connection", action="store_true", help="Test database connection")
 
     args = parser.parse_args()
 
@@ -417,6 +453,13 @@ def main():
         print(f"  Connection String: {info['connection_string']}")
         print(f"  Data Directory: {info['data_directory']}")
         sys.exit(0)
+    elif args.test_connection:
+        if manager.test_connection():
+            print("Connection test successful")
+            sys.exit(0)
+        else:
+            print("Connection test failed")
+            sys.exit(1)
     else:
         # Start database
         success = manager.start(daemon=args.daemon)

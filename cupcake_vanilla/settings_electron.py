@@ -53,14 +53,16 @@ CORS_ALLOW_CREDENTIALS = True
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "cupcake_vanilla",
+        "NAME": "postgres",  # Use default postgres database for py-pglite
         "USER": "postgres",
         "PASSWORD": "postgres",
         "HOST": "127.0.0.1",
         "PORT": "55432",
         "OPTIONS": {
             "sslmode": "disable",
-            "connect_timeout": 10,
+            "connect_timeout": 30,
+            "application_name": "cupcake_vanilla",
+            "client_encoding": "UTF8",
         },
     }
 }
