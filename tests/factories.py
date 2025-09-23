@@ -163,7 +163,9 @@ class UserFactory:
     def create_user(username: str = None, email: str = None, **kwargs) -> User:
         """Create a test user with realistic data."""
         if not username:
-            username = f"testuser_{random.randint(1000, 9999)}"
+            import uuid
+
+            username = f"testuser_{uuid.uuid4().hex[:8]}"
         if not email:
             email = f"{username}@example.com"
 

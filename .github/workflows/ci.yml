@@ -117,12 +117,12 @@ jobs:
         path: .venv
         key: venv-electron-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
-    - name: Install dependencies
+    - name: Install dependencies with Electron group
       if: steps.cached-poetry-dependencies-electron.outputs.cache-hit != 'true'
-      run: poetry install --no-interaction --no-root
+      run: poetry install --no-interaction --no-root --with electron
 
-    - name: Install project
-      run: poetry install --no-interaction
+    - name: Install project with Electron dependencies
+      run: poetry install --no-interaction --with electron
 
     - name: Test Electron environment with SQLite Django backend
       env:
