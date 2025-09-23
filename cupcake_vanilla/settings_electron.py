@@ -49,22 +49,15 @@ ALLOWED_HOSTS = [
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
-# Database Configuration - Standard PostgreSQL backend with py-pglite
+# Database Configuration - SQLite for cross-platform compatibility
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": "postgres",
-        "USER": "postgres",
-        "PASSWORD": "postgres",
-        "HOST": "127.0.0.1",
-        "PORT": "55432",
-        "OPTIONS": {
-            "sslmode": "disable",
-        },
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": os.path.join(ELECTRON_USER_DATA, "cupcake_vanilla.db"),
     }
 }
 
-DATABASE_BACKEND = "py-pglite"
+DATABASE_BACKEND = "sqlite3"
 
 # Cache configuration - Simple in-memory cache
 CACHES = {
@@ -242,12 +235,10 @@ IS_ELECTRON_ENVIRONMENT = True
 def get_database_info():
     """Get database connection information for debugging"""
     return {
-        "backend": "py-pglite",
+        "backend": "sqlite3",
         "persistent": True,
-        "host": DATABASES["default"]["HOST"],
-        "port": DATABASES["default"]["PORT"],
-        "database": DATABASES["default"]["NAME"],
-        "connection_string": f"postgresql://{DATABASES['default']['USER']}@{DATABASES['default']['HOST']}:{DATABASES['default']['PORT']}/{DATABASES['default']['NAME']}",
+        "database_file": DATABASES["default"]["NAME"],
+        "connection_string": f"sqlite:///{DATABASES['default']['NAME']}",
     }
 
 
@@ -271,9 +262,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"App Data Directory: {ELECTRON_USER_DATA}")
     print(f"Database Backend: {DATABASE_BACKEND}")
-    print(f"Database Host: {DATABASES['default']['HOST']}")
-    print(f"Database Port: {DATABASES['default']['PORT']}")
-    print(f"Database Name: {DATABASES['default']['NAME']}")
+    print(f"Database File: {DATABASES['default']['NAME']}")
     print(f"Static Files: {STATIC_ROOT}")
     print(f"Media Files: {MEDIA_ROOT}")
     print(f"Log File: {os.path.join(ELECTRON_USER_DATA, 'cupcake_vanilla.log')}")

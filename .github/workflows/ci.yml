@@ -117,34 +117,24 @@ jobs:
         path: .venv
         key: venv-electron-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
-    - name: Install dependencies with Electron group
+    - name: Install dependencies
       if: steps.cached-poetry-dependencies-electron.outputs.cache-hit != 'true'
-      run: poetry install --no-interaction --no-root --with electron
+      run: poetry install --no-interaction --no-root
 
-    - name: Install project with Electron dependencies
-      run: poetry install --no-interaction --with electron
+    - name: Install project
+      run: poetry install --no-interaction
 
-    - name: Test Electron environment configuration and py-pglite integration
+    - name: Test Electron environment with SQLite Django backend
       env:
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
         ELECTRON_DEBUG: true
         SECRET_KEY: test-electron-secret-key
         ELECTRON_APP_DATA: /tmp/electron-test
+        ENABLE_CUPCAKE_MACARON: true
+        ENABLE_CUPCAKE_MINT_CHOCOLATE: true
+        ENABLE_CUPCAKE_RED_VELVET: true
+        ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
-        mkdir -p /tmp/electron-test/cupcake-vanilla/database
-
         poetry run python manage.py check --settings=cupcake_vanilla.settings_electron
-
-        poetry run python start_pglite.py --verbose &
-        PGLITE_PID=$!
-        sleep 20
-
-        poetry run python start_pglite.py --status
-        sleep 10
-
         poetry run python manage.py migrate
-
-        poetry run python start_pglite.py --stop || true
-        if [ ! -z "$PGLITE_PID" ]; then
-          kill $PGLITE_PID 2>/dev/null || true
-        fi
+        poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
