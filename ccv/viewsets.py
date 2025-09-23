@@ -401,7 +401,6 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 {
                     "electron_settings": {
                         "database_backend": electron_settings.get("DATABASE_BACKEND"),
-                        "pglite_available": electron_settings.get("PGLITE_AVAILABLE", False),
                         "sync_operations_only": electron_settings.get("SYNC_OPERATIONS_ONLY", False),
                     }
                 }

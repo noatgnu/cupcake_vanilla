@@ -2,13 +2,10 @@
 Django settings for Cupcake Vanilla when embedded in an Electron application.
 
 This configuration uses:
-- py-pglite for persistent embedded PostgreSQL database
-- No async task queues (all operations run synchronously)
+- SQLite for cross-platform embedded database
+- fakeredis for async task queues without Redis server
 - Local file storage within Electron app data directory
 - Minimal dependencies for embedded environment
-
-Requirements:
-- pip install py-pglite[django]
 """
 
 import os
@@ -25,9 +22,9 @@ ELECTRON_APP_DATA = os.environ.get("ELECTRON_APP_DATA", tempfile.gettempdir())
 ELECTRON_USER_DATA = os.path.join(ELECTRON_APP_DATA, "cupcake-vanilla")
 os.makedirs(ELECTRON_USER_DATA, exist_ok=True)
 
-# py-pglite database directory
-PGLITE_DATA_DIR = os.path.join(ELECTRON_USER_DATA, "database")
-os.makedirs(PGLITE_DATA_DIR, exist_ok=True)
+# Database directory for SQLite
+DATABASE_DIR = os.path.join(ELECTRON_USER_DATA, "database")
+os.makedirs(DATABASE_DIR, exist_ok=True)
 
 # Debug mode - can be toggled for Electron
 DEBUG = os.environ.get("ELECTRON_DEBUG", "False").lower() == "true"
@@ -126,11 +123,11 @@ RQ_QUEUES = {
 
 # Static files configuration for Electron
 STATIC_URL = "/static/"
-STATIC_ROOT = os.path.join(ELECTRON_USER_DATA, "static")
+STATIC_ROOT = os.environ.get("ELECTRON_STATIC_ROOT", os.path.join(ELECTRON_USER_DATA, "static"))
 
-# Media files for user uploads
+# Media files for user uploads - configurable for Electron
 MEDIA_URL = "/media/"
-MEDIA_ROOT = os.path.join(ELECTRON_USER_DATA, "media")
+MEDIA_ROOT = os.environ.get("ELECTRON_MEDIA_ROOT", os.path.join(ELECTRON_USER_DATA, "media"))
 
 # Ensure directories exist
 os.makedirs(STATIC_ROOT, exist_ok=True)
@@ -176,11 +173,6 @@ LOGGING = {
         "ccv": {
             "handlers": ["console", "file"],
             "level": "DEBUG" if DEBUG else "INFO",
-            "propagate": False,
-        },
-        "py_pglite": {
-            "handlers": ["console", "file"],
-            "level": "INFO",
             "propagate": False,
         },
     },
@@ -245,6 +237,9 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
 ELECTRON_SETTINGS = {
     "APP_DATA_DIR": ELECTRON_USER_DATA,
     "DATABASE_BACKEND": DATABASE_BACKEND,
+    "DATABASE_FILE": DATABASES["default"]["NAME"],
+    "STATIC_ROOT": STATIC_ROOT,
+    "MEDIA_ROOT": MEDIA_ROOT,
     "LOG_FILE": os.path.join(ELECTRON_USER_DATA, "cupcake_vanilla.log"),
     "ENABLE_AUTO_MIGRATION": True,
     "ENABLE_COLLECTSTATIC": True,
