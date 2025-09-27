@@ -68,6 +68,7 @@ CACHES = {
     }
 }
 
+from datetime import timedelta
 from typing import Any, Dict
 
 # RQ (Redis Queue) configuration for async tasks in Electron
@@ -192,6 +193,22 @@ CHANNEL_LAYERS = {
     },
 }
 
+
+# Custom WebSocket origin validation for Electron
+# Allow file:// origins for Electron apps
+def electron_websocket_origin_validator(application):
+    """Custom WebSocket origin validator that allows file:// origins for Electron."""
+
+    def inner(scope, receive, send):
+        # Allow all WebSocket connections for Electron environment
+        if scope["type"] == "websocket":
+            # Skip origin validation for Electron - all origins allowed
+            pass
+        return application(scope, receive, send)
+
+    return inner
+
+
 # Security adjustments for embedded environment
 SECURE_SSL_REDIRECT = False
 SECURE_HSTS_SECONDS = 0
@@ -233,6 +250,11 @@ USE_L10N = True
 FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
 
+# JWT configuration for Electron - longer sessions for desktop app
+# Allow customization via environment variables
+ELECTRON_ACCESS_TOKEN_HOURS = int(os.environ.get("ELECTRON_ACCESS_TOKEN_HOURS", "24"))  # 24 hours default
+ELECTRON_REFRESH_TOKEN_DAYS = int(os.environ.get("ELECTRON_REFRESH_TOKEN_DAYS", "30"))  # 30 days default
+
 # Electron-specific settings
 ELECTRON_SETTINGS = {
     "APP_DATA_DIR": ELECTRON_USER_DATA,
@@ -245,10 +267,17 @@ ELECTRON_SETTINGS = {
     "ENABLE_COLLECTSTATIC": True,
     "SYNC_OPERATIONS_ONLY": False,
     "IS_ELECTRON_ENVIRONMENT": True,
+    "ACCESS_TOKEN_HOURS": ELECTRON_ACCESS_TOKEN_HOURS,
+    "REFRESH_TOKEN_DAYS": ELECTRON_REFRESH_TOKEN_DAYS,
+    "WEBSOCKET_FILE_ORIGIN_ALLOWED": True,
+    "ASGI_APPLICATION": "cupcake_vanilla.asgi_electron.application",
 }
 
 # Environment detection flag
 IS_ELECTRON_ENVIRONMENT = True
+
+# Use Electron-specific ASGI application that allows file:// origins
+ASGI_APPLICATION = "cupcake_vanilla.asgi_electron.application"
 
 
 def get_database_info():
@@ -274,6 +303,34 @@ def check_database_status():
         return False
 
 
+# Override SIMPLE_JWT settings with longer expiry times for Electron
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=ELECTRON_ACCESS_TOKEN_HOURS),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=ELECTRON_REFRESH_TOKEN_DAYS),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": False,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "VERIFYING_KEY": None,
+    "AUDIENCE": None,
+    "ISSUER": None,
+    "JWK_URL": None,
+    "LEEWAY": 0,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+    "USER_AUTHENTICATION_RULE": "rest_framework_simplejwt.authentication.default_user_authentication_rule",
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+    "TOKEN_TYPE_CLAIM": "token_type",
+    "TOKEN_USER_CLASS": "rest_framework_simplejwt.models.TokenUser",
+    "JTI_CLAIM": "jti",
+    "SLIDING_TOKEN_REFRESH_EXP_CLAIM": "refresh_exp",
+    "SLIDING_TOKEN_LIFETIME": timedelta(hours=ELECTRON_ACCESS_TOKEN_HOURS),
+    "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=ELECTRON_REFRESH_TOKEN_DAYS),
+}
+
 # Print startup information
 if __name__ == "__main__":
     print("=" * 50)
@@ -285,4 +342,8 @@ if __name__ == "__main__":
     print(f"Static Files: {STATIC_ROOT}")
     print(f"Media Files: {MEDIA_ROOT}")
     print(f"Log File: {os.path.join(ELECTRON_USER_DATA, 'cupcake_vanilla.log')}")
+    print(f"JWT Access Token: {ELECTRON_ACCESS_TOKEN_HOURS} hours")
+    print(f"JWT Refresh Token: {ELECTRON_REFRESH_TOKEN_DAYS} days")
+    print("WebSocket file:// origins: ALLOWED")
+    print(f"ASGI Application: {ASGI_APPLICATION}")
     print("=" * 50)
