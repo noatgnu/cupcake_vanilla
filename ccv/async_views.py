@@ -219,21 +219,28 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
         is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
 
         if is_electron:
-            # Direct file serving for Electron environment (like whitenoise for static files)
+            # Direct file serving for Electron environment using streaming response
             import os
 
-            from django.http import FileResponse
+            from django.http import StreamingHttpResponse
 
             file_path = task_result.get_file_path()
             if not os.path.exists(file_path):
                 return HttpResponse("File not found", status=404)
 
-            response = FileResponse(
-                open(file_path, "rb"),
-                as_attachment=True,
-                filename=task_result.file_name,
+            def file_iterator(file_path, chunk_size=8192):
+                with open(file_path, "rb") as f:
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            response = StreamingHttpResponse(
+                file_iterator(file_path),
                 content_type=task_result.content_type or "application/octet-stream",
             )
+            response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
             # Add cache headers (short cache since files are temporary)
             response["Cache-Control"] = "private, max-age=300"  # 5 minutes
             # Add security headers
