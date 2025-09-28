@@ -234,6 +234,11 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
                 filename=task_result.file_name,
                 content_type=task_result.content_type or "application/octet-stream",
             )
+            # Add cache headers (short cache since files are temporary)
+            response["Cache-Control"] = "private, max-age=300"  # 5 minutes
+            # Add security headers
+            response["X-Content-Type-Options"] = "nosniff"
+            response["X-Download-Options"] = "noopen"
         else:
             # Use nginx X-Accel-Redirect for production with nginx
             response = HttpResponse()
@@ -241,13 +246,11 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
             response["Content-Type"] = task_result.content_type or "application/octet-stream"
             response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
             response["Content-Length"] = task_result.file_size
-
-        # Add cache headers (short cache since files are temporary)
-        response["Cache-Control"] = "private, max-age=300"  # 5 minutes
-
-        # Optional: Add security headers
-        response["X-Content-Type-Options"] = "nosniff"
-        response["X-Download-Options"] = "noopen"
+            # Add cache headers (short cache since files are temporary)
+            response["Cache-Control"] = "private, max-age=300"  # 5 minutes
+            # Add security headers
+            response["X-Content-Type-Options"] = "nosniff"
+            response["X-Download-Options"] = "noopen"
 
         return response
 
