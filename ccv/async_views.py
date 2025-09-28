@@ -232,7 +232,7 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
 
             response = HttpResponse(
                 file_content,
-                content_type=task_result.content_type or "application/octet-stream",
+                content_type="text/plain",
             )
             response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
             # Add cache headers (short cache since files are temporary)
