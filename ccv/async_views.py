@@ -213,12 +213,34 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
         # Record download
         task_result.record_download()
 
-        # Use nginx X-Accel-Redirect for secure file serving
-        response = HttpResponse()
-        response["X-Accel-Redirect"] = f"/internal/media/{task_result.file.name}"
-        response["Content-Type"] = task_result.content_type or "application/octet-stream"
-        response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
-        response["Content-Length"] = task_result.file_size
+        # Check if running in Electron environment (no nginx)
+        from django.conf import settings
+
+        is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
+
+        if is_electron:
+            # Direct file serving for Electron environment (like whitenoise for static files)
+            import os
+
+            from django.http import FileResponse
+
+            file_path = task_result.get_file_path()
+            if not os.path.exists(file_path):
+                return HttpResponse("File not found", status=404)
+
+            response = FileResponse(
+                open(file_path, "rb"),
+                as_attachment=True,
+                filename=task_result.file_name,
+                content_type=task_result.content_type or "application/octet-stream",
+            )
+        else:
+            # Use nginx X-Accel-Redirect for production with nginx
+            response = HttpResponse()
+            response["X-Accel-Redirect"] = f"/internal/media/{task_result.file.name}"
+            response["Content-Type"] = task_result.content_type or "application/octet-stream"
+            response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
+            response["Content-Length"] = task_result.file_size
 
         # Add cache headers (short cache since files are temporary)
         response["Cache-Control"] = "private, max-age=300"  # 5 minutes
