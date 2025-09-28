@@ -219,27 +219,19 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
         is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
 
         if is_electron:
-            # Direct file serving for Electron environment - return file as blob
+            # Serve file directly with minimal processing for Electron
             import os
+
+            from django.http import FileResponse
 
             file_path = task_result.get_file_path()
             if not os.path.exists(file_path):
                 return HttpResponse("File not found", status=404)
 
-            # Read file into memory and return as blob
-            with open(file_path, "rb") as f:
-                file_content = f.read()
-
-            response = HttpResponse(
-                file_content,
-                content_type="text/plain",
-            )
+            # Use FileResponse without as_attachment to avoid extra headers
+            file_handle = open(file_path, "rb")
+            response = FileResponse(file_handle, content_type=task_result.content_type or "application/octet-stream")
             response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
-            # Add cache headers (short cache since files are temporary)
-            response["Cache-Control"] = "private, max-age=300"  # 5 minutes
-            # Add security headers
-            response["X-Content-Type-Options"] = "nosniff"
-            response["X-Download-Options"] = "noopen"
         else:
             # Use nginx X-Accel-Redirect for production with nginx
             response = HttpResponse()
