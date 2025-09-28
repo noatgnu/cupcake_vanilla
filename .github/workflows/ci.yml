@@ -95,6 +95,17 @@ jobs:
       matrix:
         python-version: [3.11]
 
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
     steps:
     - uses: actions/checkout@v4
 
@@ -124,12 +135,15 @@ jobs:
     - name: Install project with Electron dependencies
       run: poetry install --no-interaction --with electron
 
-    - name: Test Electron environment with SQLite Django backend
+    - name: Test Electron environment with SQLite Django backend and Redis
       env:
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
         ELECTRON_DEBUG: true
         SECRET_KEY: test-electron-secret-key
         ELECTRON_APP_DATA: /tmp/electron-test
+        REDIS_HOST: localhost
+        REDIS_PORT: 6379
+        REDIS_URL: redis://localhost:6379
         ENABLE_CUPCAKE_MACARON: true
         ENABLE_CUPCAKE_MINT_CHOCOLATE: true
         ENABLE_CUPCAKE_RED_VELVET: true
