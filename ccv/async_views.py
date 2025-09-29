@@ -217,6 +217,7 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
         from django.conf import settings
 
         is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
+        print(f"ELECTRON_DEBUG: IS_ELECTRON_ENVIRONMENT = {is_electron}")
 
         if is_electron:
             # Use simple HttpResponse with file content for Electron to avoid all Content-Length issues
