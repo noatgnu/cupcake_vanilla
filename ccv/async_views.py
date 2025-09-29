@@ -219,31 +219,22 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
         is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
 
         if is_electron:
-            # Serve file directly with minimal processing for Electron
+            # Use simple HttpResponse with file content for Electron to avoid all Content-Length issues
             import os
-
-            from django.http import StreamingHttpResponse
 
             file_path = task_result.get_file_path()
             if not os.path.exists(file_path):
                 return HttpResponse("File not found", status=404)
 
-            # Use StreamingHttpResponse with chunked encoding to avoid Content-Length issues
-            def file_chunks():
-                with open(file_path, "rb") as f:
-                    while True:
-                        chunk = f.read(8192)
-                        if not chunk:
-                            break
-                        yield chunk
+            # Read file and return with gzip compression disabled
+            with open(file_path, "rb") as f:
+                file_content = f.read()
 
-            response = StreamingHttpResponse(
-                file_chunks(), content_type=task_result.content_type or "application/octet-stream"
-            )
+            response = HttpResponse(file_content, content_type=task_result.content_type or "application/octet-stream")
             response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
-            # Force chunked encoding by not setting Content-Length
-            if "Content-Length" in response:
-                del response["Content-Length"]
+
+            # Disable gzip compression to prevent Content-Length mismatch
+            response["Content-Encoding"] = "identity"
         else:
             # Use nginx X-Accel-Redirect for production with nginx
             response = HttpResponse()
