@@ -215,7 +215,7 @@ CSRF_COOKIE_SECURE = False
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_AGE = 86400  # 1 day
 
-# Minimal middleware for embedded environment
+# Minimal middleware for embedded environment - GZipMiddleware removed to prevent Content-Length issues
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
