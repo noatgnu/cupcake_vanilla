@@ -1,0 +1,108 @@
+name: Build Portable Distribution
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11']
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Install dependencies
+      run: |
+        poetry install --no-interaction --no-dev
+
+    - name: Create portable distribution
+      shell: bash
+      run: |
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF" ]; then
+          VERSION="dev-$(date +%Y%m%d)"
+        fi
+
+        OS_NAME="${{ matrix.os }}"
+        OS_NAME="${OS_NAME%-latest}"
+
+        DIST_NAME="cupcake_vanilla-${VERSION}-${OS_NAME}-python${{ matrix.python-version }}"
+        DIST_DIR="dist/${DIST_NAME}"
+
+        mkdir -p "${DIST_DIR}"
+
+        cp -r .venv "${DIST_DIR}/venv"
+
+        cp -r ccv ccc ccm ccmc ccrv ccsc cupcake_vanilla manage.py "${DIST_DIR}/"
+
+        if [ -f "pyproject.toml" ]; then
+          cp pyproject.toml "${DIST_DIR}/"
+        fi
+        if [ -f "poetry.lock" ]; then
+          cp poetry.lock "${DIST_DIR}/"
+        fi
+        if [ -f "README.md" ]; then
+          cp README.md "${DIST_DIR}/"
+        fi
+        if [ -f "LICENSE" ]; then
+          cp LICENSE "${DIST_DIR}/"
+        fi
+
+        cat > "${DIST_DIR}/activate.sh" << 'EOF'
+        #!/bin/bash
+        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+        source "${SCRIPT_DIR}/venv/bin/activate"
+        export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH}"
+        echo "Cupcake Vanilla environment activated"
+        echo "Run: python manage.py runserver"
+        EOF
+
+        cat > "${DIST_DIR}/activate.bat" << 'EOF'
+        @echo off
+        set SCRIPT_DIR=%~dp0
+        call "%SCRIPT_DIR%venv\Scripts\activate.bat"
+        set PYTHONPATH=%SCRIPT_DIR%;%PYTHONPATH%
+        echo Cupcake Vanilla environment activated
+        echo Run: python manage.py runserver
+        EOF
+
+        chmod +x "${DIST_DIR}/activate.sh"
+
+        cd dist
+        tar -czf "${DIST_NAME}.tar.gz" "${DIST_NAME}"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: cupcake_vanilla-${{ matrix.os }}-python${{ matrix.python-version }}
+        path: dist/*.tar.gz
+        retention-days: 30
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/*.tar.gz
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
