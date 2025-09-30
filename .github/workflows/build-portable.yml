@@ -47,9 +47,6 @@ jobs:
         echo "Fetching release data..."
         RELEASE_DATA=$(curl -sL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest")
 
-        echo "First 500 chars of response:"
-        echo "$RELEASE_DATA" | head -c 500
-
         TAG=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('tag_name', 'unknown'))" 2>&1)
         echo "Latest release tag: $TAG"
 
