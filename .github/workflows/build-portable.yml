@@ -45,7 +45,7 @@ jobs:
         echo "Looking for platform: $PLATFORM"
 
         echo "Fetching release data..."
-        RELEASE_DATA=$(curl -sL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/indygreg/python-build-standalone/releases/latest")
+        RELEASE_DATA=$(curl -sL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest")
 
         echo "First 500 chars of response:"
         echo "$RELEASE_DATA" | head -c 500
