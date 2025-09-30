@@ -2,7 +2,7 @@ name: Build Portable Distribution
 
 on:
   release:
-    types: [created, published]
+    types: [published]
   workflow_dispatch:
 
 jobs:
