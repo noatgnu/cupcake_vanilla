@@ -48,7 +48,7 @@ jobs:
         echo "Looking for platform: $PLATFORM"
 
         echo "Fetching release data..."
-        HTTP_CODE=$(curl -sL -w "%{http_code}" -o /tmp/release.json \
+        HTTP_CODE=$(curl -sL -w "%{http_code}" -o release.json \
           -H "Accept: application/vnd.github+json" \
           -H "Authorization: Bearer ${GH_TOKEN}" \
           -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -58,11 +58,11 @@ jobs:
 
         if [ "$HTTP_CODE" != "200" ]; then
           echo "ERROR: Failed to fetch release data (HTTP $HTTP_CODE)"
-          cat /tmp/release.json
+          cat release.json
           exit 1
         fi
 
-        TAG=$(python3 -c "import json; data=json.load(open('/tmp/release.json')); print(data.get('tag_name', 'unknown'))")
+        TAG=$(python3 -c "import json; data=json.load(open('release.json')); print(data.get('tag_name', 'unknown'))")
         echo "Latest release tag: $TAG"
 
         if [ "$TAG" = "unknown" ]; then
@@ -70,12 +70,12 @@ jobs:
           exit 1
         fi
 
-        DOWNLOAD_URL=$(python3 -c "import json; data = json.load(open('/tmp/release.json')); assets = data.get('assets', []); platform = '${PLATFORM}'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and '_stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
+        DOWNLOAD_URL=$(python3 -c "import json; data = json.load(open('release.json')); assets = data.get('assets', []); platform = '${PLATFORM}'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and '_stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
 
         if [ -z "$DOWNLOAD_URL" ]; then
           echo "Error: Could not find Python 3.11 for platform $PLATFORM"
           echo "Sample of available Python 3.11 assets:"
-          python3 -c "import json; data=json.load(open('/tmp/release.json')); [print(asset['name']) for asset in data.get('assets', []) if 'cpython-3.11' in asset.get('name', '') and 'install_only' in asset.get('name', '')]" | head -10
+          python3 -c "import json; data=json.load(open('release.json')); [print(asset['name']) for asset in data.get('assets', []) if 'cpython-3.11' in asset.get('name', '') and 'install_only' in asset.get('name', '')]" | head -10
           exit 1
         fi
 
