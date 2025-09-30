@@ -43,15 +43,17 @@ jobs:
       run: |
         PLATFORM="${{ matrix.platform }}"
 
-        RELEASE_DATA=$(curl -sL "https://api.github.com/repos/indygreg/python-build-standalone/releases?per_page=1")
-        TAG=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data[0]['tag_name'])")
+        RELEASE_DATA=$(curl -sL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/indygreg/python-build-standalone/releases/latest")
 
+        TAG=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('tag_name', 'unknown'))")
         echo "Latest release tag: $TAG"
 
-        DOWNLOAD_URL=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data = json.load(sys.stdin); assets = data[0]['assets']; platform = '$PLATFORM'; [print(asset['browser_download_url']) for asset in assets if 'cpython-3.11' in asset['name'] and platform in asset['name'] and asset['name'].endswith('install_only.tar.gz') and 'stripped' not in asset['name']][:1]")
+        DOWNLOAD_URL=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data = json.load(sys.stdin); assets = data.get('assets', []); platform = '$PLATFORM'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and 'stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
 
         if [ -z "$DOWNLOAD_URL" ]; then
           echo "Error: Could not find Python 3.11 for platform $PLATFORM"
+          echo "Available assets:"
+          echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); [print(asset['name']) for asset in data.get('assets', []) if 'cpython-3.11' in asset.get('name', '')]" | head -20
           exit 1
         fi
 
