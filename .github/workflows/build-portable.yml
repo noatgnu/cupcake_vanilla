@@ -91,7 +91,7 @@ jobs:
         tar -czf "${DIST_NAME}.tar.gz" "${DIST_NAME}"
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: cupcake_vanilla-${{ matrix.os }}-python${{ matrix.python-version }}
         path: dist/*.tar.gz
