@@ -42,18 +42,28 @@ jobs:
       shell: bash
       run: |
         PLATFORM="${{ matrix.platform }}"
+        echo "Looking for platform: $PLATFORM"
 
+        echo "Fetching release data..."
         RELEASE_DATA=$(curl -sL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/indygreg/python-build-standalone/releases/latest")
 
-        TAG=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('tag_name', 'unknown'))")
+        echo "First 500 chars of response:"
+        echo "$RELEASE_DATA" | head -c 500
+
+        TAG=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('tag_name', 'unknown'))" 2>&1)
         echo "Latest release tag: $TAG"
 
-        DOWNLOAD_URL=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data = json.load(sys.stdin); assets = data.get('assets', []); platform = '${PLATFORM}'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and 'stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
+        if [ "$TAG" = "unknown" ]; then
+          echo "ERROR: Failed to parse release data"
+          exit 1
+        fi
+
+        DOWNLOAD_URL=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data = json.load(sys.stdin); assets = data.get('assets', []); platform = '${PLATFORM}'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and '_stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')" 2>&1)
 
         if [ -z "$DOWNLOAD_URL" ]; then
           echo "Error: Could not find Python 3.11 for platform $PLATFORM"
-          echo "Available assets:"
-          echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); [print(asset['name']) for asset in data.get('assets', []) if 'cpython-3.11' in asset.get('name', '')]" | head -20
+          echo "Sample of available Python 3.11 assets:"
+          echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); [print(asset['name']) for asset in data.get('assets', []) if 'cpython-3.11' in asset.get('name', '') and 'install_only' in asset.get('name', '')]" 2>&1 | head -10
           exit 1
         fi
 
