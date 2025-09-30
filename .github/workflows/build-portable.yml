@@ -29,12 +29,12 @@ jobs:
       run: |
         python -m venv .venv
         if [ "$RUNNER_OS" == "Windows" ]; then
-          source .venv/Scripts/activate
+          .venv/Scripts/python.exe -m pip install --upgrade pip
+          .venv/Scripts/pip.exe install -r requirements.txt
         else
-          source .venv/bin/activate
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
         fi
-        pip install --upgrade pip
-        pip install -r requirements.txt
 
     - name: Create portable distribution
       shell: bash
