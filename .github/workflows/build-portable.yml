@@ -8,6 +8,7 @@ on:
 
 jobs:
   build:
+    timeout-minutes: 60
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -23,16 +24,17 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install Poetry
-      uses: snok/install-poetry@v1
-      with:
-        version: latest
-        virtualenvs-create: true
-        virtualenvs-in-project: true
-
-    - name: Install dependencies
+    - name: Create virtual environment and install dependencies
+      shell: bash
       run: |
-        poetry install --no-interaction --with electron
+        python -m venv .venv
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          source .venv/Scripts/activate
+        else
+          source .venv/bin/activate
+        fi
+        pip install --upgrade pip
+        pip install -r requirements.txt
 
     - name: Create portable distribution
       shell: bash
@@ -50,8 +52,15 @@ jobs:
 
         mkdir -p "${DIST_DIR}"
 
-        cp -r .venv "${DIST_DIR}/venv"
+        echo "Copying virtual environment (excluding cache)..."
+        mkdir -p "${DIST_DIR}/venv"
+        if [ "$RUNNER_OS" == "Windows" ]; then
+          rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='pip-cache' .venv/ "${DIST_DIR}/venv/" || cp -r .venv "${DIST_DIR}/venv"
+        else
+          rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='pip-cache' .venv/ "${DIST_DIR}/venv/" || cp -r .venv "${DIST_DIR}/venv"
+        fi
 
+        echo "Copying source code..."
         cp -r ccv ccc ccm ccmc ccrv ccsc cupcake_vanilla manage.py "${DIST_DIR}/"
 
         if [ -f "pyproject.toml" ]; then
