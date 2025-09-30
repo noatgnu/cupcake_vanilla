@@ -32,7 +32,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        poetry install --no-interaction --no-dev
+        poetry install --no-interaction --with electron
 
     - name: Create portable distribution
       shell: bash
@@ -59,12 +59,6 @@ jobs:
         fi
         if [ -f "poetry.lock" ]; then
           cp poetry.lock "${DIST_DIR}/"
-        fi
-        if [ -f "README.md" ]; then
-          cp README.md "${DIST_DIR}/"
-        fi
-        if [ -f "LICENSE" ]; then
-          cp LICENSE "${DIST_DIR}/"
         fi
 
         cat > "${DIST_DIR}/activate.sh" << 'EOF'
