@@ -48,7 +48,7 @@ jobs:
         TAG=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('tag_name', 'unknown'))")
         echo "Latest release tag: $TAG"
 
-        DOWNLOAD_URL=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data = json.load(sys.stdin); assets = data.get('assets', []); platform = '$PLATFORM'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and 'stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
+        DOWNLOAD_URL=$(echo "$RELEASE_DATA" | python3 -c "import sys, json; data = json.load(sys.stdin); assets = data.get('assets', []); platform = '${PLATFORM}'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and 'stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
 
         if [ -z "$DOWNLOAD_URL" ]; then
           echo "Error: Could not find Python 3.11 for platform $PLATFORM"
