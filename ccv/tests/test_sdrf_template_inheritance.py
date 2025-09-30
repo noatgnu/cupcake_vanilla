@@ -151,6 +151,12 @@ class SDRFTemplateInheritanceTest(TestCase):
 
     def test_sdrf_import_with_template_inheritance(self):
         """Test that SDRF import into a table created from template preserves template properties."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(user=self.user)
 
         # STEP 1: Create table from the template we already have
         created_table = self.table_template.create_table_from_template(
@@ -168,8 +174,13 @@ class SDRFTemplateInheritanceTest(TestCase):
         # Verify template properties are set on creation
         self.assertIsNotNone(organism_col_before.ontology_options)
         self.assertIsNotNone(organism_col_before.template)
+        print("\n=== BEFORE IMPORT ===")
+        print(f"ontology_type: {organism_col_before.ontology_type}")
+        print(f"ontology_options: {organism_col_before.ontology_options}")
+        print(f"custom_ontology_filters: {organism_col_before.custom_ontology_filters}")
+        print(f"template: {organism_col_before.template}")
 
-        # STEP 2: Import SDRF into the templated table using the real API
+        # STEP 2: Import SDRF via API
         sdrf_content = (
             "source name\tcharacteristics[organism]\t"
             "characteristics[organism part]\tcharacteristics[disease]\t"
@@ -179,16 +190,37 @@ class SDRFTemplateInheritanceTest(TestCase):
             "Sample3\thomo sapiens\theart\tcancer\trun3\n"
         )
 
-        # Import using the exact same workflow as the real API
-        from ccv.tasks.import_utils import import_sdrf_data
+        # Create file upload
+        sdrf_file = SimpleUploadedFile(
+            "test_sdrf.tsv", sdrf_content.encode("utf-8"), content_type="text/tab-separated-values"
+        )
 
-        result = import_sdrf_data(
+        # Import via async API
+        import_response = client.post(
+            "/api/v1/async-import/sdrf_file/",
+            {
+                "metadata_table_id": created_table.id,
+                "file": sdrf_file,
+                "replace_existing": False,
+                "validate_ontologies": True,
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(import_response.status_code, 202, f"Import should be queued: {import_response.data}")
+        task_id = import_response.data.get("task_id")
+        self.assertIsNotNone(task_id)
+
+        # Execute the task synchronously for testing (simulating what RQ worker does)
+        from ccv.tasks.import_tasks import import_sdrf_task
+
+        result = import_sdrf_task(
+            metadata_table_id=created_table.id,
+            user_id=self.user.id,
             file_content=sdrf_content,
-            metadata_table=created_table,
-            user=self.user,
-            replace_existing=False,
+            replace_existing=True,
             validate_ontologies=True,
-            create_pools=True,
+            task_id=task_id,
         )
 
         # Verify the import was successful
@@ -196,6 +228,12 @@ class SDRFTemplateInheritanceTest(TestCase):
 
         # STEP 3: Verify template properties are preserved after import
         organism_col_after = created_table.columns.filter(name="characteristics[organism]").first()
+        print("\n=== AFTER IMPORT ===")
+        print(f"ontology_type: {organism_col_after.ontology_type}")
+        print(f"ontology_options: {organism_col_after.ontology_options}")
+        print(f"custom_ontology_filters: {organism_col_after.custom_ontology_filters}")
+        print(f"template: {organism_col_after.template}")
+
         self.assertIsNotNone(organism_col_after, "Organism column should exist after import")
         self.assertEqual(organism_col_after.ontology_type, "species", "Ontology type should be preserved")
         self.assertIsNotNone(organism_col_after.template, "Template reference should be preserved")

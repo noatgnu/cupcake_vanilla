@@ -610,11 +610,11 @@ def import_sdrf_data(
                     elif pooled_value.lower() == "pooled":
                         pooled_rows.append(row_index)
 
-        # Check permissions
         if not metadata_table.can_edit(user):
             raise PermissionError("Permission denied: cannot edit this metadata table")
 
-        # Clear existing columns if replace_existing is True
+        table_template = _get_table_template(metadata_table)
+
         if replace_existing:
             metadata_table.columns.all().delete()
             metadata_table.sample_pools.all().delete()
@@ -650,12 +650,8 @@ def import_sdrf_data(
         metadata_table.sample_count = len(data_rows)
         metadata_table.save(update_fields=["sample_count"])
 
-        # Enhanced SDRF import with intelligent column matching and schema organization
         created_columns = []
-        column_name_usage = {}  # Track how many times each name is used
-
-        # Get the metadata table template that existing columns come from
-        table_template = _get_table_template(metadata_table)
+        column_name_usage = {}
 
         # Process headers with intelligent template matching
         for i, header in enumerate(headers):
