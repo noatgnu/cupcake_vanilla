@@ -198,6 +198,9 @@ def _find_or_create_matching_column(
             if template_column.ontology_type:
                 existing_column.ontology_type = template_column.ontology_type
                 update_fields.append("ontology_type")
+            if template_column.ontology_options:
+                existing_column.ontology_options = template_column.ontology_options
+                update_fields.append("ontology_options")
             if template_column.custom_ontology_filters:
                 existing_column.custom_ontology_filters = template_column.custom_ontology_filters
                 update_fields.append("custom_ontology_filters")
@@ -217,6 +220,8 @@ def _find_or_create_matching_column(
                 metadata_table=metadata_table,
                 template=template_column.template,
                 ontology_type=template_column.ontology_type,
+                ontology_options=template_column.ontology_options,
+                custom_ontology_filters=template_column.custom_ontology_filters,
                 mandatory=template_column.mandatory,
                 hidden=template_column.hidden,
                 readonly=template_column.readonly,
