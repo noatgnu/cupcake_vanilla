@@ -17,7 +17,7 @@ jobs:
             os_name: linux
           - os: windows-latest
             arch: x86_64
-            platform: x86_64-pc-windows-msvc-shared
+            platform: x86_64-pc-windows-msvc
             os_name: windows
           - os: macos-13
             arch: x86_64
