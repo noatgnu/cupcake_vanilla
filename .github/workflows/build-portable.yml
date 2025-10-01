@@ -27,10 +27,6 @@ jobs:
             arch: aarch64
             platform: aarch64-apple-darwin
             os_name: macos
-          - os: macos-latest
-            arch: aarch64
-            platform: aarch64-unknown-linux-gnu
-            os_name: linux
 
     runs-on: ${{ matrix.os }}
 
