@@ -88,7 +88,7 @@ jobs:
         tar -xzf python.tar.gz -C python_portable
         rm python.tar.gz
 
-    - name: Create virtual environment and install dependencies
+    - name: Install dependencies directly to portable Python
       shell: bash
       run: |
         if [ "$RUNNER_OS" == "Windows" ]; then
@@ -97,15 +97,8 @@ jobs:
           PYTHON_BIN="python_portable/python/bin/python3"
         fi
 
-        $PYTHON_BIN -m venv .venv
-
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          .venv/Scripts/python.exe -m pip install --upgrade pip
-          .venv/Scripts/pip.exe install -r requirements.txt
-        else
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -r requirements.txt
-        fi
+        $PYTHON_BIN -m pip install --upgrade pip
+        $PYTHON_BIN -m pip install -r requirements.txt
 
     - name: Create portable distribution
       shell: bash
@@ -122,13 +115,8 @@ jobs:
 
         mkdir -p "${DIST_DIR}"
 
-        echo "Copying virtual environment (excluding cache)..."
-        mkdir -p "${DIST_DIR}/venv"
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='pip-cache' .venv/ "${DIST_DIR}/venv/" || cp -r .venv "${DIST_DIR}/venv"
-        else
-          rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='pip-cache' .venv/ "${DIST_DIR}/venv/" || cp -r .venv "${DIST_DIR}/venv"
-        fi
+        echo "Copying portable Python with dependencies..."
+        cp -r python_portable/python "${DIST_DIR}/python"
 
         echo "Copying source code..."
         cp -r ccv ccc ccm ccmc ccrv ccsc cupcake_vanilla manage.py "${DIST_DIR}/"
@@ -140,25 +128,21 @@ jobs:
           cp poetry.lock "${DIST_DIR}/"
         fi
 
-        cat > "${DIST_DIR}/activate.sh" << 'EOF'
+        cat > "${DIST_DIR}/run.sh" << 'EOF'
         #!/bin/bash
         SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-        source "${SCRIPT_DIR}/venv/bin/activate"
         export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH}"
-        echo "Cupcake Vanilla environment activated"
-        echo "Run: python manage.py runserver"
+        "${SCRIPT_DIR}/python/bin/python3" "$@"
         EOF
 
-        cat > "${DIST_DIR}/activate.bat" << 'EOF'
+        cat > "${DIST_DIR}/run.bat" << 'EOF'
         @echo off
         set SCRIPT_DIR=%~dp0
-        call "%SCRIPT_DIR%venv\Scripts\activate.bat"
         set PYTHONPATH=%SCRIPT_DIR%;%PYTHONPATH%
-        echo Cupcake Vanilla environment activated
-        echo Run: python manage.py runserver
+        "%SCRIPT_DIR%\python\python.exe" %*
         EOF
 
-        chmod +x "${DIST_DIR}/activate.sh"
+        chmod +x "${DIST_DIR}/run.sh"
 
         cd dist
         tar -czf "${DIST_NAME}.tar.gz" "${DIST_NAME}"
