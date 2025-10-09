@@ -158,6 +158,71 @@ class InstrumentViewSet(BaseViewSet):
                 {"error": f"Maintenance check failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def send_test_notification(self, request, pk=None):
+        """
+        Send a test notification for this instrument.
+        Only accessible by staff or admin users.
+
+        Request body should contain:
+        - notification_type: One of 'warranty_expiring', 'maintenance_due', 'maintenance_completed'
+        - recipient_id: Optional user ID to send to (defaults to current user)
+        """
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response(
+                {"error": "Only staff or admin users can send test notifications"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .communication import send_maintenance_alert
+
+        instrument = self.get_object()
+
+        notification_type = request.data.get("notification_type", "maintenance_due")
+        recipient_id = request.data.get("recipient_id")
+
+        valid_types = ["warranty_expiring", "maintenance_due", "maintenance_completed"]
+        if notification_type not in valid_types:
+            return Response(
+                {"error": f"Invalid notification_type. Must be one of: {', '.join(valid_types)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Determine recipient
+        if recipient_id:
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            try:
+                recipient = User.objects.get(pk=recipient_id)
+            except User.DoesNotExist:
+                return Response({"error": "Recipient user not found"}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            recipient = request.user
+
+        # Send test notification
+        maintenance_info = {"test": True, "notification_type": notification_type}
+        success = send_maintenance_alert(
+            instrument=instrument,
+            message_type=notification_type,
+            maintenance_info=maintenance_info,
+            notify_users=[recipient],
+        )
+
+        if success:
+            return Response(
+                {
+                    "success": True,
+                    "message": f"Test notification sent to {recipient.username}",
+                    "notification_type": notification_type,
+                }
+            )
+        else:
+            return Response(
+                {"error": "Failed to send notification. CCMC may not be available."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     @action(detail=True, methods=["get"])
     def metadata(self, request, pk=None):
         """Get metadata table details for this instrument."""
@@ -561,6 +626,67 @@ class StoredReagentViewSet(BaseViewSet):
 
         serializer = self.get_serializer(low_stock_reagents, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def send_test_notification(self, request, pk=None):
+        """
+        Send a test notification for this stored reagent.
+        Only accessible by staff or admin users.
+
+        Request body should contain:
+        - notification_type: One of 'low_stock', 'expired', 'expiring_soon'
+        - recipient_id: Optional user ID to send to (defaults to current user)
+        """
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response(
+                {"error": "Only staff or admin users can send test notifications"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .communication import send_reagent_alert
+
+        stored_reagent = self.get_object()
+
+        notification_type = request.data.get("notification_type", "low_stock")
+        recipient_id = request.data.get("recipient_id")
+
+        valid_types = ["low_stock", "expired", "expiring_soon"]
+        if notification_type not in valid_types:
+            return Response(
+                {"error": f"Invalid notification_type. Must be one of: {', '.join(valid_types)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Determine recipient
+        if recipient_id:
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            try:
+                recipient = User.objects.get(pk=recipient_id)
+            except User.DoesNotExist:
+                return Response({"error": "Recipient user not found"}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            recipient = request.user
+
+        # Send test notification
+        success = send_reagent_alert(
+            stored_reagent=stored_reagent, alert_type=notification_type, notify_users=[recipient]
+        )
+
+        if success:
+            return Response(
+                {
+                    "success": True,
+                    "message": f"Test notification sent to {recipient.username}",
+                    "notification_type": notification_type,
+                }
+            )
+        else:
+            return Response(
+                {"error": "Failed to send notification. CCMC may not be available."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @action(detail=True, methods=["get"])
     def metadata(self, request, pk=None):
