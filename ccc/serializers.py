@@ -16,6 +16,7 @@ from .models import (
     AnnotationFolder,
     LabGroup,
     LabGroupInvitation,
+    LabGroupPermission,
     RemoteHost,
     ResourcePermission,
     SiteConfig,
@@ -112,7 +113,11 @@ class LabGroupSerializer(serializers.ModelSerializer):
     is_member = serializers.SerializerMethodField()
     can_invite = serializers.SerializerMethodField()
     can_manage = serializers.SerializerMethodField()
+    can_process_jobs = serializers.SerializerMethodField()
     creator_name = serializers.SerializerMethodField()
+    parent_group_name = serializers.CharField(source="parent_group.name", read_only=True)
+    full_path = serializers.SerializerMethodField()
+    sub_groups_count = serializers.SerializerMethodField()
 
     class Meta:
         model = LabGroup
@@ -120,19 +125,33 @@ class LabGroupSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "description",
+            "parent_group",
+            "parent_group_name",
+            "full_path",
             "creator",
             "creator_name",
             "is_active",
             "allow_member_invites",
+            "allow_process_jobs",
             "member_count",
+            "sub_groups_count",
             "is_creator",
             "is_member",
             "can_invite",
             "can_manage",
+            "can_process_jobs",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "creator", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "creator",
+            "created_at",
+            "updated_at",
+            "parent_group_name",
+            "full_path",
+            "sub_groups_count",
+        ]
 
     def get_member_count(self, obj):
         """Return the number of members in this lab group."""
@@ -158,11 +177,24 @@ class LabGroupSerializer(serializers.ModelSerializer):
         user = self.context.get("request").user
         return obj.can_manage(user) if user.is_authenticated else False
 
+    def get_can_process_jobs(self, obj):
+        """Check if current user can process instrument jobs."""
+        user = self.context.get("request").user
+        return obj.can_process_jobs(user) if user.is_authenticated else False
+
     def get_creator_name(self, obj):
         """Return the creator's display name."""
         if obj.creator:
             return obj.creator.get_full_name() or obj.creator.username
         return None
+
+    def get_full_path(self, obj):
+        """Get the full hierarchical path to root."""
+        return obj.get_full_path()
+
+    def get_sub_groups_count(self, obj):
+        """Return the number of direct sub groups."""
+        return obj.sub_groups.filter(is_active=True).count()
 
     def create(self, validated_data):
         """Create a new lab group with the current user as creator."""
@@ -221,6 +253,60 @@ class LabGroupInvitationSerializer(serializers.ModelSerializer):
         """Create a new invitation with the current user as inviter."""
         user = self.context["request"].user
         return LabGroupInvitation.objects.create(inviter=user, **validated_data)
+
+
+class LabGroupPermissionSerializer(serializers.ModelSerializer):
+    """Serializer for lab group permission objects."""
+
+    user_username = serializers.CharField(source="user.username", read_only=True)
+    user_display_name = serializers.SerializerMethodField()
+    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
+
+    class Meta:
+        model = LabGroupPermission
+        fields = [
+            "id",
+            "user",
+            "user_username",
+            "user_display_name",
+            "lab_group",
+            "lab_group_name",
+            "can_view",
+            "can_invite",
+            "can_manage",
+            "can_process_jobs",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at", "user_username", "user_display_name", "lab_group_name"]
+
+    def get_user_display_name(self, obj):
+        """Get user's display name."""
+        if obj.user.first_name and obj.user.last_name:
+            return f"{obj.user.first_name} {obj.user.last_name}"
+        return obj.user.username
+
+    def validate(self, data):
+        """Validate that only staff/admin users can manually change can_process_jobs permission."""
+        request = self.context.get("request")
+        if request:
+            requesting_user = request.user
+            can_process_jobs = data.get("can_process_jobs")
+
+            if can_process_jobs is not None:
+                if self.instance:
+                    is_changing = self.instance.can_process_jobs != can_process_jobs
+                else:
+                    is_changing = can_process_jobs is True
+
+                if is_changing and not (requesting_user.is_staff or requesting_user.is_superuser):
+                    raise serializers.ValidationError(
+                        {
+                            "can_process_jobs": "Only staff or admin users can manually change can_process_jobs permission"
+                        }
+                    )
+
+        return data
 
 
 class UserSerializer(serializers.ModelSerializer):

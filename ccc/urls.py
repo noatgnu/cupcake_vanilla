@@ -13,6 +13,7 @@ from .viewsets import (
     AnnotationFolderViewSet,
     AnnotationViewSet,
     LabGroupInvitationViewSet,
+    LabGroupPermissionViewSet,
     LabGroupViewSet,
     RemoteHostViewSet,
     ResourcePermissionViewSet,
@@ -28,6 +29,7 @@ router.register(r"users", UserManagementViewSet, basename="users")
 router.register(r"lab-groups", LabGroupViewSet, basename="labgroup")
 router.register(r"site-config", SiteConfigViewSet, basename="siteconfig")
 router.register(r"lab-group-invitations", LabGroupInvitationViewSet, basename="labgroupinvitation")
+router.register(r"lab-group-permissions", LabGroupPermissionViewSet, basename="labgrouppermission")
 router.register(r"annotation-folders", AnnotationFolderViewSet, basename="annotationfolder")
 router.register(r"annotations", AnnotationViewSet, basename="annotation")
 router.register(r"remote-hosts", RemoteHostViewSet, basename="remotehost")

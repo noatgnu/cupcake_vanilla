@@ -3,6 +3,8 @@ from django.db import models
 
 from simple_history.models import HistoricalRecords
 
+from ccc.models import LabGroup
+
 
 class Instrument(models.Model):
     history = HistoricalRecords()
@@ -315,6 +317,65 @@ class StorageObject(models.Model):
 
     def __str__(self):
         return f"{self.object_name} ({self.object_type})"
+
+    def get_full_path(self):
+        """
+        Get the full hierarchical path to root as an array of objects.
+        Each object contains id and name for frontend navigation.
+        """
+        path = []
+        current = self
+        while current:
+            path.insert(0, {"id": current.id, "name": current.object_name})
+            current = current.stored_at
+        return path
+
+    def get_all_accessible_lab_groups(self):
+        """
+        Get all lab groups that have access to this storage object.
+        Includes lab groups from parent storage objects (inheritance).
+
+        Returns:
+            QuerySet: LabGroup objects that have access
+        """
+        lab_group_ids = set()
+
+        current = self
+        while current:
+            lab_group_ids.update(current.access_lab_groups.values_list("id", flat=True))
+            current = current.stored_at
+
+        return LabGroup.objects.filter(id__in=lab_group_ids)
+
+    def can_access(self, user):
+        """
+        Check if user can access this storage object.
+
+        Access is granted if:
+        - User is staff/superuser
+        - User is the owner
+        - User is member of any lab group that has access (including inherited from parents)
+
+        Args:
+            user: Django User instance to check
+
+        Returns:
+            bool: True if user can access the storage object
+        """
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_staff or user.is_superuser:
+            return True
+
+        if self.user == user:
+            return True
+
+        for lab_group in self.get_all_accessible_lab_groups():
+            if lab_group.is_member(user):
+                return True
+
+        return False
 
 
 class Reagent(models.Model):
@@ -790,6 +851,14 @@ class InstrumentJob(models.Model):
     )
     instrument_usage = models.ForeignKey(
         InstrumentUsage, on_delete=models.SET_NULL, related_name="instrument_jobs", blank=True, null=True
+    )
+    lab_group = models.ForeignKey(
+        "ccc.LabGroup",
+        on_delete=models.SET_NULL,
+        related_name="instrument_jobs",
+        blank=True,
+        null=True,
+        help_text="Lab group responsible for processing this job",
     )
 
     # Job details
@@ -1326,10 +1395,10 @@ class StoredReagentAnnotation(models.Model):
             if user in self.stored_reagent.access_users.all():
                 return True
 
-            # Check lab group access
-            user_lab_groups = user.lab_groups.all()
-            if self.stored_reagent.access_lab_groups.filter(id__in=user_lab_groups).exists():
-                return True
+            # Check lab group access (includes bubble-up from sub-groups)
+            for lab_group in self.stored_reagent.access_lab_groups.all():
+                if lab_group.is_member(user):
+                    return True
 
             # Check if access is open to all
             if self.stored_reagent.access_all:

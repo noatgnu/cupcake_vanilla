@@ -120,6 +120,29 @@ class CCMSerializerTests(TestCase):
         self.assertEqual(storage.object_type, "freezer")
         self.assertEqual(storage.object_description, "Main storage freezer")
 
+    def test_storage_object_serializer_full_path(self):
+        """Test StorageObjectSerializer includes full_path field."""
+        # Create hierarchy
+        building = StorageObject.objects.create(object_name="Building A", object_type="building")
+        room = StorageObject.objects.create(object_name="Room 101", object_type="room", stored_at=building)
+        freezer = StorageObject.objects.create(object_name="Freezer B", object_type="freezer", stored_at=room)
+
+        # Serialize and check full_path (should be array of {id, name})
+        serializer = StorageObjectSerializer(freezer)
+        self.assertIn("full_path", serializer.data)
+        self.assertEqual(
+            serializer.data["full_path"],
+            [
+                {"id": building.id, "name": "Building A"},
+                {"id": room.id, "name": "Room 101"},
+                {"id": freezer.id, "name": "Freezer B"},
+            ],
+        )
+
+        # Test root object
+        root_serializer = StorageObjectSerializer(building)
+        self.assertEqual(root_serializer.data["full_path"], [{"id": building.id, "name": "Building A"}])
+
     def test_reagent_serializer(self):
         """Test ReagentSerializer."""
         reagent_data = {"name": "Trypsin", "unit": "mg"}
@@ -374,6 +397,68 @@ class CCMViewSetTests(APITestCase):
         self.assertEqual(self._get_count_from_response(response), 1)
         results = self._get_results_from_response(response)
         self.assertEqual(results[0]["object_name"], "Test Freezer")
+
+    def test_storage_object_list_with_full_path(self):
+        """Test storage object list endpoint includes full_path."""
+        # Create hierarchy
+        building = StorageObject.objects.create(object_name="Main Building", object_type="building", user=self.user)
+        room = StorageObject.objects.create(
+            object_name="Lab Room", object_type="room", stored_at=building, user=self.user
+        )
+        freezer = StorageObject.objects.create(
+            object_name="Freezer A", object_type="freezer", stored_at=room, user=self.user
+        )
+
+        url = "/api/v1/storage-objects/"
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._get_results_from_response(response)
+
+        # Find the freezer in results
+        freezer_data = next((r for r in results if r["id"] == freezer.id), None)
+        self.assertIsNotNone(freezer_data)
+        self.assertIn("full_path", freezer_data)
+        self.assertEqual(
+            freezer_data["full_path"],
+            [
+                {"id": building.id, "name": "Main Building"},
+                {"id": room.id, "name": "Lab Room"},
+                {"id": freezer.id, "name": "Freezer A"},
+            ],
+        )
+
+    def test_storage_object_filter_roots(self):
+        """Test filtering for root level storage objects."""
+        # Create root and nested objects
+        building = StorageObject.objects.create(object_name="Building A", object_type="building", user=self.user)
+        warehouse = StorageObject.objects.create(object_name="Warehouse B", object_type="building", user=self.user)
+        room = StorageObject.objects.create(
+            object_name="Room 101", object_type="room", stored_at=building, user=self.user
+        )
+
+        url = "/api/v1/storage-objects/"
+
+        # Test filtering for root objects (stored_at__isnull=true)
+        response = self.client.get(url, {"stored_at__isnull": "true"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._get_results_from_response(response)
+
+        # Should only return root objects (building and warehouse)
+        self.assertEqual(len(results), 2)
+        root_ids = {r["id"] for r in results}
+        self.assertIn(building.id, root_ids)
+        self.assertIn(warehouse.id, root_ids)
+        self.assertNotIn(room.id, root_ids)
+
+        # Test filtering for non-root objects (stored_at__isnull=false)
+        response = self.client.get(url, {"stored_at__isnull": "false"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._get_results_from_response(response)
+
+        # Should only return nested objects (room)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], room.id)
 
     def test_reagent_list_filter(self):
         """Test reagent list and filtering."""

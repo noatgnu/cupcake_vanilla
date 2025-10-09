@@ -9,6 +9,8 @@ from django.contrib.auth import get_user_model
 
 from rest_framework import serializers
 
+from ccc.models import LabGroupPermission
+
 from .models import (
     ExternalContact,
     ExternalContactDetails,
@@ -103,6 +105,7 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
     instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     staff_usernames = serializers.StringRelatedField(source="staff", many=True, read_only=True)
+    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
 
     # Choice field display values
     job_type_display = serializers.CharField(source="get_job_type_display", read_only=True)
@@ -118,6 +121,8 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "instrument",
             "instrument_name",
             "instrument_usage",
+            "lab_group",
+            "lab_group_name",
             "job_type",
             "job_type_display",
             "job_name",
@@ -160,6 +165,7 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "instrument_name",
             "metadata_table_name",
             "staff_usernames",
+            "lab_group_name",
             "job_type_display",
             "status_display",
             "sample_type_display",
@@ -182,6 +188,35 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
         if value is not None and value <= 0:
             raise serializers.ValidationError("Injection volume must be positive.")
         return value
+
+    def validate(self, attrs):
+        """
+        Validate that assigned staff members have can_process_jobs permission for the lab_group.
+
+        Staff can only be assigned if they have can_process_jobs=True permission
+        for the specified lab_group.
+        """
+        staff = attrs.get("staff", [])
+        lab_group = attrs.get("lab_group")
+
+        if staff and lab_group:
+            invalid_staff = []
+            for staff_user in staff:
+                has_permission = LabGroupPermission.objects.filter(
+                    user=staff_user, lab_group=lab_group, can_process_jobs=True
+                ).exists()
+
+                if not has_permission:
+                    invalid_staff.append(staff_user.username)
+
+            if invalid_staff:
+                raise serializers.ValidationError(
+                    {
+                        "staff": f"The following users cannot be assigned as they don't have can_process_jobs permission for this lab group: {', '.join(invalid_staff)}"
+                    }
+                )
+
+        return attrs
 
 
 class InstrumentUsageSerializer(serializers.ModelSerializer):
@@ -282,6 +317,7 @@ class StorageObjectSerializer(serializers.ModelSerializer):
 
     stored_at_name = serializers.CharField(source="stored_at.object_name", read_only=True)
     user_username = serializers.CharField(source="user.username", read_only=True)
+    full_path = serializers.SerializerMethodField()
 
     class Meta:
         model = StorageObject
@@ -292,6 +328,7 @@ class StorageObjectSerializer(serializers.ModelSerializer):
             "object_description",
             "stored_at",
             "stored_at_name",
+            "full_path",
             "remote_id",
             "remote_host",
             "can_delete",
@@ -303,7 +340,11 @@ class StorageObjectSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at", "stored_at_name", "user_username"]
+        read_only_fields = ["id", "created_at", "updated_at", "stored_at_name", "user_username", "full_path"]
+
+    def get_full_path(self, obj):
+        """Get the full hierarchical path to root."""
+        return obj.get_full_path()
 
     def validate_object_name(self, value):
         """Validate object name is not empty."""
@@ -325,6 +366,7 @@ class StoredReagentSerializer(serializers.ModelSerializer):
     """Serializer for StoredReagent model."""
 
     reagent_name = serializers.CharField(source="reagent.name", read_only=True)
+    reagent_unit = serializers.CharField(source="reagent.unit", read_only=True)
     storage_object_name = serializers.CharField(source="storage_object.object_name", read_only=True)
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     metadata_table_id = serializers.IntegerField(source="metadata_table.id", read_only=True)
@@ -336,6 +378,7 @@ class StoredReagentSerializer(serializers.ModelSerializer):
             "id",
             "reagent",
             "reagent_name",
+            "reagent_unit",
             "storage_object",
             "storage_object_name",
             "quantity",
@@ -363,6 +406,7 @@ class StoredReagentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "reagent_name",
+            "reagent_unit",
             "storage_object_name",
             "metadata_table_name",
             "metadata_table_id",

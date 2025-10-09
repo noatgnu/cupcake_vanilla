@@ -72,12 +72,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return ProjectSerializer
 
     def get_queryset(self):
-        """Filter projects based on user permissions from AbstractResource."""
+        """Filter projects based on user permissions from AbstractResource (includes bubble-up from sub-groups)."""
         user = self.request.user
         if user.is_superuser:
             return self.queryset
 
-        return self.queryset.filter(Q(owner=user) | Q(lab_group__members=user)).distinct()
+        # Get all accessible lab groups (includes parent groups via bubble-up)
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
+
+        return self.queryset.filter(Q(owner=user) | Q(lab_group_id__in=accessible_groups)).distinct()
 
     @action(detail=True, methods=["get"])
     def sessions(self, request, pk=None):
@@ -118,13 +123,18 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
         return ProtocolModelSerializer
 
     def get_queryset(self):
-        """Filter protocols based on user permissions."""
+        """Filter protocols based on user permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
         if user.is_superuser:
             return self.queryset
 
+        # Get all accessible lab groups (includes parent groups via bubble-up)
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
+
         return self.queryset.filter(
-            Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group__members=user)
+            Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups)
         ).distinct()
 
     @action(detail=True, methods=["post"])
@@ -234,13 +244,18 @@ class SessionViewSet(viewsets.ModelViewSet):
         return SessionSerializer
 
     def get_queryset(self):
-        """Filter sessions based on user permissions."""
+        """Filter sessions based on user permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
         if user.is_superuser:
             return self.queryset
 
+        # Get all accessible lab groups (includes parent groups via bubble-up)
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
+
         return self.queryset.filter(
-            Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group__members=user)
+            Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups)
         ).distinct()
 
     @action(detail=True, methods=["post"])
@@ -325,17 +340,22 @@ class ProtocolRatingViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """Filter ratings based on protocol access permissions."""
+        """Filter ratings based on protocol access permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
         if user.is_superuser:
             return self.queryset
+
+        # Get all accessible lab groups (includes parent groups via bubble-up)
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         # Can see ratings for protocols they have access to
         return self.queryset.filter(
             Q(protocol__owner=user)
             | Q(protocol__editors=user)
             | Q(protocol__viewers=user)
-            | Q(protocol__lab_group__members=user)
+            | Q(protocol__lab_group_id__in=accessible_groups)
         ).distinct()
 
     def perform_create(self, serializer):
@@ -395,16 +415,21 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """Filter sections based on protocol permissions."""
+        """Filter sections based on protocol permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
         if user.is_superuser:
             return self.queryset
+
+        # Get all accessible lab groups (includes parent groups via bubble-up)
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         return self.queryset.filter(
             Q(protocol__owner=user)
             | Q(protocol__editors=user)
             | Q(protocol__viewers=user)
-            | Q(protocol__lab_group__members=user)
+            | Q(protocol__lab_group_id__in=accessible_groups)
         ).distinct()
 
     @action(detail=True, methods=["get"])
@@ -488,16 +513,21 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """Filter steps based on protocol permissions."""
+        """Filter steps based on protocol permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
         if user.is_superuser:
             return self.queryset
+
+        # Get all accessible lab groups (includes parent groups via bubble-up)
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         return self.queryset.filter(
             Q(protocol__owner=user)
             | Q(protocol__editors=user)
             | Q(protocol__viewers=user)
-            | Q(protocol__lab_group__members=user)
+            | Q(protocol__lab_group_id__in=accessible_groups)
         ).distinct()
 
     @action(detail=True, methods=["post"])

@@ -66,7 +66,7 @@ def load_ms_ontology_data():
     )
 
     created_count += load_ebi_resource(
-        "https://www.ebi.ac.uk/ols4/api/ontologies/clo/terms",
+        "https://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fwww.ebi.ac.uk%252Fefo%252FEFO_0000324/hierarchicalDescendants",
         size=1000,
         term_type="cell line",
     )

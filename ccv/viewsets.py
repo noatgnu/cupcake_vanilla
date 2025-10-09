@@ -113,10 +113,15 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             show_shared = self.request.query_params.get("show_shared", "false").lower() == "true"
 
             if show_shared:
+                # Get all accessible lab groups (includes parent groups via bubble-up)
+                from ccc.models import LabGroup
+
+                accessible_groups = LabGroup.get_accessible_group_ids(user)
+
                 permission_filter = (
                     Q(owner=user)
                     | Q(visibility=ResourceVisibility.PUBLIC)
-                    | Q(visibility=ResourceVisibility.GROUP, lab_group__members=user)
+                    | Q(visibility=ResourceVisibility.GROUP, lab_group_id__in=accessible_groups)
                     | Q(
                         resource_permissions__user=user,
                         resource_permissions__role__in=[
@@ -1134,12 +1139,14 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         # Filter by templates the user has access to:
         # 1. Templates created by the user
         # 2. Public templates
-        # 3. Templates from lab groups the user is a member of
-        user_groups = self.request.user.lab_groups.all()
+        # 3. Templates from lab groups the user is a member of (includes bubble-up from sub-groups)
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(self.request.user)
         accessible_queryset = queryset.filter(
             Q(owner=self.request.user)
             | Q(visibility="public")  # User's own templates
-            | Q(lab_group__in=user_groups)  # Public templates  # Lab group templates
+            | Q(lab_group_id__in=accessible_groups)  # Lab group templates (includes bubble-up)
         ).distinct()
 
         # Apply additional query parameter filters
@@ -1566,8 +1573,8 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             if lab_group_id:
                 try:
                     lab_group = LabGroup.objects.get(id=lab_group_id)
-                    # Check if user is member of this lab group
-                    if not lab_group.members.filter(id=request.user.id).exists():
+                    # Check if user is member of this lab group (includes bubble-up from sub-groups)
+                    if not lab_group.is_member(request.user):
                         return Response(
                             {"error": "You are not a member of the specified lab group"},
                             status=status.HTTP_403_FORBIDDEN,
@@ -1626,8 +1633,8 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             if lab_group_id:
                 try:
                     lab_group = LabGroup.objects.get(id=lab_group_id)
-                    # Check if user is member of this lab group
-                    if not lab_group.members.filter(id=request.user.id).exists():
+                    # Check if user is member of this lab group (includes bubble-up from sub-groups)
+                    if not lab_group.is_member(request.user):
                         return Response(
                             {"error": "You are not a member of the specified lab group"},
                             status=status.HTTP_403_FORBIDDEN,
@@ -1708,8 +1715,8 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             if lab_group_id:
                 try:
                     lab_group = LabGroup.objects.get(id=lab_group_id)
-                    # Check if user is member of this lab group
-                    if not lab_group.members.filter(id=request.user.id).exists():
+                    # Check if user is member of this lab group (includes bubble-up from sub-groups)
+                    if not lab_group.is_member(request.user):
                         return Response(
                             {"error": "You are not a member of the specified lab group"},
                             status=status.HTTP_403_FORBIDDEN,
@@ -3656,16 +3663,19 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
     filterset_fields = ["visibility", "owner", "lab_group", "is_active"]
 
     def get_queryset(self):
-        """Filter queryset based on visibility and user permissions."""
+        """Filter queryset based on visibility and user permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
         queryset = super().get_queryset()
 
-        # Filter by visibility and permissions
+        from ccc.models import LabGroup
+
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
+
         queryset = queryset.filter(
             models.Q(visibility="global")
             | models.Q(visibility="public")
             | models.Q(visibility="private", owner=user)
-            | models.Q(visibility="lab_group", lab_group__members=user)
+            | models.Q(visibility="lab_group", lab_group_id__in=accessible_groups)
             | models.Q(shared_with_users=user)
         ).distinct()
 

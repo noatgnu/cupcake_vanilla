@@ -694,11 +694,14 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
         """Filter templates based on user permissions for non-superusers."""
         queryset = super().get_queryset(request)
         if not request.user.is_superuser:
-            # Show only templates the user can view
+            from ccc.models import LabGroup
+
+            accessible_groups = LabGroup.get_accessible_group_ids(request.user)
+
             queryset = queryset.filter(
                 models.Q(creator=request.user)
                 | models.Q(visibility__in=["public", "global"])
-                | models.Q(visibility="lab_group", lab_group__members=request.user)
+                | models.Q(visibility="lab_group", lab_group_id__in=accessible_groups)
                 | models.Q(shared_with_users=request.user)
             ).distinct()
         return queryset

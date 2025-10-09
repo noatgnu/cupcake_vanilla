@@ -275,6 +275,178 @@ class LabGroupTestCase(TestCase):
         self.assertFalse(lab_group.can_manage(self.user2))
         self.assertFalse(lab_group.can_manage(self.user3))
 
+    def test_nested_lab_groups(self):
+        """Test hierarchical lab groups."""
+        # Create hierarchy: Department > Team > Sub-team
+        department = LabGroup.objects.create(name="Department", creator=self.user1)
+        team = LabGroup.objects.create(name="Team A", parent_group=department, creator=self.user1)
+        sub_team = LabGroup.objects.create(name="Sub-team 1", parent_group=team, creator=self.user1)
+
+        # Test relationships
+        self.assertEqual(team.parent_group, department)
+        self.assertEqual(sub_team.parent_group, team)
+        self.assertIn(team, department.sub_groups.all())
+        self.assertIn(sub_team, team.sub_groups.all())
+
+    def test_get_full_path(self):
+        """Test get_full_path method for nested lab groups."""
+        # Create hierarchy
+        university = LabGroup.objects.create(name="University", creator=self.user1)
+        department = LabGroup.objects.create(name="Department", parent_group=university, creator=self.user1)
+        lab = LabGroup.objects.create(name="Lab", parent_group=department, creator=self.user1)
+        team = LabGroup.objects.create(name="Team", parent_group=lab, creator=self.user1)
+
+        # Test full path
+        university_path = university.get_full_path()
+        self.assertEqual(len(university_path), 1)
+        self.assertEqual(university_path[0], {"id": university.id, "name": "University"})
+
+        department_path = department.get_full_path()
+        self.assertEqual(len(department_path), 2)
+        self.assertEqual(
+            department_path,
+            [{"id": university.id, "name": "University"}, {"id": department.id, "name": "Department"}],
+        )
+
+        team_path = team.get_full_path()
+        self.assertEqual(len(team_path), 4)
+        self.assertEqual(
+            team_path,
+            [
+                {"id": university.id, "name": "University"},
+                {"id": department.id, "name": "Department"},
+                {"id": lab.id, "name": "Lab"},
+                {"id": team.id, "name": "Team"},
+            ],
+        )
+
+    def test_get_all_sub_groups(self):
+        """Test get_all_sub_groups method."""
+        parent = LabGroup.objects.create(name="Parent", creator=self.user1)
+        child1 = LabGroup.objects.create(name="Child 1", parent_group=parent, creator=self.user1)
+        child2 = LabGroup.objects.create(name="Child 2", parent_group=parent, creator=self.user1)
+        grandchild = LabGroup.objects.create(name="Grandchild", parent_group=child1, creator=self.user1)
+
+        all_sub_groups = parent.get_all_sub_groups()
+        self.assertEqual(len(all_sub_groups), 3)
+        self.assertIn(child1, all_sub_groups)
+        self.assertIn(child2, all_sub_groups)
+        self.assertIn(grandchild, all_sub_groups)
+
+    def test_is_root(self):
+        """Test is_root method."""
+        root_group = LabGroup.objects.create(name="Root", creator=self.user1)
+        sub_group = LabGroup.objects.create(name="Sub", parent_group=root_group, creator=self.user1)
+
+        self.assertTrue(root_group.is_root())
+        self.assertFalse(sub_group.is_root())
+
+    def test_get_depth(self):
+        """Test get_depth method."""
+        level0 = LabGroup.objects.create(name="Level 0", creator=self.user1)
+        level1 = LabGroup.objects.create(name="Level 1", parent_group=level0, creator=self.user1)
+        level2 = LabGroup.objects.create(name="Level 2", parent_group=level1, creator=self.user1)
+        level3 = LabGroup.objects.create(name="Level 3", parent_group=level2, creator=self.user1)
+
+        self.assertEqual(level0.get_depth(), 0)
+        self.assertEqual(level1.get_depth(), 1)
+        self.assertEqual(level2.get_depth(), 2)
+        self.assertEqual(level3.get_depth(), 3)
+
+    def test_bubble_up_membership(self):
+        """Test that membership bubbles up from sub-groups to parent groups."""
+        # Create hierarchy
+        university = LabGroup.objects.create(name="University", creator=self.user1)
+        department = LabGroup.objects.create(name="Department", parent_group=university, creator=self.user1)
+        lab = LabGroup.objects.create(name="Lab", parent_group=department, creator=self.user1)
+
+        # Add user2 only to the lab (leaf node)
+        lab.members.add(self.user2)
+
+        # user2 should be member of lab, department, and university (bubbles up)
+        self.assertTrue(lab.is_member(self.user2))
+        self.assertTrue(department.is_member(self.user2))
+        self.assertTrue(university.is_member(self.user2))
+
+        # user3 is not a member of any group
+        self.assertFalse(lab.is_member(self.user3))
+        self.assertFalse(department.is_member(self.user3))
+        self.assertFalse(university.is_member(self.user3))
+
+    def test_bubble_up_can_invite(self):
+        """Test that can_invite bubbles up from sub-groups."""
+        # Create hierarchy
+        university = LabGroup.objects.create(name="University", creator=self.user1, allow_member_invites=True)
+        department = LabGroup.objects.create(
+            name="Department", parent_group=university, creator=self.user1, allow_member_invites=True
+        )
+        lab = LabGroup.objects.create(
+            name="Lab", parent_group=department, creator=self.user1, allow_member_invites=False
+        )
+
+        # Add user2 to lab
+        lab.members.add(self.user2)
+
+        # user2 can invite to university and department (bubbles up) because allow_member_invites=True
+        self.assertTrue(university.can_invite(self.user2))
+        self.assertTrue(department.can_invite(self.user2))
+
+        # user2 cannot invite to lab because lab.allow_member_invites=False
+        self.assertFalse(lab.can_invite(self.user2))
+
+    def test_no_bubble_up_for_management(self):
+        """Test that management permissions do NOT bubble up from sub-groups."""
+        # Create hierarchy
+        university = LabGroup.objects.create(name="University", creator=self.user1)
+        department = LabGroup.objects.create(name="Department", parent_group=university, creator=self.user1)
+        lab = LabGroup.objects.create(name="Lab", parent_group=department, creator=self.user2)
+
+        # user2 is creator of lab
+        self.assertTrue(lab.can_manage(self.user2))
+
+        # user2 should NOT be able to manage parent groups (no bubble-up for management)
+        self.assertFalse(department.can_manage(self.user2))
+        self.assertFalse(university.can_manage(self.user2))
+
+        # Only creator (user1) can manage university and department
+        self.assertTrue(university.can_manage(self.user1))
+        self.assertTrue(department.can_manage(self.user1))
+
+    def test_get_all_members_with_subgroups(self):
+        """Test get_all_members method including sub-groups."""
+        # Create parent lab group
+        parent_lab = LabGroup.objects.create(name="Parent Lab", creator=self.user1)
+        parent_lab.members.add(self.user1)
+
+        # Create sub-group
+        sub_lab = LabGroup.objects.create(name="Sub Lab", creator=self.user1, parent_group=parent_lab)
+        sub_lab.members.add(self.user2)
+
+        # Create another sub-group under sub_lab
+        sub_sub_lab = LabGroup.objects.create(name="Sub-Sub Lab", creator=self.user1, parent_group=sub_lab)
+        sub_sub_lab.members.add(self.user3)
+
+        # Test get_all_members with include_subgroups=True (default)
+        all_members = parent_lab.get_all_members()
+        self.assertEqual(all_members.count(), 3)
+        self.assertIn(self.user1, all_members)
+        self.assertIn(self.user2, all_members)
+        self.assertIn(self.user3, all_members)
+
+        # Test get_all_members with include_subgroups=False (direct only)
+        direct_members = parent_lab.get_all_members(include_subgroups=False)
+        self.assertEqual(direct_members.count(), 1)
+        self.assertIn(self.user1, direct_members)
+        self.assertNotIn(self.user2, direct_members)
+        self.assertNotIn(self.user3, direct_members)
+
+        # Test sub_lab members
+        sub_members = sub_lab.get_all_members()
+        self.assertEqual(sub_members.count(), 2)  # user2 and user3
+        self.assertIn(self.user2, sub_members)
+        self.assertIn(self.user3, sub_members)
+        self.assertNotIn(self.user1, sub_members)
+
 
 class LabGroupInvitationTestCase(TestCase):
     """Test cases for LabGroupInvitation model."""
@@ -671,6 +843,58 @@ class LabGroupAPITestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["can_manage"])
         self.assertTrue(response.data["can_invite"])
+
+    def test_lab_group_members_with_subgroups(self):
+        """Test getting lab group members including sub-groups."""
+        # Create parent lab group
+        parent_group = LabGroup.objects.create(name="Parent Lab", creator=self.user1)
+        parent_group.members.add(self.user1)
+
+        # Create sub-group with different member
+        sub_group = LabGroup.objects.create(name="Sub Lab", creator=self.user1, parent_group=parent_group)
+        sub_group.members.add(self.user2)
+
+        self.client.force_authenticate(user=self.user1)
+        url = reverse("labgroup-members", kwargs={"pk": parent_group.pk})
+
+        # Test default behavior (include sub-groups)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 2)  # user1 and user2
+        usernames = [user["username"] for user in response.data["results"]]
+        self.assertIn("user1", usernames)
+        self.assertIn("user2", usernames)
+
+        # Test direct_only=true
+        response = self.client.get(url, {"direct_only": "true"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)  # only user1
+        self.assertEqual(response.data["results"][0]["username"], "user1")
+
+        # Test direct_only=false (explicit)
+        response = self.client.get(url, {"direct_only": "false"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 2)  # user1 and user2
+
+    def test_lab_group_members_pagination(self):
+        """Test pagination of lab group members."""
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.user1)
+
+        # Create multiple users
+        users = [self.user1]
+        for i in range(10):
+            user = User.objects.create_user(f"user{i+3}", f"user{i+3}@test.com", "password")
+            lab_group.members.add(user)
+            users.append(user)
+
+        self.client.force_authenticate(user=self.user1)
+        url = reverse("labgroup-members", kwargs={"pk": lab_group.pk})
+
+        # Test with page_size
+        response = self.client.get(url, {"page_size": "5"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 11)  # 11 total users
+        self.assertEqual(len(response.data["results"]), 5)  # 5 per page
 
 
 class AuthenticationAPITestCase(APITestCase):
@@ -1778,3 +2002,200 @@ class ResourcePermissionViewSetTestCase(APITestCase):
         response = self.client.get("/api/v1/resource-permissions/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["results"]), 1)
+
+
+class LabGroupProcessJobsPermissionTestCase(TestCase):
+    """Test automatic can_process_jobs permission when allow_process_jobs is enabled."""
+
+    def setUp(self):
+        self.user1 = User.objects.create_user("user1", "user1@test.com", "password")
+        self.user2 = User.objects.create_user("user2", "user2@test.com", "password")
+        self.creator = User.objects.create_user("creator", "creator@test.com", "password")
+
+    def test_allow_process_jobs_grants_permission_on_invitation_accept(self):
+        """Test that accepting invitation to lab group with allow_process_jobs=True grants permission."""
+        from ccc.models import LabGroup, LabGroupInvitation, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=True)
+
+        invitation = LabGroupInvitation.objects.create(
+            lab_group=lab_group, inviter=self.creator, invited_email=self.user1.email
+        )
+
+        invitation.accept(self.user1)
+
+        self.assertTrue(lab_group.is_member(self.user1))
+
+        permission = LabGroupPermission.objects.filter(user=self.user1, lab_group=lab_group).first()
+        self.assertIsNotNone(permission)
+        self.assertTrue(permission.can_process_jobs)
+        self.assertTrue(permission.can_view)
+
+    def test_allow_process_jobs_false_no_permission_granted(self):
+        """Test that accepting invitation to lab group with allow_process_jobs=False does not grant permission."""
+        from ccc.models import LabGroup, LabGroupInvitation, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=False)
+
+        invitation = LabGroupInvitation.objects.create(
+            lab_group=lab_group, inviter=self.creator, invited_email=self.user1.email
+        )
+
+        invitation.accept(self.user1)
+
+        self.assertTrue(lab_group.is_member(self.user1))
+
+        permission = LabGroupPermission.objects.filter(user=self.user1, lab_group=lab_group).first()
+        self.assertIsNone(permission)
+
+    def test_allow_process_jobs_updates_existing_permission(self):
+        """Test that accepting invitation updates existing permission if can_process_jobs is False."""
+        from ccc.models import LabGroup, LabGroupInvitation, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=True)
+
+        LabGroupPermission.objects.create(user=self.user1, lab_group=lab_group, can_view=True, can_process_jobs=False)
+
+        invitation = LabGroupInvitation.objects.create(
+            lab_group=lab_group, inviter=self.creator, invited_email=self.user1.email
+        )
+
+        invitation.accept(self.user1)
+
+        permission = LabGroupPermission.objects.get(user=self.user1, lab_group=lab_group)
+        self.assertTrue(permission.can_process_jobs)
+        self.assertTrue(permission.can_view)
+
+    def test_allow_process_jobs_does_not_downgrade_permission(self):
+        """Test that existing can_process_jobs=True permission is not changed."""
+        from ccc.models import LabGroup, LabGroupInvitation, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=True)
+
+        LabGroupPermission.objects.create(
+            user=self.user1, lab_group=lab_group, can_view=True, can_process_jobs=True, can_manage=True
+        )
+
+        invitation = LabGroupInvitation.objects.create(
+            lab_group=lab_group, inviter=self.creator, invited_email=self.user1.email
+        )
+
+        invitation.accept(self.user1)
+
+        permission = LabGroupPermission.objects.get(user=self.user1, lab_group=lab_group)
+        self.assertTrue(permission.can_process_jobs)
+        self.assertTrue(permission.can_view)
+        self.assertTrue(permission.can_manage)
+
+    def test_only_staff_can_manually_set_can_process_jobs(self):
+        """Test that only staff/admin users can manually set can_process_jobs permission."""
+        from rest_framework.test import APIClient
+
+        from ccc.models import LabGroup
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=False)
+        lab_group.members.add(self.user1)
+
+        client = APIClient()
+
+        client.force_authenticate(user=self.creator)
+        response = client.post(
+            "/api/v1/lab-group-permissions/",
+            {"user": self.user2.id, "lab_group": lab_group.id, "can_view": True, "can_process_jobs": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("can_process_jobs", response.data)
+
+        staff_user = User.objects.create_user("staff", "staff@test.com", "password", is_staff=True)
+        lab_group.members.add(staff_user)
+
+        client.force_authenticate(user=staff_user)
+        response = client.post(
+            "/api/v1/lab-group-permissions/",
+            {"user": self.user2.id, "lab_group": lab_group.id, "can_view": True, "can_process_jobs": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        from ccc.models import LabGroupPermission
+
+        permission = LabGroupPermission.objects.get(user=self.user2, lab_group=lab_group)
+        self.assertTrue(permission.can_process_jobs)
+
+    def test_creator_permission_with_allow_process_jobs_enabled(self):
+        """Test that creator permission includes can_process_jobs when allow_process_jobs=True."""
+        from ccc.models import LabGroup, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=True)
+
+        permission = LabGroupPermission.objects.get(user=self.creator, lab_group=lab_group)
+        self.assertTrue(permission.can_view)
+        self.assertTrue(permission.can_invite)
+        self.assertTrue(permission.can_manage)
+        self.assertTrue(permission.can_process_jobs)
+        self.assertTrue(lab_group.can_process_jobs(self.creator))
+
+    def test_creator_permission_with_allow_process_jobs_disabled(self):
+        """Test that creator permission excludes can_process_jobs when allow_process_jobs=False."""
+        from ccc.models import LabGroup, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=False)
+
+        permission = LabGroupPermission.objects.get(user=self.creator, lab_group=lab_group)
+        self.assertTrue(permission.can_view)
+        self.assertTrue(permission.can_invite)
+        self.assertTrue(permission.can_manage)
+        self.assertFalse(permission.can_process_jobs)
+        self.assertFalse(lab_group.can_process_jobs(self.creator))
+
+    def test_creator_has_all_permissions_via_permission_record(self):
+        """Test that creator gets all permissions through LabGroupPermission record."""
+        from ccc.models import LabGroup, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=False)
+
+        LabGroupPermission.objects.get(user=self.creator, lab_group=lab_group)
+        self.assertTrue(lab_group.is_creator(self.creator))
+        self.assertTrue(lab_group.can_invite(self.creator))
+        self.assertTrue(lab_group.can_manage(self.creator))
+        self.assertFalse(lab_group.can_process_jobs(self.creator))
+
+        lab_group_with_process = LabGroup.objects.create(
+            name="Test Lab 2", creator=self.creator, allow_process_jobs=True
+        )
+
+        LabGroupPermission.objects.get(user=self.creator, lab_group=lab_group_with_process)
+        self.assertTrue(lab_group_with_process.is_creator(self.creator))
+        self.assertTrue(lab_group_with_process.can_invite(self.creator))
+        self.assertTrue(lab_group_with_process.can_manage(self.creator))
+        self.assertTrue(lab_group_with_process.can_process_jobs(self.creator))
+
+    def test_creator_permission_auto_created_and_editable(self):
+        """Test that creator permission is auto-created and can be edited by staff."""
+        from rest_framework.test import APIClient
+
+        from ccc.models import LabGroup, LabGroupPermission
+
+        lab_group = LabGroup.objects.create(name="Test Lab", creator=self.creator, allow_process_jobs=False)
+
+        permission = LabGroupPermission.objects.get(user=self.creator, lab_group=lab_group)
+        self.assertTrue(permission.can_view)
+        self.assertTrue(permission.can_invite)
+        self.assertTrue(permission.can_manage)
+        self.assertFalse(permission.can_process_jobs)
+
+        client = APIClient()
+        staff_user = User.objects.create_user("staff", "staff@test.com", "password", is_staff=True)
+
+        client.force_authenticate(user=staff_user)
+        response = client.patch(
+            f"/api/v1/lab-group-permissions/{permission.id}/",
+            {"can_process_jobs": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        permission.refresh_from_db()
+        self.assertTrue(permission.can_process_jobs)

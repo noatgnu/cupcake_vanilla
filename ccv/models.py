@@ -3188,8 +3188,8 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
         if user.is_staff or user.is_superuser:
             return True
 
-        # Lab group members can view lab group templates
-        if self.lab_group and user in self.lab_group.members.all():
+        # Lab group members can view lab group templates (includes bubble-up from sub-groups)
+        if self.lab_group and self.lab_group.is_member(user):
             return True
 
         # Default: deny access

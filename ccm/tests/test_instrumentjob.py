@@ -434,3 +434,93 @@ class InstrumentJobModelTest(TestCase):
         self.assertEqual(maintenance_job.get_job_type_display(), "Maintenance")
         self.assertEqual(maintenance_job.get_status_display(), "Completed")
         self.assertEqual(maintenance_job.get_sample_type_display(), "Other")
+
+
+@override_settings(ENABLE_CUPCAKE_MACARON=True)
+class InstrumentJobStaffAssignmentTest(TestCase):
+    """Test staff assignment validation for InstrumentJob."""
+
+    def setUp(self):
+        from ccc.models import LabGroup, LabGroupPermission
+        from ccm.models import Instrument
+
+        self.user1 = User.objects.create_user(username="user1", email="user1@lab.edu")
+        self.user2 = User.objects.create_user(username="user2", email="user2@lab.edu")
+        self.staff1 = User.objects.create_user(username="staff1", email="staff1@lab.edu", is_staff=True)
+        self.staff2 = User.objects.create_user(username="staff2", email="staff2@lab.edu", is_staff=True)
+
+        self.lab_group = LabGroup.objects.create(name="Test Lab", creator=self.user1)
+        self.lab_group.members.add(self.user1, self.staff1, self.staff2)
+
+        LabGroupPermission.objects.create(
+            user=self.staff1, lab_group=self.lab_group, can_process_jobs=True, can_view=True
+        )
+
+        LabGroupPermission.objects.create(
+            user=self.staff2, lab_group=self.lab_group, can_process_jobs=False, can_view=True
+        )
+
+        self.instrument = Instrument.objects.create(instrument_name="Test Instrument")
+
+    def test_staff_assignment_with_permission(self):
+        """Test that staff with can_process_jobs permission can be assigned."""
+        from ccm.serializers import InstrumentJobSerializer
+
+        job_data = {
+            "job_name": "Test Job",
+            "job_type": "analysis",
+            "lab_group": self.lab_group.id,
+            "staff": [self.staff1.id],
+        }
+
+        serializer = InstrumentJobSerializer(data=job_data)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+        job = serializer.save(user=self.user1)
+        self.assertEqual(job.staff.count(), 1)
+        self.assertIn(self.staff1, job.staff.all())
+
+    def test_staff_assignment_without_permission(self):
+        """Test that staff without can_process_jobs permission cannot be assigned."""
+        from ccm.serializers import InstrumentJobSerializer
+
+        job_data = {
+            "job_name": "Test Job",
+            "job_type": "analysis",
+            "lab_group": self.lab_group.id,
+            "staff": [self.staff2.id],
+        }
+
+        serializer = InstrumentJobSerializer(data=job_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("staff", serializer.errors)
+        self.assertIn("can_process_jobs permission", str(serializer.errors["staff"]))
+
+    def test_staff_assignment_mixed_permissions(self):
+        """Test assignment with mix of staff with and without permission."""
+        from ccm.serializers import InstrumentJobSerializer
+
+        job_data = {
+            "job_name": "Test Job",
+            "job_type": "analysis",
+            "lab_group": self.lab_group.id,
+            "staff": [self.staff1.id, self.staff2.id],
+        }
+
+        serializer = InstrumentJobSerializer(data=job_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("staff", serializer.errors)
+        self.assertIn("staff2", str(serializer.errors["staff"]))
+
+    def test_staff_assignment_no_lab_group(self):
+        """Test that staff can be assigned without lab_group (no validation)."""
+        from ccm.serializers import InstrumentJobSerializer
+
+        job_data = {
+            "job_name": "Test Job",
+            "job_type": "analysis",
+            "staff": [self.staff2.id],
+        }
+
+        serializer = InstrumentJobSerializer(data=job_data)
+        self.assertTrue(serializer.is_valid(), serializer.errors)

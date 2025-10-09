@@ -29,8 +29,8 @@ class IsLabMemberOrReadOnly(BasePermission):
         if request.method in SAFE_METHODS:
             return True
 
-        # Write permissions are only allowed to members of the lab group.
-        return request.user in obj.lab_group.members.all()
+        # Write permissions are only allowed to members of the lab group (includes bubble-up from sub-groups).
+        return obj.lab_group.is_member(request.user)
 
 
 class IsEditorOrReadOnly(BasePermission):

@@ -139,6 +139,62 @@ class StorageObjectModelTest(TestCase):
         self.assertEqual(fridge.stored_at, building)
         self.assertEqual(str(fridge), "Lab Fridge A (fridge)")
 
+    def test_storage_object_get_full_path(self):
+        """Test get_full_path method for storage object hierarchy"""
+        # Create multi-level hierarchy
+        building = StorageObject.objects.create(object_name="Main Building", object_type="building")
+        floor = StorageObject.objects.create(object_name="Floor 2", object_type="floor", stored_at=building)
+        room = StorageObject.objects.create(object_name="Lab 201", object_type="room", stored_at=floor)
+        fridge = StorageObject.objects.create(object_name="Fridge A", object_type="fridge", stored_at=room)
+        shelf = StorageObject.objects.create(object_name="Shelf 3", object_type="shelf", stored_at=fridge)
+
+        # Test full path for each level (returns array of {id, name})
+        building_path = building.get_full_path()
+        self.assertEqual(len(building_path), 1)
+        self.assertEqual(building_path[0], {"id": building.id, "name": "Main Building"})
+
+        floor_path = floor.get_full_path()
+        self.assertEqual(len(floor_path), 2)
+        self.assertEqual(
+            floor_path, [{"id": building.id, "name": "Main Building"}, {"id": floor.id, "name": "Floor 2"}]
+        )
+
+        room_path = room.get_full_path()
+        self.assertEqual(len(room_path), 3)
+        self.assertEqual(
+            room_path,
+            [
+                {"id": building.id, "name": "Main Building"},
+                {"id": floor.id, "name": "Floor 2"},
+                {"id": room.id, "name": "Lab 201"},
+            ],
+        )
+
+        fridge_path = fridge.get_full_path()
+        self.assertEqual(len(fridge_path), 4)
+        self.assertEqual(
+            fridge_path,
+            [
+                {"id": building.id, "name": "Main Building"},
+                {"id": floor.id, "name": "Floor 2"},
+                {"id": room.id, "name": "Lab 201"},
+                {"id": fridge.id, "name": "Fridge A"},
+            ],
+        )
+
+        shelf_path = shelf.get_full_path()
+        self.assertEqual(len(shelf_path), 5)
+        self.assertEqual(
+            shelf_path,
+            [
+                {"id": building.id, "name": "Main Building"},
+                {"id": floor.id, "name": "Floor 2"},
+                {"id": room.id, "name": "Lab 201"},
+                {"id": fridge.id, "name": "Fridge A"},
+                {"id": shelf.id, "name": "Shelf 3"},
+            ],
+        )
+
 
 class ReagentModelTest(TestCase):
     def setUp(self):

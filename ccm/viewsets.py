@@ -398,8 +398,8 @@ class InstrumentJobViewSet(BaseViewSet):
             if lab_group_id:
                 try:
                     lab_group = LabGroup.objects.get(id=lab_group_id)
-                    # Check if user is member of this lab group
-                    if not lab_group.members.filter(id=request.user.id).exists():
+                    # Check if user is member of this lab group (includes bubble-up from sub-groups)
+                    if not lab_group.is_member(request.user):
                         return Response(
                             {"error": "You are not a member of the specified lab group"},
                             status=status.HTTP_403_FORBIDDEN,
@@ -495,12 +495,36 @@ class MaintenanceLogViewSet(BaseViewSet):
 class StorageObjectViewSet(BaseViewSet):
     """ViewSet for StorageObject model."""
 
-    queryset = StorageObject.objects.all()
+    queryset = StorageObject.objects.select_related("stored_at", "user", "remote_host").all()
     serializer_class = StorageObjectSerializer
-    filterset_fields = ["object_type", "stored_at", "can_delete", "is_vaulted", "user"]
+    filterset_fields = {
+        "object_type": ["exact"],
+        "stored_at": ["exact", "isnull"],
+        "can_delete": ["exact"],
+        "is_vaulted": ["exact"],
+        "user": ["exact"],
+    }
     search_fields = ["object_name", "object_description"]
     ordering_fields = ["object_name", "object_type", "created_at", "updated_at"]
     ordering = ["object_name"]
+
+    def get_queryset(self):
+        """Filter storage objects by user access."""
+        user = self.request.user
+
+        if user.is_staff or user.is_superuser:
+            return self.queryset
+
+        from django.db.models import Q
+
+        accessible_ids = set()
+        all_storage_objects = StorageObject.objects.prefetch_related("access_lab_groups", "stored_at").all()
+
+        for storage_obj in all_storage_objects:
+            if storage_obj.can_access(user):
+                accessible_ids.add(storage_obj.id)
+
+        return self.queryset.filter(Q(id__in=accessible_ids) | Q(user=user))
 
     def perform_create(self, serializer):
         """Set the user when creating a storage object."""

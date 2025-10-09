@@ -250,9 +250,9 @@ class AbstractResource(models.Model):
         if self.visibility == ResourceVisibility.PUBLIC:
             return True
 
-        # Group resources can be viewed by lab group members
+        # Group resources can be viewed by lab group members (includes bubble-up from sub-groups)
         if self.visibility == ResourceVisibility.GROUP and self.lab_group:
-            return user in self.lab_group.members.all()
+            return self.lab_group.is_member(user)
 
         # Check explicit permissions
         return self.resource_permissions.filter(
@@ -677,6 +677,16 @@ class LabGroup(models.Model):
     name = models.CharField(max_length=255, help_text="Name of the lab group")
     description = models.TextField(blank=True, null=True, help_text="Description of the lab group")
 
+    # Group hierarchy
+    parent_group = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        related_name="sub_groups",
+        blank=True,
+        null=True,
+        help_text="Parent lab group in the hierarchy",
+    )
+
     # Group ownership
     creator = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -700,6 +710,9 @@ class LabGroup(models.Model):
     allow_member_invites = models.BooleanField(
         default=True, help_text="Whether members can invite other users to this lab group"
     )
+    allow_process_jobs = models.BooleanField(
+        default=False, help_text="Whether new members automatically get can_process_jobs permission"
+    )
 
     # Audit trail
     created_at = models.DateTimeField(auto_now_add=True)
@@ -712,6 +725,39 @@ class LabGroup(models.Model):
 
     def __str__(self):
         return self.name
+
+    def get_full_path(self):
+        """
+        Get the full hierarchical path to root as an array of objects.
+        Each object contains id and name for frontend navigation.
+        """
+        path = []
+        current = self
+        while current:
+            path.insert(0, {"id": current.id, "name": current.name})
+            current = current.parent_group
+        return path
+
+    def get_all_sub_groups(self):
+        """Get all nested sub groups recursively."""
+        sub_groups = []
+        for sub_group in self.sub_groups.all():
+            sub_groups.append(sub_group)
+            sub_groups.extend(sub_group.get_all_sub_groups())
+        return sub_groups
+
+    def is_root(self):
+        """Check if this lab group is at root level (no parent)."""
+        return self.parent_group is None
+
+    def get_depth(self):
+        """Get the depth/level of this lab group in the hierarchy."""
+        depth = 0
+        current = self.parent_group
+        while current:
+            depth += 1
+            current = current.parent_group
+        return depth
 
     def is_creator(self, user):
         """
@@ -732,73 +778,219 @@ class LabGroup(models.Model):
 
     def is_member(self, user):
         """
-        Check if user is a member of this lab group.
+        Check if user is a member of this lab group or any of its sub-groups.
+
+        Membership bubbles up: if you're a member of a sub-group, you're
+        automatically considered a member of all parent groups.
 
         Args:
             user: Django User instance to check
 
         Returns:
-            bool: True if user is in the members list
+            bool: True if user is in the members list or is a member of any sub-group
 
         Examples:
             >>> lab_group.members.add(researcher)
             >>> lab_group.is_member(researcher)  # True
-            >>> lab_group.is_member(outsider)    # False
+
+            >>> # User is member of sub-group
+            >>> sub_group = LabGroup.objects.create(name="Sub", parent_group=lab_group)
+            >>> sub_group.members.add(researcher2)
+            >>> lab_group.is_member(researcher2)  # True (bubbles up from sub-group)
         """
-        return self.members.filter(id=user.id).exists()
+        # Direct membership
+        if self.members.filter(id=user.id).exists():
+            return True
+
+        # Check all sub-groups recursively
+        for sub_group in self.sub_groups.all():
+            if sub_group.is_member(user):
+                return True
+
+        return False
 
     def can_invite(self, user):
         """
         Check if user can invite others to this lab group.
 
-        Creators can always invite. Members can invite only if
-        allow_member_invites is enabled for the group.
+        Staff users can always invite. Members can invite only if
+        allow_member_invites is enabled for the group. Users with
+        explicit can_invite permission can also invite.
+
+        Membership bubbles up: if user is a member of any sub-group,
+        they can invite if allow_member_invites is enabled.
 
         Args:
             user: Django User instance to check
 
         Returns:
             bool: True if user can send invitations
-
-        Examples:
-            >>> # Creator can always invite
-            >>> lab_group.can_invite(lab_group.creator)  # True
-
-            >>> # Member can invite if allowed
-            >>> lab_group.allow_member_invites = True
-            >>> lab_group.can_invite(member_user)  # True
-
-            >>> # Member cannot invite if disabled
-            >>> lab_group.allow_member_invites = False
-            >>> lab_group.can_invite(member_user)  # False
         """
-        return self.is_creator(user) or (self.allow_member_invites and self.is_member(user))
+        if user.is_authenticated and user.is_staff:
+            return True
+
+        permission = self.lab_group_permissions.filter(user=user).first()
+        if permission and permission.can_invite:
+            return True
+
+        return self.allow_member_invites and self.is_member(user)
 
     def can_manage(self, user):
         """
         Check if user can manage this lab group.
 
-        Only creators can manage lab groups (edit settings, remove members,
-        delete the group, etc.). Staff users also get management privileges.
+        Staff users get management privileges. Users with explicit
+        LabGroupPermission.can_manage can also manage.
+
+        NOTE: Management permissions do NOT bubble up from sub-groups.
 
         Args:
             user: Django User instance to check
 
         Returns:
             bool: True if user can manage the lab group
+        """
+        if user.is_authenticated and user.is_staff:
+            return True
+
+        permission = self.lab_group_permissions.filter(user=user).first()
+        if permission and permission.can_manage:
+            return True
+
+        return False
+
+    def can_process_jobs(self, user):
+        """
+        Check if user can process instrument jobs for this lab group.
+
+        Staff users can always process jobs. Users with explicit
+        can_process_jobs permission can also process jobs.
+
+        Args:
+            user: Django User instance to check
+
+        Returns:
+            bool: True if user can process instrument jobs
+        """
+        if user.is_authenticated and user.is_staff:
+            return True
+
+        permission = self.lab_group_permissions.filter(user=user).first()
+        if permission and permission.can_process_jobs:
+            return True
+
+        return False
+
+    @classmethod
+    def get_accessible_group_ids(cls, user):
+        """
+        Get all lab group IDs accessible to a user (includes bubble-up from sub-groups).
+
+        Returns IDs of groups where the user is either:
+        - A direct member
+        - The creator
+        - A member of any sub-group (parent groups via bubble-up)
+
+        Args:
+            user: Django User instance
+
+        Returns:
+            set: Set of lab group IDs accessible to the user
 
         Examples:
-            >>> # Creator can manage
-            >>> lab_group.can_manage(lab_group.creator)  # True
-
-            >>> # Regular members cannot manage
-            >>> lab_group.can_manage(member_user)  # False
-
-            >>> # Staff users can manage
-            >>> staff_user.is_staff = True
-            >>> lab_group.can_manage(staff_user)  # True
+            >>> accessible_ids = LabGroup.get_accessible_group_ids(user)
+            >>> projects = Project.objects.filter(lab_group_id__in=accessible_ids)
         """
-        return self.is_creator(user) or (user.is_authenticated and user.is_staff)
+        from django.db.models import Q
+
+        accessible_groups = set()
+        direct_groups = cls.objects.filter(Q(members=user) | Q(creator=user))
+
+        for group in direct_groups:
+            accessible_groups.add(group.id)
+            # Add all parent groups (bubble up)
+            current = group.parent_group
+            while current:
+                accessible_groups.add(current.id)
+                current = current.parent_group
+
+        return accessible_groups
+
+    def get_all_members(self, include_subgroups=True):
+        """
+        Get all members of this lab group.
+
+        Args:
+            include_subgroups (bool): If True, include members from all sub-groups.
+                                     If False, return only direct members.
+
+        Returns:
+            QuerySet: User objects that are members
+
+        Examples:
+            >>> # Get all members including sub-groups (default)
+            >>> all_members = lab_group.get_all_members()
+
+            >>> # Get only direct members
+            >>> direct_members = lab_group.get_all_members(include_subgroups=False)
+        """
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+
+        if not include_subgroups:
+            return self.members.all()
+
+        # Collect all member IDs from this group and all sub-groups
+        member_ids = set(self.members.values_list("id", flat=True))
+
+        # Recursively get members from all sub-groups
+        for sub_group in self.sub_groups.all():
+            sub_member_ids = sub_group.get_all_members(include_subgroups=True).values_list("id", flat=True)
+            member_ids.update(sub_member_ids)
+
+        return User.objects.filter(id__in=member_ids)
+
+
+class LabGroupPermission(models.Model):
+    """
+    Granular permission system for lab groups.
+
+    Provides four levels of permissions:
+    - can_view: Can see lab group details and members
+    - can_invite: Can invite new members to the lab group
+    - can_manage: Can modify lab group settings and manage permissions
+    - can_process_jobs: Can be assigned to process instrument jobs for this lab group
+    """
+
+    history = HistoricalRecords()
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="lab_group_permissions")
+    lab_group = models.ForeignKey(LabGroup, on_delete=models.CASCADE, related_name="lab_group_permissions")
+    can_view = models.BooleanField(default=False, help_text="Can view lab group details and members")
+    can_invite = models.BooleanField(default=False, help_text="Can invite new members to the lab group")
+    can_manage = models.BooleanField(default=False, help_text="Can modify lab group settings and manage permissions")
+    can_process_jobs = models.BooleanField(default=False, help_text="Can be assigned to process instrument jobs")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccc"
+        unique_together = [["user", "lab_group"]]
+        ordering = ["created_at"]
+
+    def __str__(self):
+        permissions = []
+        if self.can_view:
+            permissions.append("view")
+        if self.can_invite:
+            permissions.append("invite")
+        if self.can_manage:
+            permissions.append("manage")
+        if self.can_process_jobs:
+            permissions.append("process_jobs")
+        permission_str = ", ".join(permissions) if permissions else "no permissions"
+        return f"{self.user.username} - {self.lab_group.name} ({permission_str})"
 
 
 class LabGroupInvitation(models.Model):
@@ -932,6 +1124,15 @@ class LabGroupInvitation(models.Model):
 
         # Add user to lab group
         self.lab_group.members.add(user)
+
+        # Grant can_process_jobs permission if lab group allows it
+        if self.lab_group.allow_process_jobs:
+            permission, created = LabGroupPermission.objects.get_or_create(
+                user=user, lab_group=self.lab_group, defaults={"can_process_jobs": True, "can_view": True}
+            )
+            if not created and not permission.can_process_jobs:
+                permission.can_process_jobs = True
+                permission.save(update_fields=["can_process_jobs"])
 
         # Update invitation status
         self.status = self.InvitationStatus.ACCEPTED

@@ -32,6 +32,7 @@ from .models import (
     AnnotationFolder,
     LabGroup,
     LabGroupInvitation,
+    LabGroupPermission,
     RemoteHost,
     ResourcePermission,
     SiteConfig,
@@ -47,6 +48,7 @@ from .serializers import (
     EmailChangeConfirmSerializer,
     EmailChangeRequestSerializer,
     LabGroupInvitationSerializer,
+    LabGroupPermissionSerializer,
     LabGroupSerializer,
     PasswordChangeSerializer,
     PasswordResetConfirmSerializer,
@@ -169,23 +171,50 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
 class LabGroupViewSet(viewsets.ModelViewSet, FilterMixin):
     """ViewSet for lab group management."""
 
-    queryset = LabGroup.objects.all()
+    queryset = LabGroup.objects.select_related("parent_group", "creator").all()
     serializer_class = LabGroupSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ["name", "description", "creator__username"]
-    filterset_fields = ["creator", "allow_member_invites", "is_active"]
+    filterset_fields = {
+        "creator": ["exact"],
+        "parent_group": ["exact", "isnull"],
+        "allow_member_invites": ["exact"],
+        "is_active": ["exact"],
+    }
     pagination_class = LimitOffsetPagination
 
     def get_queryset(self):
-        """Return lab groups accessible to the current user."""
+        """
+        Return lab groups accessible to the current user.
+
+        Users can see:
+        1. Groups they created
+        2. Groups they're direct members of
+        3. Parent groups of groups they're members of (bubble-up)
+        """
         user = self.request.user
         if user.is_staff:
             # Admins can see all groups
             return LabGroup.objects.all()
         else:
-            # Regular users can only see groups they're members of or created
-            return LabGroup.objects.filter(Q(members=user) | Q(creator=user)).distinct()
+            # Start with groups user created or is a direct member of
+            accessible_groups = set()
+
+            # Groups where user is creator or direct member
+            direct_groups = LabGroup.objects.filter(Q(members=user) | Q(creator=user))
+
+            for group in direct_groups:
+                # Add the group itself
+                accessible_groups.add(group.id)
+
+                # Add all parent groups (bubble up)
+                current = group.parent_group
+                while current:
+                    accessible_groups.add(current.id)
+                    current = current.parent_group
+
+            return LabGroup.objects.filter(id__in=accessible_groups).distinct()
 
     @action(detail=False, methods=["get"])
     def my_groups(self, request):
@@ -266,19 +295,37 @@ The Team
 
     @action(detail=True, methods=["get"])
     def members(self, request, pk=None):
-        """Get members of this lab group."""
+        """
+        Get members of this lab group.
+
+        Query Parameters:
+            - direct_only: 'true' to get only direct members, default is 'false' (includes sub-group members)
+            - page: Page number for pagination
+            - page_size: Number of items per page (default: 100)
+        """
         lab_group = self.get_object()
 
-        # Check if user can view members
-        if not lab_group.is_member(request.user) and not lab_group.is_creator(request.user):
+        # Check if user can view members (staff can always view)
+        if not (request.user.is_staff or lab_group.is_member(request.user) or lab_group.is_creator(request.user)):
             return Response(
                 {"error": "You don't have permission to view members of this lab group"},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        members = lab_group.members.all()
-        serializer = UserSerializer(members, many=True)
-        return Response(serializer.data)
+        # Get query parameter for direct members only
+        direct_only = request.query_params.get("direct_only", "false").lower() == "true"
+
+        # Get members based on parameter
+        members = lab_group.get_all_members(include_subgroups=not direct_only)
+
+        # Pagination
+        page_size = int(request.query_params.get("page_size", 100))
+        paginator = self.pagination_class()
+        paginator.page_size = page_size
+
+        page = paginator.paginate_queryset(members, request)
+        serializer = UserSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
     @action(detail=True, methods=["get"])
     def invitations(self, request, pk=None):
@@ -407,11 +454,9 @@ class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):
             invitation.save()
             return Response({"error": "This invitation has expired"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Add user to lab group and update invitation status
+        # Accept the invitation (this handles adding to group and permissions)
+        invitation.accept(request.user)
         lab_group = invitation.lab_group
-        lab_group.members.add(request.user)
-        invitation.status = LabGroupInvitation.InvitationStatus.ACCEPTED
-        invitation.save()
 
         return Response(
             {
@@ -463,6 +508,53 @@ class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):
         invitation.save()
 
         return Response({"message": f"Invitation to {invitation.invited_email} has been cancelled"})
+
+
+class LabGroupPermissionViewSet(viewsets.ModelViewSet, FilterMixin):
+    """ViewSet for managing lab group permissions."""
+
+    queryset = LabGroupPermission.objects.all()
+    serializer_class = LabGroupPermissionSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["lab_group", "user", "can_view", "can_invite", "can_manage"]
+    search_fields = ["user__username", "user__email", "lab_group__name"]
+
+    def get_queryset(self):
+        """Return permissions for lab groups the user can manage."""
+        user = self.request.user
+        if user.is_staff:
+            return LabGroupPermission.objects.all()
+        else:
+            # Users can only see permissions for lab groups they can manage
+            managed_groups = LabGroup.objects.filter(Q(creator=user))
+            return LabGroupPermission.objects.filter(lab_group__in=managed_groups)
+
+    def perform_create(self, serializer):
+        """Check if user can manage the lab group before creating permission."""
+        lab_group = serializer.validated_data.get("lab_group")
+        if not lab_group.can_manage(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("You don't have permission to manage this lab group")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Check if user can manage the lab group before updating permission."""
+        lab_group = serializer.instance.lab_group
+        if not lab_group.can_manage(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("You don't have permission to manage this lab group")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Check if user can manage the lab group before deleting permission."""
+        if not instance.lab_group.can_manage(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("You don't have permission to manage this lab group")
+        instance.delete()
 
 
 class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):

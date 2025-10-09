@@ -190,11 +190,10 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     def get_user_lab_groups(self):
         """Get user's lab group IDs."""
         try:
-            # Import here to avoid circular imports
-            from ccv.models import LabGroup
+            from ccc.models import LabGroup
 
-            # Get lab groups where user is member or admin
-            lab_group_ids = list(LabGroup.objects.filter(members=self.user).values_list("id", flat=True))
+            # Get all accessible lab groups (includes parent groups via bubble-up)
+            lab_group_ids = list(LabGroup.get_accessible_group_ids(self.user))
 
             return lab_group_ids
         except Exception as e:
