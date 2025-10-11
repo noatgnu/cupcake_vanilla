@@ -8,7 +8,8 @@ faithfully representing the migrated functionality.
 from django.db.models import Q
 from django.utils import timezone
 
-from rest_framework import permissions, status, viewsets
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import IsAuthenticated
@@ -511,6 +512,11 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
     queryset = ProtocolStep.objects.all()
     serializer_class = ProtocolStepSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["protocol", "step_section", "original", "branch_from"]
+    search_fields = ["step_description"]
+    ordering_fields = ["order", "created_at", "step_duration"]
+    ordering = ["order"]
 
     def get_queryset(self):
         """Filter steps based on protocol permissions (includes bubble-up from sub-groups)."""
