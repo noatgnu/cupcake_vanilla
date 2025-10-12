@@ -122,6 +122,17 @@ def create_instrument_metadata_table(sender, instance, created, **kwargs):
             logger.error(f"Failed to create metadata table for instrument {instance.instrument_name}: {e}")
 
 
+@receiver(post_save, sender=Instrument)
+def create_instrument_default_folders(sender, instance, created, **kwargs):
+    """Automatically create default annotation folders for new instruments."""
+    if created and instance.user:
+        try:
+            instance.create_default_folders()
+            logger.info(f"Created default annotation folders for instrument {instance.instrument_name}")
+        except Exception as e:
+            logger.error(f"Failed to create default folders for instrument {instance.instrument_name}: {e}")
+
+
 @receiver(post_save, sender=StoredReagent)
 def create_stored_reagent_metadata_table(sender, instance, created, **kwargs):
     """Automatically create a blank metadata table for new stored reagents."""
@@ -152,3 +163,16 @@ def create_stored_reagent_metadata_table(sender, instance, created, **kwargs):
 
         except Exception as e:
             logger.error(f"Failed to create metadata table for stored reagent {reagent_name}: {e}")
+
+
+@receiver(post_save, sender=StoredReagent)
+def create_stored_reagent_default_folders(sender, instance, created, **kwargs):
+    """Automatically create default annotation folders for new stored reagents."""
+    if created and instance.user:
+        try:
+            instance.create_default_folders()
+            reagent_name = instance.reagent.name if instance.reagent else "Unknown Reagent"
+            logger.info(f"Created default annotation folders for stored reagent {reagent_name}")
+        except Exception as e:
+            reagent_name = instance.reagent.name if instance.reagent else "Unknown Reagent"
+            logger.error(f"Failed to create default folders for stored reagent {reagent_name}: {e}")

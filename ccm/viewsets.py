@@ -19,31 +19,37 @@ from .models import (
     ExternalContact,
     ExternalContactDetails,
     Instrument,
+    InstrumentAnnotation,
     InstrumentJob,
     InstrumentPermission,
     InstrumentUsage,
     MaintenanceLog,
+    MaintenanceLogAnnotation,
     Reagent,
     ReagentAction,
     ReagentSubscription,
     StorageObject,
     StoredReagent,
+    StoredReagentAnnotation,
     SupportInformation,
 )
 from .serializers import (
     ExternalContactDetailsSerializer,
     ExternalContactSerializer,
+    InstrumentAnnotationSerializer,
     InstrumentDetailSerializer,
     InstrumentJobDetailSerializer,
     InstrumentJobSerializer,
     InstrumentPermissionSerializer,
     InstrumentSerializer,
     InstrumentUsageSerializer,
+    MaintenanceLogAnnotationSerializer,
     MaintenanceLogSerializer,
     ReagentActionSerializer,
     ReagentSerializer,
     ReagentSubscriptionSerializer,
     StorageObjectSerializer,
+    StoredReagentAnnotationSerializer,
     StoredReagentSerializer,
     SupportInformationSerializer,
 )
@@ -617,6 +623,10 @@ class StoredReagentViewSet(BaseViewSet):
     ordering_fields = ["quantity", "expiration_date", "created_at"]
     ordering = ["reagent__name"]
 
+    def perform_create(self, serializer):
+        """Set the user when creating a stored reagent."""
+        serializer.save(user=self.request.user)
+
     @action(detail=False, methods=["get"])
     def low_stock(self, request):
         """Get stored reagents with low stock based on individual threshold."""
@@ -814,6 +824,10 @@ class ExternalContactViewSet(BaseViewSet):
     ordering_fields = ["contact_name", "created_at"]
     ordering = ["contact_name"]
 
+    def perform_create(self, serializer):
+        """Set the user when creating an external contact."""
+        serializer.save(user=self.request.user)
+
 
 class ExternalContactDetailsViewSet(BaseViewSet):
     """ViewSet for ExternalContactDetails model."""
@@ -908,3 +922,151 @@ class InstrumentPermissionViewSet(BaseViewSet):
             Q(instrument__created_by=user)
             | Q(instrument__instrumentpermission__user=user, instrument__instrumentpermission__can_manage=True)
         ).distinct()
+
+
+class InstrumentAnnotationViewSet(BaseViewSet):
+    """
+    ViewSet for InstrumentAnnotation model.
+
+    Permissions:
+    - Maintenance documents: Only staff can view and edit
+    - Other documents (Manuals, Certificates): Users with view rights can see,
+      only managers can upload/edit/delete
+    """
+
+    queryset = InstrumentAnnotation.objects.all()
+    serializer_class = InstrumentAnnotationSerializer
+    filterset_fields = ["instrument", "folder", "annotation"]
+    search_fields = ["annotation__annotation", "folder__folder_name"]
+    ordering = ["-order"]
+
+    def get_queryset(self):
+        """Filter annotations by instrument access permissions and folder type."""
+        user = self.request.user
+        queryset = self.queryset.select_related("instrument", "folder")
+
+        if user.is_staff:
+            return queryset
+
+        accessible_annotations = []
+        for annotation_junction in queryset:
+            instrument = annotation_junction.instrument
+            folder = annotation_junction.folder
+
+            # Maintenance documents are staff-only
+            if folder.folder_name == "Maintenance":
+                continue
+
+            # For other documents, check if user can view the instrument
+            if instrument.user_can_view(user):
+                accessible_annotations.append(annotation_junction.id)
+
+        return queryset.filter(id__in=accessible_annotations)
+
+    def perform_create(self, serializer):
+        """Only managers can upload documents."""
+        instrument = serializer.validated_data.get("instrument")
+        if not instrument.user_can_manage(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Only instrument managers can upload annotations")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Only managers can edit documents."""
+        instrument = serializer.instance.instrument
+        if not instrument.user_can_manage(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Only instrument managers can edit annotations")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Only managers can delete documents."""
+        if not instance.instrument.user_can_manage(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Only instrument managers can delete annotations")
+        instance.delete()
+
+
+class StoredReagentAnnotationViewSet(BaseViewSet):
+    """
+    ViewSet for StoredReagentAnnotation model.
+
+    Permissions:
+    - View: Users who can access the storage object can view documents
+    - Upload/Edit/Delete: Only staff or the original creator (stored_reagent.user)
+    """
+
+    queryset = StoredReagentAnnotation.objects.all()
+    serializer_class = StoredReagentAnnotationSerializer
+    filterset_fields = ["stored_reagent", "folder", "annotation"]
+    search_fields = ["annotation__annotation", "folder__folder_name"]
+    ordering = ["-order"]
+
+    def get_queryset(self):
+        """Filter annotations by stored reagent access permissions."""
+        user = self.request.user
+        queryset = self.queryset.select_related("stored_reagent__storage_object", "stored_reagent__user")
+
+        if user.is_staff or user.is_superuser:
+            return queryset
+
+        accessible_annotations = []
+        for annotation_junction in queryset:
+            stored_reagent = annotation_junction.stored_reagent
+            # Users who can access the storage can view documents
+            if stored_reagent.storage_object and stored_reagent.storage_object.can_access(user):
+                accessible_annotations.append(annotation_junction.id)
+
+        return queryset.filter(id__in=accessible_annotations)
+
+    def perform_create(self, serializer):
+        """Only staff or creator can upload documents."""
+        stored_reagent = serializer.validated_data.get("stored_reagent")
+        user = self.request.user
+
+        if not (user.is_staff or user.is_superuser or stored_reagent.user == user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Only staff or the reagent creator can upload annotations")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Only staff or creator can edit documents."""
+        stored_reagent = serializer.instance.stored_reagent
+        user = self.request.user
+
+        if not (user.is_staff or user.is_superuser or stored_reagent.user == user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Only staff or the reagent creator can edit annotations")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Only staff or creator can delete documents."""
+        stored_reagent = instance.stored_reagent
+        user = self.request.user
+
+        if not (user.is_staff or user.is_superuser or stored_reagent.user == user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("Only staff or the reagent creator can delete annotations")
+        instance.delete()
+
+
+class MaintenanceLogAnnotationViewSet(BaseViewSet):
+    """ViewSet for MaintenanceLogAnnotation model."""
+
+    queryset = MaintenanceLogAnnotation.objects.all()
+    serializer_class = MaintenanceLogAnnotationSerializer
+    filterset_fields = ["maintenance_log", "folder", "annotation"]
+    search_fields = ["annotation__annotation", "folder__folder_name"]
+    ordering = ["-order"]
+
+    def get_queryset(self):
+        """Filter annotations by maintenance log access permissions (staff only)."""
+        if self.request.user.is_staff:
+            return self.queryset
+        return self.queryset.none()

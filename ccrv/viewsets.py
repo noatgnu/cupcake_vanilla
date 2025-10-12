@@ -238,6 +238,11 @@ class SessionViewSet(viewsets.ModelViewSet):
 
     queryset = Session.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsOwnerEditorViewerOrNoAccess]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["unique_id", "enabled", "processing"]
+    search_fields = ["name"]
+    ordering_fields = ["created_at", "started_at", "ended_at"]
+    ordering = ["-created_at"]
 
     def get_serializer_class(self):
         if self.action == "create":
