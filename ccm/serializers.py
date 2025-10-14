@@ -542,6 +542,8 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
     folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = InstrumentAnnotation
@@ -554,6 +556,8 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
             "annotation",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "created_at",
         ]
         read_only_fields = [
@@ -562,8 +566,28 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
             "folder_name",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "created_at",
         ]
+
+    def get_file_url(self, obj):
+        """Get signed download URL for annotation file if exists."""
+        if not obj.annotation or not obj.annotation.file:
+            return None
+
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if not obj.annotation.can_view(request.user):
+            return None
+
+        try:
+            token = obj.annotation.generate_download_token(request.user)
+            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+        except Exception:
+            return None
 
 
 class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
@@ -573,6 +597,8 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
     folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = StoredReagentAnnotation
@@ -585,6 +611,8 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
             "annotation",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "created_at",
         ]
         read_only_fields = [
@@ -593,8 +621,28 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
             "folder_name",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "created_at",
         ]
+
+    def get_file_url(self, obj):
+        """Get signed download URL for annotation file if exists."""
+        if not obj.annotation or not obj.annotation.file:
+            return None
+
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if not obj.annotation.can_view(request.user):
+            return None
+
+        try:
+            token = obj.annotation.generate_download_token(request.user)
+            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+        except Exception:
+            return None
 
 
 class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
@@ -603,6 +651,8 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
     maintenance_log_title = serializers.CharField(source="maintenance_log.maintenance_type", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = MaintenanceLogAnnotation
@@ -613,6 +663,8 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
             "annotation",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "order",
             "created_at",
         ]
@@ -621,8 +673,28 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
             "maintenance_log_title",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "created_at",
         ]
+
+    def get_file_url(self, obj):
+        """Get signed download URL for annotation file if exists."""
+        if not obj.annotation or not obj.annotation.file:
+            return None
+
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if not obj.annotation.can_view(request.user):
+            return None
+
+        try:
+            token = obj.annotation.generate_download_token(request.user)
+            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+        except Exception:
+            return None
 
 
 class ReagentActionSerializer(serializers.ModelSerializer):

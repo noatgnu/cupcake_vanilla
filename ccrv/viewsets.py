@@ -16,8 +16,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from ccc.models import RemoteHost
+from ccc.models import LabGroup, RemoteHost
 from ccc.permissions import IsAdminUser, IsOwnerEditorViewerOrNoAccess, IsOwnerOrReadOnly
+from ccc.serializers import AnnotationFolderSerializer
+from ccv.serializers import MetadataColumnSerializer, MetadataTableSerializer
 
 from .models import (
     InstrumentUsageSessionAnnotation,
@@ -79,8 +81,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return self.queryset
 
         # Get all accessible lab groups (includes parent groups via bubble-up)
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         return self.queryset.filter(Q(owner=user) | Q(lab_group_id__in=accessible_groups)).distinct()
@@ -130,8 +130,6 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
             return self.queryset
 
         # Get all accessible lab groups (includes parent groups via bubble-up)
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         return self.queryset.filter(
@@ -201,8 +199,6 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
             protocol.save()
 
             # Update the order attribute for steps in the newly imported protocol
-            from .models import ProtocolStep
-
             # Handle steps without sections first
             root_steps = ProtocolStep.objects.filter(
                 protocol=protocol, step_section__isnull=True, previous_step__isnull=True
@@ -256,8 +252,6 @@ class SessionViewSet(viewsets.ModelViewSet):
             return self.queryset
 
         # Get all accessible lab groups (includes parent groups via bubble-up)
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         return self.queryset.filter(
@@ -273,8 +267,6 @@ class SessionViewSet(viewsets.ModelViewSet):
             return Response({"error": "Session has already been started"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Use original logic
-        from django.utils import timezone
-
         session.started_at = timezone.now()
         session.enabled = True
         session.save(update_fields=["started_at", "enabled"])
@@ -333,6 +325,17 @@ class SessionViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(sessions, many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=["get"])
+    def folders(self, request, pk=None):
+        """Get annotation folders linked to this session."""
+        session = self.get_object()
+
+        session_folders = SessionAnnotationFolder.objects.filter(session=session).select_related("folder")
+        folders = [sf.folder for sf in session_folders]
+
+        serializer = AnnotationFolderSerializer(folders, many=True)
+        return Response(serializer.data)
+
 
 class ProtocolRatingViewSet(viewsets.ModelViewSet):
     """
@@ -352,8 +355,6 @@ class ProtocolRatingViewSet(viewsets.ModelViewSet):
             return self.queryset
 
         # Get all accessible lab groups (includes parent groups via bubble-up)
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         # Can see ratings for protocols they have access to
@@ -427,8 +428,6 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
             return self.queryset
 
         # Get all accessible lab groups (includes parent groups via bubble-up)
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         return self.queryset.filter(
@@ -530,8 +529,6 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
             return self.queryset
 
         # Get all accessible lab groups (includes parent groups via bubble-up)
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         return self.queryset.filter(
@@ -849,8 +846,6 @@ class TimeKeeperViewSet(ModelViewSet):
             return Response({"error": "Timer is not started"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Calculate duration in seconds
-        from django.utils import timezone
-
         duration_seconds = int((timezone.now() - time_keeper.start_time).total_seconds())
 
         time_keeper.started = False
@@ -922,8 +917,6 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
 
         try:
             metadata_table = session_annotation.create_metadata_table()
-            from ccv.serializers import MetadataTableSerializer
-
             serializer = MetadataTableSerializer(metadata_table)
             return Response(
                 {"message": "Metadata table created successfully", "metadata_table": serializer.data},
@@ -944,8 +937,6 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
                 {"error": "No metadata table found for this session annotation"}, status=status.HTTP_404_NOT_FOUND
             )
 
-        from ccv.serializers import MetadataTableSerializer
-
         serializer = MetadataTableSerializer(session_annotation.metadata_table)
         return Response(serializer.data)
 
@@ -963,8 +954,6 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
         try:
             # Use the model method which handles positioning correctly
             column = session_annotation.add_metadata_column(column_data)
-
-            from ccv.serializers import MetadataColumnSerializer
 
             serializer = MetadataColumnSerializer(column)
             return Response(
@@ -1000,8 +989,6 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
         session_annotation = self.get_object()
 
         columns = session_annotation.get_metadata_columns()
-        from ccv.serializers import MetadataColumnSerializer
-
         serializer = MetadataColumnSerializer(columns, many=True)
         return Response(serializer.data)
 

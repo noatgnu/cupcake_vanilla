@@ -4,6 +4,7 @@ Provides REST API endpoints for instrument management, jobs, usage tracking,
 and maintenance functionality.
 """
 
+from django.contrib.auth import get_user_model
 from django.db import models
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -12,9 +13,16 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from ccc.models import AnnotationFolder, ResourceType
+from ccc.serializers import AnnotationFolderSerializer
+from ccv.models import LabGroup, MetadataColumn, MetadataTableTemplate
+from ccv.serializers import MetadataColumnSerializer, MetadataTableSerializer
+
+from .communication import send_maintenance_alert, send_reagent_alert
 from .models import (
     ExternalContact,
     ExternalContactDetails,
@@ -180,8 +188,6 @@ class InstrumentViewSet(BaseViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        from .communication import send_maintenance_alert
-
         instrument = self.get_object()
 
         notification_type = request.data.get("notification_type", "maintenance_due")
@@ -196,8 +202,6 @@ class InstrumentViewSet(BaseViewSet):
 
         # Determine recipient
         if recipient_id:
-            from django.contrib.auth import get_user_model
-
             User = get_user_model()
             try:
                 recipient = User.objects.get(pk=recipient_id)
@@ -237,8 +241,6 @@ class InstrumentViewSet(BaseViewSet):
         if not instrument.metadata_table:
             return Response({"error": "No metadata table found for this instrument"}, status=status.HTTP_404_NOT_FOUND)
 
-        from ccv.serializers import MetadataTableSerializer
-
         serializer = MetadataTableSerializer(instrument.metadata_table)
         return Response(serializer.data)
 
@@ -257,9 +259,6 @@ class InstrumentViewSet(BaseViewSet):
             return Response({"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            from ccv.models import MetadataColumn
-            from ccv.serializers import MetadataColumnSerializer
-
             # Create the column linked to this metadata table
             column = MetadataColumn.objects.create(
                 metadata_table=instrument.metadata_table,
@@ -291,8 +290,6 @@ class InstrumentViewSet(BaseViewSet):
             return Response({"error": "No metadata table found for this instrument"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            from ccv.models import MetadataColumn
-
             column = get_object_or_404(MetadataColumn, id=column_id, metadata_table=instrument.metadata_table)
 
             column_name = column.name
@@ -320,8 +317,6 @@ class InstrumentViewSet(BaseViewSet):
             return Response({"error": "column_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            from ccv.models import MetadataColumn
-
             column = get_object_or_404(MetadataColumn, id=column_id, metadata_table=instrument.metadata_table)
 
             column.value = new_value
@@ -335,6 +330,23 @@ class InstrumentViewSet(BaseViewSet):
             return Response(
                 {"error": f"Failed to update metadata value: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=["get"])
+    def folders(self, request, pk=None):
+        """Get annotation folders for this instrument."""
+        instrument = self.get_object()
+
+        if not instrument.user:
+            return Response({"error": "Instrument has no user assigned"}, status=status.HTTP_404_NOT_FOUND)
+
+        folders = AnnotationFolder.objects.filter(
+            owner=instrument.user,
+            resource_type=ResourceType.FILE,
+            folder_name__in=["Manuals", "Certificates", "Maintenance"],
+        )
+
+        serializer = AnnotationFolderSerializer(folders, many=True)
+        return Response(serializer.data)
 
 
 class InstrumentJobViewSet(BaseViewSet):
@@ -444,8 +456,6 @@ class InstrumentJobViewSet(BaseViewSet):
             return Response({"error": "Template ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            from ccv.models import LabGroup, MetadataTableTemplate
-
             # Get the template
             template = MetadataTableTemplate.objects.get(id=template_id)
 
@@ -496,8 +506,6 @@ class InstrumentJobViewSet(BaseViewSet):
             job.save(update_fields=["metadata_table"])
 
             # Return the created metadata table info
-            from ccv.serializers import MetadataTableSerializer
-
             serializer = MetadataTableSerializer(metadata_table)
             return Response(
                 {
@@ -586,8 +594,6 @@ class StorageObjectViewSet(BaseViewSet):
         if user.is_staff or user.is_superuser:
             return self.queryset
 
-        from django.db.models import Q
-
         accessible_ids = set()
         all_storage_objects = StorageObject.objects.prefetch_related("access_lab_groups", "stored_at").all()
 
@@ -653,8 +659,6 @@ class StoredReagentViewSet(BaseViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        from .communication import send_reagent_alert
-
         stored_reagent = self.get_object()
 
         notification_type = request.data.get("notification_type", "low_stock")
@@ -669,8 +673,6 @@ class StoredReagentViewSet(BaseViewSet):
 
         # Determine recipient
         if recipient_id:
-            from django.contrib.auth import get_user_model
-
             User = get_user_model()
             try:
                 recipient = User.objects.get(pk=recipient_id)
@@ -708,8 +710,6 @@ class StoredReagentViewSet(BaseViewSet):
                 {"error": "No metadata table found for this stored reagent"}, status=status.HTTP_404_NOT_FOUND
             )
 
-        from ccv.serializers import MetadataTableSerializer
-
         serializer = MetadataTableSerializer(stored_reagent.metadata_table)
         return Response(serializer.data)
 
@@ -730,9 +730,6 @@ class StoredReagentViewSet(BaseViewSet):
             return Response({"error": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            from ccv.models import MetadataColumn
-            from ccv.serializers import MetadataColumnSerializer
-
             # Create the column linked to this metadata table
             column = MetadataColumn.objects.create(
                 metadata_table=stored_reagent.metadata_table,
@@ -812,6 +809,23 @@ class StoredReagentViewSet(BaseViewSet):
             return Response(
                 {"error": f"Failed to update metadata value: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=["get"])
+    def folders(self, request, pk=None):
+        """Get annotation folders for this stored reagent."""
+        stored_reagent = self.get_object()
+
+        if not stored_reagent.user:
+            return Response({"error": "StoredReagent has no user assigned"}, status=status.HTTP_404_NOT_FOUND)
+
+        folders = AnnotationFolder.objects.filter(
+            owner=stored_reagent.user,
+            resource_type=ResourceType.FILE,
+            folder_name__in=["MSDS", "Certificates", "Manuals"],
+        )
+
+        serializer = AnnotationFolderSerializer(folders, many=True)
+        return Response(serializer.data)
 
 
 class ExternalContactViewSet(BaseViewSet):
@@ -967,8 +981,6 @@ class InstrumentAnnotationViewSet(BaseViewSet):
         """Only managers can upload documents."""
         instrument = serializer.validated_data.get("instrument")
         if not instrument.user_can_manage(self.request.user):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("Only instrument managers can upload annotations")
         serializer.save()
 
@@ -976,16 +988,12 @@ class InstrumentAnnotationViewSet(BaseViewSet):
         """Only managers can edit documents."""
         instrument = serializer.instance.instrument
         if not instrument.user_can_manage(self.request.user):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("Only instrument managers can edit annotations")
         serializer.save()
 
     def perform_destroy(self, instance):
         """Only managers can delete documents."""
         if not instance.instrument.user_can_manage(self.request.user):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("Only instrument managers can delete annotations")
         instance.delete()
 
@@ -1028,8 +1036,6 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
         user = self.request.user
 
         if not (user.is_staff or user.is_superuser or stored_reagent.user == user):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("Only staff or the reagent creator can upload annotations")
         serializer.save()
 
@@ -1039,8 +1045,6 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
         user = self.request.user
 
         if not (user.is_staff or user.is_superuser or stored_reagent.user == user):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("Only staff or the reagent creator can edit annotations")
         serializer.save()
 
@@ -1050,8 +1054,6 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
         user = self.request.user
 
         if not (user.is_staff or user.is_superuser or stored_reagent.user == user):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("Only staff or the reagent creator can delete annotations")
         instance.delete()
 

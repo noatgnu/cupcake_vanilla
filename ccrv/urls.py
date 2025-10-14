@@ -59,8 +59,18 @@ urlpatterns = [
         name="step-annotation-chunked-upload",
     ),
     path(
+        "upload/step-annotation-chunks/<uuid:pk>/",
+        StepAnnotationChunkedUploadView.as_view(),
+        name="step-annotation-chunked-upload-detail",
+    ),
+    path(
         "upload/session-annotation-folder-chunks/",
         SessionAnnotationFolderChunkedUploadView.as_view(),
         name="session-annotation-folder-chunked-upload",
+    ),
+    path(
+        "upload/session-annotation-folder-chunks/<uuid:pk>/",
+        SessionAnnotationFolderChunkedUploadView.as_view(),
+        name="session-annotation-folder-chunked-upload-detail",
     ),
 ]

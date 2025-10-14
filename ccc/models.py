@@ -1483,6 +1483,150 @@ class Annotation(AbstractResource):
             return f"{self.get_annotation_type_display()}: {preview}"
         return f"{self.get_annotation_type_display()}: [File]"
 
+    def _check_parent_resource_permission(self, user, permission_method):
+        """
+        Check permissions on parent resources via junction models.
+
+        If this annotation is attached to a parent resource (Instrument, StoredReagent,
+        Session, etc.) via a junction model, delegate permission checking to the parent
+        resource to prevent unauthorized access bypassing parent permissions.
+
+        Args:
+            user: User to check permissions for
+            permission_method: Name of permission method to call ('can_view', 'can_edit', 'can_delete')
+
+        Returns:
+            bool or None: True/False if attached to parent resource, None if standalone
+        """
+        if hasattr(self, "instrument_attachments") and self.instrument_attachments.exists():
+            instrument_annotation = self.instrument_attachments.first()
+            return getattr(instrument_annotation, permission_method)(user)
+
+        if hasattr(self, "stored_reagent_attachments") and self.stored_reagent_attachments.exists():
+            reagent_annotation = self.stored_reagent_attachments.first()
+            return getattr(reagent_annotation, permission_method)(user)
+
+        if hasattr(self, "maintenance_log_attachments") and self.maintenance_log_attachments.exists():
+            maintenance_annotation = self.maintenance_log_attachments.first()
+            return getattr(maintenance_annotation, permission_method)(user)
+
+        if hasattr(self, "session_attachments") and self.session_attachments.exists():
+            session_annotation = self.session_attachments.first()
+            return getattr(session_annotation, permission_method)(user)
+
+        if hasattr(self, "step_attachments") and self.step_attachments.exists():
+            step_annotation = self.step_attachments.first()
+            return getattr(step_annotation, permission_method)(user)
+
+        return None
+
+    def can_view(self, user):
+        """
+        Check if user can view this annotation.
+
+        If annotation is attached to a parent resource (Instrument, StoredReagent,
+        Session, etc.), permissions are inherited from the parent resource to prevent
+        unauthorized access via the base annotation endpoint.
+
+        Args:
+            user: User to check permissions for
+
+        Returns:
+            bool: True if user can view, False otherwise
+        """
+        parent_permission = self._check_parent_resource_permission(user, "can_view")
+        if parent_permission is not None:
+            return parent_permission
+
+        return super().can_view(user)
+
+    def can_edit(self, user):
+        """
+        Check if user can edit this annotation.
+
+        If annotation is attached to a parent resource, permissions are inherited
+        from the parent resource to prevent unauthorized modifications.
+
+        Args:
+            user: User to check permissions for
+
+        Returns:
+            bool: True if user can edit, False otherwise
+        """
+        parent_permission = self._check_parent_resource_permission(user, "can_edit")
+        if parent_permission is not None:
+            return parent_permission
+
+        return super().can_edit(user)
+
+    def can_delete(self, user):
+        """
+        Check if user can delete this annotation.
+
+        If annotation is attached to a parent resource, permissions are inherited
+        from the parent resource to prevent unauthorized deletions.
+
+        Args:
+            user: User to check permissions for
+
+        Returns:
+            bool: True if user can delete, False otherwise
+        """
+        parent_permission = self._check_parent_resource_permission(user, "can_delete")
+        if parent_permission is not None:
+            return parent_permission
+
+        return super().can_delete(user)
+
+    def generate_download_token(self, user):
+        """
+        Generate a signed download token for this annotation.
+
+        Args:
+            user: The user requesting the download
+
+        Returns:
+            str: Signed token containing annotation ID, user ID, and file path
+        """
+        from django.core.signing import TimestampSigner
+
+        signer = TimestampSigner()
+        payload = f"{self.id}:{user.id}:{self.file.name}"
+        return signer.sign(payload)
+
+    @classmethod
+    def verify_download_token(cls, signed_token):
+        """
+        Verify a signed download token and return the Annotation if valid.
+
+        Args:
+            signed_token: The signed token to verify
+
+        Returns:
+            Tuple of (Annotation instance, User instance) if valid, (None, None) otherwise
+        """
+        from django.conf import settings
+        from django.contrib.auth import get_user_model
+        from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
+
+        signer = TimestampSigner()
+
+        try:
+            max_age = getattr(settings, "ANNOTATION_DOWNLOAD_TOKEN_MAX_AGE", 600)
+            payload = signer.unsign(signed_token, max_age=max_age)
+
+            annotation_id, user_id, file_path = payload.split(":", 2)
+
+            User = get_user_model()
+            user = User.objects.get(id=user_id)
+
+            annotation = cls.objects.get(id=annotation_id, file=file_path)
+
+            return annotation, user
+
+        except (BadSignature, SignatureExpired, ValueError, User.DoesNotExist, cls.DoesNotExist):
+            return None, None
+
 
 # Import the AnnotationFileUpload model so Django can detect it for migrations
 from .annotation_chunked_upload import AnnotationFileUpload  # noqa: F401

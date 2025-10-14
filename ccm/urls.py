@@ -62,8 +62,18 @@ urlpatterns = [
         name="instrument-annotation-chunked-upload",
     ),
     path(
+        "upload/instrument-annotation-chunks/<uuid:pk>/",
+        InstrumentAnnotationChunkedUploadView.as_view(),
+        name="instrument-annotation-chunked-upload-detail",
+    ),
+    path(
         "upload/stored-reagent-annotation-chunks/",
         StoredReagentAnnotationChunkedUploadView.as_view(),
         name="stored-reagent-annotation-chunked-upload",
+    ),
+    path(
+        "upload/stored-reagent-annotation-chunks/<uuid:pk>/",
+        StoredReagentAnnotationChunkedUploadView.as_view(),
+        name="stored-reagent-annotation-chunked-upload-detail",
     ),
 ]

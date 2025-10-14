@@ -383,6 +383,7 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     metadata_table_id = serializers.IntegerField(source="metadata_table.id", read_only=True)
     metadata_columns_count = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = SessionAnnotation
@@ -393,6 +394,7 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "annotation",
             "annotation_type",
             "annotation_text",
+            "file_url",
             "order",
             "metadata_table",
             "metadata_table_name",
@@ -408,6 +410,7 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "session_name",
             "annotation_type",
             "annotation_text",
+            "file_url",
             "metadata_table_name",
             "metadata_table_id",
             "metadata_columns_count",
@@ -416,6 +419,24 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
     def get_metadata_columns_count(self, obj):
         """Get the number of metadata columns for this session annotation."""
         return obj.get_metadata_columns().count()
+
+    def get_file_url(self, obj):
+        """Get signed download URL for annotation file if exists."""
+        if not obj.annotation or not obj.annotation.file:
+            return None
+
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if not obj.annotation.can_view(request.user):
+            return None
+
+        try:
+            token = obj.annotation.generate_download_token(request.user)
+            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+        except Exception:
+            return None
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -680,6 +701,8 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
     step_description = serializers.CharField(source="step.step_description", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = StepAnnotation
@@ -692,6 +715,8 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "annotation",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "created_at",
         ]
         read_only_fields = [
@@ -700,8 +725,28 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "step_description",
             "annotation_name",
             "annotation_type",
+            "annotation_text",
+            "file_url",
             "created_at",
         ]
+
+    def get_file_url(self, obj):
+        """Get signed download URL for annotation file if exists."""
+        if not obj.annotation or not obj.annotation.file:
+            return None
+
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if not obj.annotation.can_view(request.user):
+            return None
+
+        try:
+            token = obj.annotation.generate_download_token(request.user)
+            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+        except Exception:
+            return None
 
 
 class SessionAnnotationFolderSerializer(serializers.ModelSerializer):

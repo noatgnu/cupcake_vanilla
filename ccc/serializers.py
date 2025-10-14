@@ -807,6 +807,8 @@ class AnnotationFolderSerializer(serializers.ModelSerializer):
 class AnnotationSerializer(serializers.ModelSerializer):
     """Serializer for annotations with file upload support."""
 
+    FILE_ANNOTATION_TYPES = ["file", "image", "video", "audio", "sketch"]
+
     file_url = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     folder_path = serializers.SerializerMethodField()
@@ -847,16 +849,41 @@ class AnnotationSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at", "file_url", "file_size", "folder_path", "resource_type"]
 
     def get_file_url(self, obj):
-        """Get file URL if file exists."""
-        if obj.file:
-            request = self.context.get("request")
-            if request:
-                return request.build_absolute_uri(obj.file.url)
-            return obj.file.url
-        return None
+        """
+        Get signed download URL if file exists.
+
+        Returns a time-limited signed URL that can be used to download the file.
+        Only generates URLs for annotation types that support file uploads.
+        """
+        if obj.annotation_type not in self.FILE_ANNOTATION_TYPES:
+            return None
+
+        if not obj.file:
+            return None
+
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if not obj.can_view(request.user):
+            return None
+
+        try:
+            token = obj.generate_download_token(request.user)
+            download_url = request.build_absolute_uri(f"/api/ccc/annotations/{obj.id}/download/?token={token}")
+            return download_url
+        except Exception:
+            return None
 
     def get_file_size(self, obj):
-        """Get file size if file exists."""
+        """
+        Get file size if file exists.
+
+        Only returns size for annotation types that support file uploads.
+        """
+        if obj.annotation_type not in self.FILE_ANNOTATION_TYPES:
+            return None
+
         if obj.file:
             try:
                 return obj.file.size

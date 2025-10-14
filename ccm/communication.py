@@ -17,7 +17,9 @@ User = get_user_model()
 
 def is_ccmc_available():
     """Check if CCMC app is installed and available."""
-    return "ccmc" in settings.INSTALLED_APPS and apps.is_installed("ccmc")
+    in_installed_apps = any("ccmc" in str(app).lower() for app in settings.INSTALLED_APPS)
+    is_installed = apps.is_installed("ccmc")
+    return in_installed_apps and is_installed
 
 
 def send_notification(
@@ -129,10 +131,15 @@ def send_maintenance_alert(instrument, message_type="maintenance_due", maintenan
         bool: True if alerts sent successfully
     """
     if not is_ccmc_available():
+        logger.warning("CCMC not available - cannot send maintenance alert")
         return False
 
     if not notify_users:
         notify_users = [instrument.user] if instrument.user else []
+
+    if not notify_users:
+        logger.warning(f"No users to notify for instrument {instrument.id}")
+        return False
 
     maintenance_info = maintenance_info or {}
 
@@ -171,6 +178,13 @@ def send_maintenance_alert(instrument, message_type="maintenance_due", maintenan
             data=maintenance_info,
         ):
             success_count += 1
+        else:
+            logger.warning(f"Failed to send maintenance alert to user {user.id}")
+
+    if success_count == 0:
+        logger.error(f"Failed to send maintenance alerts to any of {len(notify_users)} users")
+    else:
+        logger.info(f"Successfully sent maintenance alerts to {success_count}/{len(notify_users)} users")
 
     return success_count > 0
 
@@ -188,6 +202,7 @@ def send_reagent_alert(stored_reagent, alert_type="low_stock", notify_users=None
         bool: True if alerts sent successfully
     """
     if not is_ccmc_available():
+        logger.warning("CCMC not available - cannot send reagent alert")
         return False
 
     if not notify_users:
@@ -199,6 +214,16 @@ def send_reagent_alert(stored_reagent, alert_type="low_stock", notify_users=None
         # Fallback to reagent owner if no subscriptions
         if not notify_users and stored_reagent.user:
             notify_users = [stored_reagent.user]
+
+    if not notify_users:
+        logger.warning(f"No users to notify for stored reagent {stored_reagent.id}")
+        return False
+
+    reagent_data = {"alert_type": alert_type, "quantity": stored_reagent.quantity}
+
+    if stored_reagent.storage_object_id:
+        link = f"/storage/{stored_reagent.storage_object_id}?reagentId={stored_reagent.id}"
+        reagent_data["link"] = link
 
     if alert_type == "low_stock":
         title = f"Low Stock Alert: {stored_reagent.reagent.name}"
@@ -231,9 +256,16 @@ def send_reagent_alert(stored_reagent, alert_type="low_stock", notify_users=None
             notification_type=notification_type,
             priority=priority,
             related_object=stored_reagent,
-            data={"alert_type": alert_type, "quantity": stored_reagent.quantity},
+            data=reagent_data,
         ):
             success_count += 1
+        else:
+            logger.warning(f"Failed to send reagent alert to user {user.id}")
+
+    if success_count == 0:
+        logger.error(f"Failed to send reagent alerts to any of {len(notify_users)} users")
+    else:
+        logger.info(f"Successfully sent reagent alerts to {success_count}/{len(notify_users)} users")
 
     return success_count > 0
 

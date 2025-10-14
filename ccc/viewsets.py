@@ -1366,6 +1366,64 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         serializer = self.get_serializer(paginated_annotations, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+    @action(detail=True, methods=["get"], permission_classes=[])
+    def download(self, request, pk=None):
+        """
+        Download annotation file with signed token verification.
+
+        No authentication required - token contains all necessary validation.
+
+        Security: Checks both annotation-level AND parent resource permissions
+        (Instrument, StoredReagent, Session, etc.) via Annotation.can_view().
+        """
+        from django.http import HttpResponse
+
+        signed_token = request.query_params.get("token")
+
+        if not signed_token:
+            return HttpResponse("Missing token", status=400)
+
+        annotation, user = Annotation.verify_download_token(signed_token)
+
+        if not annotation:
+            return HttpResponse("Invalid or expired token", status=403)
+
+        if not annotation.file:
+            return HttpResponse("No file attached to this annotation", status=404)
+
+        if not annotation.can_view(user):
+            return HttpResponse("Permission denied", status=403)
+
+        is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
+
+        if is_electron:
+            import os
+
+            file_path = annotation.file.path
+            if not os.path.exists(file_path):
+                return HttpResponse("File not found", status=404)
+
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+
+            response = HttpResponse(file_content, content_type="application/octet-stream")
+            response["Content-Disposition"] = f'attachment; filename="{os.path.basename(annotation.file.name)}"'
+            response["Content-Encoding"] = "identity"
+        else:
+            response = HttpResponse()
+            response["X-Accel-Redirect"] = f"/internal/media/{annotation.file.name}"
+            response["Content-Type"] = "application/octet-stream"
+            response["Content-Disposition"] = f'attachment; filename="{os.path.basename(annotation.file.name)}"'
+            try:
+                response["Content-Length"] = annotation.file.size
+            except Exception:
+                pass
+            response["Cache-Control"] = "private, max-age=300"
+            response["X-Content-Type-Options"] = "nosniff"
+            response["X-Download-Options"] = "noopen"
+
+        return response
+
 
 class RemoteHostViewSet(viewsets.ModelViewSet):
     """
