@@ -624,10 +624,45 @@ class StoredReagentViewSet(BaseViewSet):
 
     queryset = StoredReagent.objects.all()
     serializer_class = StoredReagentSerializer
-    filterset_fields = ["reagent", "storage_object", "quantity", "expiration_date"]
-    search_fields = ["reagent__name", "notes", "unit"]
+    filterset_fields = ["reagent", "quantity", "expiration_date"]
+    search_fields = ["reagent__name", "notes", "reagent__unit", "barcode"]
     ordering_fields = ["quantity", "expiration_date", "created_at"]
     ordering = ["reagent__name"]
+
+    def get_queryset(self):
+        """
+        Filter stored reagents with optional sub-storage inclusion.
+
+        Query parameters:
+        - storage_object: Filter by storage object ID
+        - include_sub_storage: If 'true', include reagents from all nested child storage objects
+        """
+        queryset = super().get_queryset()
+
+        storage_object_id = self.request.query_params.get("storage_object")
+        include_sub_storage = self.request.query_params.get("include_sub_storage", "").lower() == "true"
+
+        if storage_object_id:
+            try:
+                storage_obj = StorageObject.objects.get(id=storage_object_id)
+
+                if include_sub_storage:
+
+                    def get_all_sub_storage_ids(storage):
+                        """Recursively get all child storage object IDs."""
+                        ids = [storage.id]
+                        for child in StorageObject.objects.filter(stored_at=storage):
+                            ids.extend(get_all_sub_storage_ids(child))
+                        return ids
+
+                    all_storage_ids = get_all_sub_storage_ids(storage_obj)
+                    queryset = queryset.filter(storage_object_id__in=all_storage_ids)
+                else:
+                    queryset = queryset.filter(storage_object_id=storage_object_id)
+            except StorageObject.DoesNotExist:
+                queryset = queryset.none()
+
+        return queryset
 
     def perform_create(self, serializer):
         """Set the user when creating a stored reagent."""
