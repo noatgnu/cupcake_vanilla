@@ -6,6 +6,7 @@ faithfully representing the migrated model structure.
 """
 
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 
 from rest_framework import serializers
 
@@ -28,6 +29,7 @@ from .models import (
     StepReagent,
     StepVariation,
     TimeKeeper,
+    TimeKeeperEvent,
 )
 
 User = get_user_model()
@@ -434,7 +436,8 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
 
         try:
             token = obj.annotation.generate_download_token(request.user)
-            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+            download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.annotation.id})
+            return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
 
@@ -652,6 +655,22 @@ class StepVariationSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
+class TimeKeeperEventSerializer(serializers.ModelSerializer):
+    """Serializer for TimeKeeperEvent model."""
+
+    class Meta:
+        model = TimeKeeperEvent
+        fields = [
+            "id",
+            "time_keeper",
+            "event_type",
+            "event_time",
+            "duration_at_event",
+            "notes",
+        ]
+        read_only_fields = ["id", "event_time"]
+
+
 class TimeKeeperSerializer(serializers.ModelSerializer):
     """Serializer for TimeKeeper model with session and step details."""
 
@@ -659,11 +678,14 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
     step_description = serializers.CharField(source="step.step_description", read_only=True)
     user_username = serializers.CharField(source="user.username", read_only=True)
     duration_formatted = serializers.SerializerMethodField()
+    original_duration_formatted = serializers.SerializerMethodField()
+    events = TimeKeeperEventSerializer(many=True, read_only=True)
 
     class Meta:
         model = TimeKeeper
         fields = [
             "id",
+            "name",
             "start_time",
             "session",
             "session_name",
@@ -674,10 +696,13 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
             "started",
             "current_duration",
             "duration_formatted",
+            "original_duration",
+            "original_duration_formatted",
+            "events",
             "remote_id",
             "remote_host",
         ]
-        read_only_fields = ["id", "start_time"]
+        read_only_fields = ["id", "start_time", "user"]
 
     def get_duration_formatted(self, obj):
         """Format duration in human-readable format."""
@@ -692,6 +717,20 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
             else:
                 return f"{seconds}s"
         return "0s"
+
+    def get_original_duration_formatted(self, obj):
+        """Format original duration in human-readable format."""
+        if obj.original_duration:
+            hours = obj.original_duration // 3600
+            minutes = (obj.original_duration % 3600) // 60
+            seconds = obj.original_duration % 60
+            if hours > 0:
+                return f"{hours}h {minutes}m {seconds}s"
+            elif minutes > 0:
+                return f"{minutes}m {seconds}s"
+            else:
+                return f"{seconds}s"
+        return None
 
 
 class StepAnnotationSerializer(serializers.ModelSerializer):
@@ -744,7 +783,8 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
 
         try:
             token = obj.annotation.generate_download_token(request.user)
-            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+            download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.annotation.id})
+            return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
 

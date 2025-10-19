@@ -6,6 +6,7 @@ and maintenance functionality.
 """
 
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 
 from rest_framework import serializers
 
@@ -464,6 +465,13 @@ class ExternalContactSerializer(serializers.ModelSerializer):
     """Serializer for ExternalContact model."""
 
     contact_details = ExternalContactDetailsSerializer(many=True, read_only=True)
+    contact_details_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=ExternalContactDetails.objects.all(),
+        source="contact_details",
+        write_only=True,
+        required=False,
+    )
     owner_username = serializers.CharField(source="user.username", read_only=True)
 
     class Meta:
@@ -474,6 +482,7 @@ class ExternalContactSerializer(serializers.ModelSerializer):
             "user",
             "owner_username",
             "contact_details",
+            "contact_details_ids",
             "created_at",
             "updated_at",
         ]
@@ -484,7 +493,21 @@ class SupportInformationSerializer(serializers.ModelSerializer):
     """Serializer for SupportInformation model."""
 
     vendor_contacts = ExternalContactSerializer(many=True, read_only=True)
+    vendor_contacts_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=ExternalContact.objects.all(),
+        source="vendor_contacts",
+        write_only=True,
+        required=False,
+    )
     manufacturer_contacts = ExternalContactSerializer(many=True, read_only=True)
+    manufacturer_contacts_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=ExternalContact.objects.all(),
+        source="manufacturer_contacts",
+        write_only=True,
+        required=False,
+    )
     location_name = serializers.CharField(source="location.object_name", read_only=True)
 
     class Meta:
@@ -493,8 +516,10 @@ class SupportInformationSerializer(serializers.ModelSerializer):
             "id",
             "vendor_name",
             "vendor_contacts",
+            "vendor_contacts_ids",
             "manufacturer_name",
             "manufacturer_contacts",
+            "manufacturer_contacts_ids",
             "serial_number",
             "maintenance_frequency_days",
             "location",
@@ -506,8 +531,6 @@ class SupportInformationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
-            "vendor_contacts",
-            "manufacturer_contacts",
             "location_name",
             "created_at",
             "updated_at",
@@ -585,7 +608,8 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
 
         try:
             token = obj.annotation.generate_download_token(request.user)
-            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+            download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.annotation.id})
+            return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
 
@@ -640,7 +664,8 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
 
         try:
             token = obj.annotation.generate_download_token(request.user)
-            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+            download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.annotation.id})
+            return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
 
@@ -692,7 +717,8 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
 
         try:
             token = obj.annotation.generate_download_token(request.user)
-            return request.build_absolute_uri(f"/api/ccc/annotations/{obj.annotation.id}/download/?token={token}")
+            download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.annotation.id})
+            return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
 

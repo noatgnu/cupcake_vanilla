@@ -7,6 +7,7 @@ and site administration functionality.
 
 import json
 import logging
+import os
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -1397,8 +1398,6 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
 
         if is_electron:
-            import os
-
             file_path = annotation.file.path
             if not os.path.exists(file_path):
                 return HttpResponse("File not found", status=404)

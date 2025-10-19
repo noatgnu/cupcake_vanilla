@@ -95,24 +95,22 @@ def instrument_usage_notification(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=Instrument)
 def create_instrument_metadata_table(sender, instance, created, **kwargs):
-    """Automatically create a blank metadata table for new instruments."""
+    """Automatically create a metadata table for new instruments to store specifications."""
     if created and not instance.metadata_table:
         from ccv.models import MetadataTable
 
         try:
-            # Create blank metadata table with single row for SDRF tagging
             metadata_table = MetadataTable.objects.create(
-                name=f"{instance.instrument_name} Metadata",
-                description=f"SDRF metadata table for instrument {instance.instrument_name}",
-                sample_count=1,  # Single row for the instrument
+                name=f"{instance.instrument_name} Specifications",
+                description=f"Instrument specifications and settings for {instance.instrument_name}",
+                sample_count=1,
                 owner=instance.user,
                 lab_group=getattr(instance.user, "default_lab_group", None) if instance.user else None,
                 is_published=False,
                 is_locked=False,
-                source_app="ccm",  # Mark as CCM-managed metadata table
+                source_app="ccm",
             )
 
-            # Link the metadata table to the instrument
             instance.metadata_table = metadata_table
             instance.save(update_fields=["metadata_table"])
 
@@ -135,27 +133,25 @@ def create_instrument_default_folders(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=StoredReagent)
 def create_stored_reagent_metadata_table(sender, instance, created, **kwargs):
-    """Automatically create a blank metadata table for new stored reagents."""
+    """Automatically create a metadata table for new stored reagents to store specifications."""
     if created and not instance.metadata_table:
         from ccv.models import MetadataTable
 
         try:
-            # Create blank metadata table with single row for SDRF tagging
             reagent_name = instance.reagent.name if instance.reagent else "Unknown Reagent"
             storage_name = instance.storage_object.object_name if instance.storage_object else "Unknown Storage"
 
             metadata_table = MetadataTable.objects.create(
-                name=f"{reagent_name} ({storage_name}) Metadata",
-                description=f"SDRF metadata table for stored reagent {reagent_name} in {storage_name}",
-                sample_count=1,  # Single row for the reagent
+                name=f"{reagent_name} ({storage_name}) Specifications",
+                description=f"Reagent specifications and properties for {reagent_name} in {storage_name}",
+                sample_count=1,
                 owner=instance.user,
                 lab_group=getattr(instance.user, "default_lab_group", None) if instance.user else None,
                 is_published=False,
                 is_locked=False,
-                source_app="ccm",  # Mark as CCM-managed metadata table
+                source_app="ccm",
             )
 
-            # Link the metadata table to the stored reagent
             instance.metadata_table = metadata_table
             instance.save(update_fields=["metadata_table"])
 

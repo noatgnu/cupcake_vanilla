@@ -7,6 +7,7 @@ and site administration functionality.
 
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
+from django.urls import reverse
 
 from rest_framework import serializers
 
@@ -870,7 +871,8 @@ class AnnotationSerializer(serializers.ModelSerializer):
 
         try:
             token = obj.generate_download_token(request.user)
-            download_url = request.build_absolute_uri(f"/api/ccc/annotations/{obj.id}/download/?token={token}")
+            download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.id})
+            download_url = request.build_absolute_uri(f"{download_path}?token={token}")
             return download_url
         except Exception:
             return None

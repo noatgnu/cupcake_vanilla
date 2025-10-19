@@ -118,8 +118,31 @@ class InstrumentViewSet(BaseViewSet):
             return queryset.filter(Q(enabled=True, is_vaulted=False) | Q(user=self.request.user))
 
     def perform_create(self, serializer):
-        """Set the user when creating an instrument."""
+        """
+        Set the user when creating an instrument.
+        Only staff or admin users can create instruments.
+        """
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can create instruments")
         serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        """
+        Update an instrument.
+        Only staff or admin users can update instruments.
+        """
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can update instruments")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """
+        Delete an instrument.
+        Only staff or admin users can delete instruments.
+        """
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can delete instruments")
+        instance.delete()
 
     @action(detail=True, methods=["post"])
     def check_warranty(self, request, pk=None):
@@ -564,11 +587,62 @@ class MaintenanceLogViewSet(BaseViewSet):
     ordering = ["-maintenance_date"]
 
     def get_queryset(self):
-        """Staff can see all maintenance logs, others see none."""
-        if self.request.user.is_staff:
-            return super().get_queryset()
-        else:
-            return self.queryset.none()
+        """
+        Filter maintenance logs based on instrument permission system.
+        Users can see logs they created, logs for instruments they own,
+        or logs for instruments they have view permissions on.
+        """
+        user = self.request.user
+        queryset = super().get_queryset()
+
+        if user.is_staff or user.is_superuser:
+            return queryset
+
+        permitted_instrument_ids = InstrumentPermission.objects.filter(user=user, can_view=True).values_list(
+            "instrument_id", flat=True
+        )
+
+        return queryset.filter(
+            Q(created_by=user) | Q(instrument__user=user) | Q(instrument_id__in=permitted_instrument_ids)
+        )
+
+    def perform_create(self, serializer):
+        """
+        Create maintenance log.
+        Requires can_manage permission on the instrument or staff/superuser.
+        """
+        user = self.request.user
+        instrument = serializer.validated_data.get("instrument")
+
+        if not instrument:
+            raise PermissionDenied("Instrument is required for maintenance logs")
+
+        if not (user.is_staff or user.is_superuser or instrument.user_can_manage(user)):
+            raise PermissionDenied("Only staff or users with manage permissions can create maintenance logs")
+
+        serializer.save(created_by=user)
+
+    def perform_update(self, serializer):
+        """
+        Update maintenance log.
+        Uses instrument permission system.
+        """
+        maintenance_log = serializer.instance
+
+        if not maintenance_log.user_can_edit(self.request.user):
+            raise PermissionDenied("You do not have permission to edit this maintenance log")
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """
+        Delete maintenance log.
+        Uses instrument permission system.
+        """
+        if not instance.user_can_delete(self.request.user):
+            raise PermissionDenied("You do not have permission to delete this maintenance log")
+
+        instance.delete()
 
 
 class StorageObjectViewSet(BaseViewSet):
@@ -864,7 +938,7 @@ class StoredReagentViewSet(BaseViewSet):
 
 
 class ExternalContactViewSet(BaseViewSet):
-    """ViewSet for ExternalContact model."""
+    """ViewSet for ExternalContact model. Staff/admin only."""
 
     queryset = ExternalContact.objects.all()
     serializer_class = ExternalContactSerializer
@@ -873,13 +947,36 @@ class ExternalContactViewSet(BaseViewSet):
     ordering_fields = ["contact_name", "created_at"]
     ordering = ["contact_name"]
 
+    def get_queryset(self):
+        """Only staff and admin users can view external contacts."""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return self.queryset
+        return self.queryset.none()
+
     def perform_create(self, serializer):
-        """Set the user when creating an external contact."""
+        """
+        Set the user when creating an external contact.
+        Only staff or admin users can create external contacts.
+        """
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can create external contacts")
         serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        """Only staff or admin users can update external contacts."""
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can update external contacts")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Only staff or admin users can delete external contacts."""
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can delete external contacts")
+        instance.delete()
 
 
 class ExternalContactDetailsViewSet(BaseViewSet):
-    """ViewSet for ExternalContactDetails model."""
+    """ViewSet for ExternalContactDetails model. Staff/admin only."""
 
     queryset = ExternalContactDetails.objects.all()
     serializer_class = ExternalContactDetailsSerializer
@@ -888,9 +985,36 @@ class ExternalContactDetailsViewSet(BaseViewSet):
     ordering_fields = ["contact_type", "created_at"]
     ordering = ["contact_type"]
 
+    def get_queryset(self):
+        """Only staff and admin users can view external contact details."""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return self.queryset
+        return self.queryset.none()
+
+    def perform_create(self, serializer):
+        """
+        Create external contact details.
+        Only staff or admin users can create external contact details.
+        """
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can create external contact details")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Only staff or admin users can update external contact details."""
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can update external contact details")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Only staff or admin users can delete external contact details."""
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can delete external contact details")
+        instance.delete()
+
 
 class SupportInformationViewSet(BaseViewSet):
-    """ViewSet for SupportInformation model."""
+    """ViewSet for SupportInformation model. Staff/admin only."""
 
     queryset = SupportInformation.objects.all()
     serializer_class = SupportInformationSerializer
@@ -898,6 +1022,33 @@ class SupportInformationViewSet(BaseViewSet):
     search_fields = ["vendor_name", "manufacturer_name", "serial_number"]
     ordering_fields = ["warranty_start_date", "warranty_end_date", "created_at"]
     ordering = ["-warranty_end_date"]
+
+    def get_queryset(self):
+        """Only staff and admin users can view support information."""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return self.queryset
+        return self.queryset.none()
+
+    def perform_create(self, serializer):
+        """
+        Create support information.
+        Only staff or admin users can create support information.
+        """
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can create support information")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Only staff or admin users can update support information."""
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can update support information")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Only staff or admin users can delete support information."""
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise PermissionDenied("Only staff or admin users can delete support information")
+        instance.delete()
 
 
 class ReagentSubscriptionViewSet(BaseViewSet):

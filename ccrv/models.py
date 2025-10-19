@@ -747,12 +747,16 @@ class TimeKeeper(models.Model):
     """
 
     history = HistoricalRecords()
-    start_time = models.DateTimeField(auto_now=True)
+    name = models.CharField(max_length=255, blank=True, null=True)
+    start_time = models.DateTimeField(blank=True, null=True)
     session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="time_keeper", blank=True, null=True)
     step = models.ForeignKey(ProtocolStep, on_delete=models.CASCADE, related_name="time_keeper", blank=True, null=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="time_keeper")
     started = models.BooleanField(default=False)
     current_duration = models.IntegerField(blank=True, null=True)
+    original_duration = models.IntegerField(
+        blank=True, null=True, help_text="Original/target duration in seconds for reset functionality"
+    )
     remote_id = models.BigIntegerField(blank=True, null=True)
     remote_host = models.ForeignKey(
         "ccc.RemoteHost", on_delete=models.CASCADE, related_name="time_keeper", blank=True, null=True
@@ -767,6 +771,31 @@ class TimeKeeper(models.Model):
 
     def __repr__(self):
         return f"{self.start_time} - {self.session} - {self.step}"
+
+
+class TimeKeeperEvent(models.Model):
+    """
+    Event history for TimeKeeper tracking start and stop events.
+    """
+
+    EVENT_TYPE_CHOICES = [
+        ("started", "Started"),
+        ("stopped", "Stopped"),
+        ("reset", "Reset"),
+    ]
+
+    time_keeper = models.ForeignKey(TimeKeeper, on_delete=models.CASCADE, related_name="events")
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPE_CHOICES)
+    event_time = models.DateTimeField(auto_now_add=True)
+    duration_at_event = models.IntegerField(blank=True, null=True, help_text="Duration in seconds at time of event")
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        app_label = "ccrv"
+        ordering = ["-event_time"]
+
+    def __str__(self):
+        return f"{self.time_keeper.name or self.time_keeper.id} - {self.event_type} at {self.event_time}"
 
 
 class SessionAnnotation(models.Model):

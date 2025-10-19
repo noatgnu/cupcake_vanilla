@@ -38,14 +38,14 @@ class Instrument(models.Model):
     )
     is_vaulted = models.BooleanField(default=False, help_text="True if this instrument is in a user's import vault")
 
-    # Metadata table for SDRF tagging
+    # Metadata table for instrument specifications and settings
     metadata_table = models.OneToOneField(
         "ccv.MetadataTable",
         on_delete=models.CASCADE,
         related_name="instrument",
         blank=True,
         null=True,
-        help_text="Metadata table for SDRF tagging of this instrument",
+        help_text="Metadata table storing instrument specifications that jobs can reference",
     )
 
     def __str__(self):
@@ -425,14 +425,14 @@ class StoredReagent(models.Model):
     notify_on_low_stock = models.BooleanField(default=False)
     last_notification_sent = models.DateTimeField(blank=True, null=True)
 
-    # Metadata table for SDRF tagging
+    # Metadata table for reagent specifications and properties
     metadata_table = models.OneToOneField(
         "ccv.MetadataTable",
         on_delete=models.CASCADE,
         related_name="stored_reagent",
         blank=True,
         null=True,
-        help_text="Metadata table for SDRF tagging of this stored reagent",
+        help_text="Metadata table storing reagent specifications and properties",
     )
 
     class Meta:
@@ -542,6 +542,8 @@ class ExternalContactDetails(models.Model):
     ]
     contact_type = models.CharField(max_length=20, choices=contact_type_choices, default="email")
     contact_value = models.TextField(blank=False, null=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         app_label = "ccm"
@@ -562,6 +564,8 @@ class ExternalContact(models.Model):
     )
     contact_name = models.CharField(max_length=255, blank=False, null=False)
     contact_details = models.ManyToManyField(ExternalContactDetails, blank=True, related_name="external_contact")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         app_label = "ccm"

@@ -4361,16 +4361,18 @@ class OntologySearchViewSet(viewsets.ViewSet):
 
     permission_classes = [IsAuthenticated]
 
-    def _get_ontology_suggestions_unified(self, ontology_type: str, search_term: str, limit: int, search_type: str):
+    def _get_ontology_suggestions_unified(
+        self, ontology_type: str, search_term: str, limit: int, search_type: str, custom_filters: dict = None
+    ):
         """
         Get ontology suggestions using the unified approach like MetadataColumn.get_ontology_suggestions.
         """
 
         # Create a temporary object to use the unified search method
         class TempOntologySearcher:
-            def __init__(self, ontology_type):
+            def __init__(self, ontology_type, custom_ontology_filters=None):
                 self.ontology_type = ontology_type
-                self.custom_ontology_filters = None
+                self.custom_ontology_filters = custom_ontology_filters or {}
 
             def get_ontology_model(self):
                 """Get the Django model class for this ontology type."""
@@ -4396,6 +4398,28 @@ class OntologySearchViewSet(viewsets.ViewSet):
                 if not model_class:
                     return []
                 queryset = model_class.objects.all()
+
+                # Apply custom ontology filters first
+                # Custom filters can be structured as:
+                # 1. {"ontology_type": {"field": "value"}} - wrapped with ontology type (MetadataColumn format)
+                # 2. {"field": "value"} - direct filters (standalone format)
+                if self.custom_ontology_filters:
+                    # Check if filters are wrapped with ontology type
+                    actual_filters = self.custom_ontology_filters.get(self.ontology_type, self.custom_ontology_filters)
+
+                    for field, filter_value in actual_filters.items():
+                        # Skip if this is still the ontology type wrapper
+                        if field == self.ontology_type:
+                            continue
+
+                        if isinstance(filter_value, dict):
+                            # Handle complex filter values like {'icontains': 'value'} or {'exact': 'value'}
+                            for lookup, value in filter_value.items():
+                                filter_kwargs = {f"{field}__{lookup}": value}
+                                queryset = queryset.filter(**filter_kwargs)
+                        else:
+                            # Handle simple filter values
+                            queryset = queryset.filter(**{field: filter_value})
 
                 # Apply search filtering based on search_type and model type
                 if search_term:
@@ -4475,7 +4499,7 @@ class OntologySearchViewSet(viewsets.ViewSet):
                 return queryset[:limit]
 
         # Use the temporary searcher
-        searcher = TempOntologySearcher(ontology_type)
+        searcher = TempOntologySearcher(ontology_type, custom_filters)
         return searcher.get_ontology_suggestions(search_term, limit, search_type)
 
     def _format_ontology_suggestion(self, result, ontology_type: str, match_type: str):
@@ -4597,11 +4621,22 @@ class OntologySearchViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def suggest(self, request):
-        """Get ontology suggestions across all sources for SDRF validation."""
+        """
+        Get ontology suggestions across all sources for SDRF validation.
+
+        Query parameters:
+        - q: Search query (required, min 2 characters)
+        - type: Ontology type to search (optional)
+        - match: Match type - 'contains' or 'startswith' (default: 'contains')
+        - limit: Maximum number of results (default: 50)
+        - custom_filters: JSON string of custom filters to apply (optional)
+          Example: {"organism": "Homo sapiens"} or {"organism": {"icontains": "human"}}
+        """
         query = request.GET.get("q", "").strip()
         ontology_type = request.GET.get("type", "").strip()
         match_type = request.GET.get("match", "contains").strip().lower()  # 'contains' or 'startswith'
         limit = int(request.GET.get("limit", 50))
+        custom_filters_param = request.GET.get("custom_filters", "").strip()
 
         if not query or len(query) < 2:
             return Response({"results": []})
@@ -4612,21 +4647,31 @@ class OntologySearchViewSet(viewsets.ViewSet):
                 {"error": "Invalid match type. Use 'contains' or 'startswith'", "provided": match_type}, status=400
             )
 
+        # Parse custom filters if provided
+        custom_filters = {}
+        if custom_filters_param:
+            try:
+                import json
+
+                custom_filters = json.loads(custom_filters_param)
+                if not isinstance(custom_filters, dict):
+                    return Response({"error": "custom_filters must be a JSON object"}, status=400)
+            except json.JSONDecodeError as e:
+                return Response({"error": f"Invalid JSON in custom_filters: {str(e)}"}, status=400)
+
         # Convert match_type to search_type format used by unified method
         search_type = "istartswith" if match_type == "startswith" else "icontains"
 
-        all_suggestions = []
+        suggestions_with_types = []
 
         # If specific ontology type requested, use unified search
         if ontology_type:
             # Use the unified search method
-            results = self._get_ontology_suggestions_unified(ontology_type, query, limit, search_type)
+            results = self._get_ontology_suggestions_unified(ontology_type, query, limit, search_type, custom_filters)
 
-            # Convert results to the expected format
+            # Keep model instances with their ontology type
             for result in results:
-                suggestion_data = self._format_ontology_suggestion(result, ontology_type, match_type)
-                if suggestion_data:
-                    all_suggestions.append(suggestion_data)
+                suggestions_with_types.append((result, ontology_type))
         else:
             # If no specific ontology type, search across common ones
             common_ontologies = ["species", "ncbi_taxonomy", "mondo", "human_disease", "tissue", "uberon"]
@@ -4634,41 +4679,36 @@ class OntologySearchViewSet(viewsets.ViewSet):
             for ont_type in common_ontologies:
                 # Limit per ontology type to avoid overwhelming results
                 per_type_limit = max(1, limit // len(common_ontologies))
-                results = self._get_ontology_suggestions_unified(ont_type, query, per_type_limit, search_type)
+                results = self._get_ontology_suggestions_unified(
+                    ont_type, query, per_type_limit, search_type, custom_filters
+                )
 
                 for result in results:
-                    suggestion_data = self._format_ontology_suggestion(result, ont_type, match_type)
-                    if suggestion_data:
-                        all_suggestions.append(suggestion_data)
+                    suggestions_with_types.append((result, ont_type))
 
                 # Stop if we have enough suggestions
-                if len(all_suggestions) >= limit:
+                if len(suggestions_with_types) >= limit:
                     break
 
         # Limit final results
-        all_suggestions = all_suggestions[:limit]
+        suggestions_with_types = suggestions_with_types[:limit]
 
-        # Standardize suggestions for serializer
-        standardized_suggestions = []
-        for suggestion in all_suggestions:
-            data = {
-                "identifier": suggestion.get("identifier", ""),
-                "name": suggestion.get("name", ""),
-                "definition": suggestion.get("definition", ""),
-                "source": suggestion.get("source", ontology_type or "mixed"),
-            }
-            standardized_suggestions.append(data)
-
-        serializer = OntologySuggestionSerializer(
-            standardized_suggestions, many=True, context={"ontology_type": ontology_type}
-        )
+        # Use OntologySuggestionSerializer to format results consistently with other routes
+        formatted_results = []
+        for model_instance, ont_type in suggestions_with_types:
+            serializer = OntologySuggestionSerializer(model_instance, context={"ontology_type": ont_type})
+            formatted_results.append(serializer.data)
 
         return Response(
             {
-                "results": serializer.data,
-                "total": len(all_suggestions),
-                "query": query,
                 "ontology_type": ontology_type or "all",
+                "suggestions": formatted_results,
+                "search_term": query,
+                "search_type": match_type,
+                "limit": limit,
+                "count": len(formatted_results),
+                "custom_filters": custom_filters if custom_filters else None,
+                "has_more": len(formatted_results) >= limit,
             }
         )
 

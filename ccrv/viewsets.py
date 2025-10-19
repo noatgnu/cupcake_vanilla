@@ -36,6 +36,7 @@ from .models import (
     StepReagent,
     StepVariation,
     TimeKeeper,
+    TimeKeeperEvent,
 )
 from .serializers import (
     InstrumentUsageSessionAnnotationSerializer,
@@ -839,22 +840,65 @@ class TimeKeeperViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def stop_timer(self, request, pk=None):
-        """Stop the timer and calculate duration."""
+        """Stop the timer and calculate remaining duration."""
         time_keeper = self.get_object()
 
         if not time_keeper.started:
             return Response({"error": "Timer is not started"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Calculate duration in seconds
-        duration_seconds = int((timezone.now() - time_keeper.start_time).total_seconds())
+        elapsed_seconds = int((timezone.now() - time_keeper.start_time).total_seconds())
+        previous_duration = time_keeper.current_duration or 0
+        new_duration = max(0, previous_duration - elapsed_seconds)
 
         time_keeper.started = False
-        time_keeper.current_duration = duration_seconds
+        time_keeper.current_duration = new_duration
         time_keeper.save()
 
         serializer = self.get_serializer(time_keeper)
         return Response(
-            {"message": "Timer stopped", "duration_seconds": duration_seconds, "time_keeper": serializer.data}
+            {
+                "message": "Timer stopped",
+                "current_duration": new_duration,
+                "time_keeper": serializer.data,
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def reset(self, request, pk=None):
+        """
+        Reset the timekeeper to its original duration.
+
+        If the timer is currently running, it will be stopped first.
+        Creates a reset event in the event history.
+        """
+        time_keeper = self.get_object()
+
+        if not time_keeper.original_duration:
+            return Response(
+                {"error": "Cannot reset: no original duration set for this timekeeper"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if time_keeper.started:
+            time_keeper.started = False
+
+        time_keeper.current_duration = time_keeper.original_duration
+        time_keeper.save()
+
+        TimeKeeperEvent.objects.create(
+            time_keeper=time_keeper,
+            event_type="reset",
+            duration_at_event=time_keeper.original_duration,
+            notes="Timer reset to original duration",
+        )
+
+        serializer = self.get_serializer(time_keeper)
+        return Response(
+            {
+                "message": "Timer reset to original duration",
+                "current_duration": time_keeper.current_duration,
+                "time_keeper": serializer.data,
+            }
         )
 
     @action(detail=False, methods=["get"])
