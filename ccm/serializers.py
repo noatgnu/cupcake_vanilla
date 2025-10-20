@@ -51,6 +51,7 @@ class InstrumentSerializer(serializers.ModelSerializer):
     support_information_count = serializers.IntegerField(source="support_information.count", read_only=True)
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     metadata_table_id = serializers.IntegerField(source="metadata_table.id", read_only=True)
+    maintenance_overdue = serializers.SerializerMethodField()
 
     class Meta:
         model = Instrument
@@ -78,6 +79,7 @@ class InstrumentSerializer(serializers.ModelSerializer):
             "metadata_table",
             "metadata_table_name",
             "metadata_table_id",
+            "maintenance_overdue",
             "created_at",
             "updated_at",
         ]
@@ -90,7 +92,12 @@ class InstrumentSerializer(serializers.ModelSerializer):
             "support_information_count",
             "metadata_table_name",
             "metadata_table_id",
+            "maintenance_overdue",
         ]
+
+    def get_maintenance_overdue(self, obj):
+        """Check if instrument maintenance is overdue."""
+        return obj.is_maintenance_overdue()
 
     def validate_instrument_name(self, value):
         """Validate instrument name is not empty."""
@@ -258,12 +265,65 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        """Validate usage time fields."""
+        """
+        Validate usage time fields and determine if approval is required.
+
+        Pre-approval conditions:
+        - max_days_ahead_pre_approval: Booking starts within N days from now
+        - max_days_within_usage_pre_approval: Booking duration is N days or less
+
+        If BOTH conditions are met, booking is auto-approved.
+        If EITHER condition fails, booking requires manual approval.
+        """
+        from django.utils import timezone
+
         time_started = data.get("time_started")
         time_ended = data.get("time_ended")
+        instrument = data.get("instrument") or (self.instance.instrument if self.instance else None)
+
+        if self.instance:
+            time_started = time_started or self.instance.time_started
+            time_ended = time_ended or self.instance.time_ended
 
         if time_started and time_ended and time_started >= time_ended:
             raise serializers.ValidationError("End time must be after start time.")
+
+        if time_started and time_ended:
+            duration = time_ended - time_started
+            hours = duration.total_seconds() / 3600
+            data["usage_hours"] = round(hours, 2)
+
+        if instrument and time_started and time_ended:
+            now = timezone.now()
+            requires_approval = False
+            approval_reasons = []
+
+            if instrument.max_days_ahead_pre_approval is not None and instrument.max_days_ahead_pre_approval > 0:
+                days_until_booking = (time_started - now).days
+                if days_until_booking > instrument.max_days_ahead_pre_approval:
+                    requires_approval = True
+                    approval_reasons.append(
+                        f"booking starts in {days_until_booking} days "
+                        f"(exceeds {instrument.max_days_ahead_pre_approval} day limit for pre-approval)"
+                    )
+
+            if (
+                instrument.max_days_within_usage_pre_approval is not None
+                and instrument.max_days_within_usage_pre_approval > 0
+            ):
+                booking_duration_days = (time_ended - time_started).days
+                if booking_duration_days > instrument.max_days_within_usage_pre_approval:
+                    requires_approval = True
+                    approval_reasons.append(
+                        f"booking duration is {booking_duration_days} days "
+                        f"(exceeds {instrument.max_days_within_usage_pre_approval} day limit for pre-approval)"
+                    )
+
+            if requires_approval and "approved" not in data:
+                data["approved"] = False
+
+            if not requires_approval and "approved" not in data:
+                data["approved"] = True
 
         return data
 
@@ -704,7 +764,10 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
         ]
 
     def get_file_url(self, obj):
-        """Get signed download URL for annotation file if exists."""
+        """
+        Get signed download URL for annotation file if exists.
+        Uses MaintenanceLogAnnotation permission check which requires can_manage on instrument.
+        """
         if not obj.annotation or not obj.annotation.file:
             return None
 
@@ -712,7 +775,7 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
         if not request or not hasattr(request, "user") or not request.user.is_authenticated:
             return None
 
-        if not obj.annotation.can_view(request.user):
+        if not obj.can_view(request.user):
             return None
 
         try:

@@ -101,6 +101,40 @@ class Instrument(models.Model):
 
         return False
 
+    def is_maintenance_overdue(self, days_threshold=14):
+        """
+        Check if instrument maintenance is overdue WITHOUT sending notifications.
+        Used for status display in serializers.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        if not days_threshold:
+            days_threshold = self.days_before_maintenance_notification or 14
+
+        today = timezone.now().date()
+
+        for support_info in self.support_information.all():
+            if not support_info.maintenance_frequency_days:
+                continue
+
+            last_maintenance = self.maintenance_logs.filter(status="completed").order_by("-maintenance_date").first()
+
+            if last_maintenance:
+                next_maintenance_date = last_maintenance.maintenance_date.date() + timedelta(
+                    days=support_info.maintenance_frequency_days
+                )
+                days_remaining = (next_maintenance_date - today).days
+
+                if days_remaining <= days_threshold:
+                    return True
+            else:
+                if support_info.maintenance_frequency_days <= days_threshold:
+                    return True
+
+        return False
+
     def check_upcoming_maintenance(self, days_threshold=14):
         """
         Check if instrument is due for maintenance and send notification
@@ -778,7 +812,7 @@ class MaintenanceLog(models.Model):
     def user_can_view(self, user):
         """
         Check if user can view this maintenance log.
-        Uses instrument permission system.
+        Requires can_manage permission on the instrument.
         """
         if not user or not user.is_authenticated:
             return False
@@ -797,8 +831,8 @@ class MaintenanceLog(models.Model):
             if self.instrument.user == user:
                 return True
 
-            # Users with instrument view permissions can see maintenance logs
-            if self.instrument.user_can_view(user):
+            # Only users with instrument manage permissions can see maintenance logs
+            if self.instrument.user_can_manage(user):
                 return True
 
         return False

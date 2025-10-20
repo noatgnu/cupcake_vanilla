@@ -8,7 +8,11 @@ from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
-from .annotation_chunked_upload import InstrumentAnnotationChunkedUploadView, StoredReagentAnnotationChunkedUploadView
+from .annotation_chunked_upload import (
+    InstrumentAnnotationChunkedUploadView,
+    MaintenanceLogAnnotationChunkedUploadView,
+    StoredReagentAnnotationChunkedUploadView,
+)
 from .viewsets import (
     ExternalContactDetailsViewSet,
     ExternalContactViewSet,
@@ -75,5 +79,15 @@ urlpatterns = [
         "upload/stored-reagent-annotation-chunks/<uuid:pk>/",
         StoredReagentAnnotationChunkedUploadView.as_view(),
         name="stored-reagent-annotation-chunked-upload-detail",
+    ),
+    path(
+        "upload/maintenance-log-annotation-chunks/",
+        MaintenanceLogAnnotationChunkedUploadView.as_view(),
+        name="maintenance-log-annotation-chunked-upload",
+    ),
+    path(
+        "upload/maintenance-log-annotation-chunks/<uuid:pk>/",
+        MaintenanceLogAnnotationChunkedUploadView.as_view(),
+        name="maintenance-log-annotation-chunked-upload-detail",
     ),
 ]

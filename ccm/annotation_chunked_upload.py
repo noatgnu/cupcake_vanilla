@@ -15,7 +15,14 @@ from ccc.annotation_chunked_upload import (
 )
 from ccc.models import AnnotationFolder
 
-from .models import Instrument, InstrumentAnnotation, StoredReagent, StoredReagentAnnotation
+from .models import (
+    Instrument,
+    InstrumentAnnotation,
+    MaintenanceLog,
+    MaintenanceLogAnnotation,
+    StoredReagent,
+    StoredReagentAnnotation,
+)
 
 
 class InstrumentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
@@ -218,5 +225,82 @@ class StoredReagentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
 
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to create stored reagent annotation: {str(e)}")
+            result = {"warning": f"File uploaded but annotation creation failed: {str(e)}"}
+            return Response(result, status=status.HTTP_200_OK)
+
+
+class MaintenanceLogAnnotationChunkedUploadView(AnnotationChunkedUploadView):
+    """
+    Chunked upload view for maintenance log annotations with automatic binding.
+
+    Accepts maintenance_log_id, uploads file, creates Annotation,
+    and automatically creates MaintenanceLogAnnotation junction record.
+    """
+
+    model = AnnotationFileUpload
+    serializer_class = AnnotationFileUploadSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser]
+
+    def on_completion(self, uploaded_file, request):
+        """
+        Handle completion and automatically create maintenance log annotation junction.
+        """
+        try:
+            maintenance_log_id = request.data.get("maintenance_log_id")
+            annotation_text = request.data.get("annotation", "")
+            annotation_type = request.data.get(
+                "annotation_type",
+                self._detect_annotation_type(uploaded_file.filename),
+            )
+
+            if not maintenance_log_id:
+                return Response(
+                    {"error": "maintenance_log_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                maintenance_log = MaintenanceLog.objects.get(id=maintenance_log_id)
+            except MaintenanceLog.DoesNotExist:
+                return Response(
+                    {"error": "Maintenance log not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            if not maintenance_log.user_can_edit(request.user):
+                return Response(
+                    {"error": "Permission denied: cannot edit this maintenance log"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            annotation = self._create_annotation_from_upload(
+                uploaded_file,
+                annotation_text,
+                annotation_type,
+                None,
+                request.user,
+            )
+
+            order = MaintenanceLogAnnotation.objects.filter(maintenance_log=maintenance_log).count()
+
+            maintenance_log_annotation = MaintenanceLogAnnotation.objects.create(
+                maintenance_log=maintenance_log,
+                annotation=annotation,
+                order=order,
+            )
+
+            result = {
+                "annotation_id": annotation.id,
+                "maintenance_log_annotation_id": maintenance_log_annotation.id,
+                "message": "Maintenance log annotation created successfully",
+            }
+            return Response(result, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create maintenance log annotation: {str(e)}")
             result = {"warning": f"File uploaded but annotation creation failed: {str(e)}"}
             return Response(result, status=status.HTTP_200_OK)

@@ -590,7 +590,7 @@ class MaintenanceLogViewSet(BaseViewSet):
         """
         Filter maintenance logs based on instrument permission system.
         Users can see logs they created, logs for instruments they own,
-        or logs for instruments they have view permissions on.
+        or logs for instruments they have manage permissions on.
         """
         user = self.request.user
         queryset = super().get_queryset()
@@ -598,7 +598,7 @@ class MaintenanceLogViewSet(BaseViewSet):
         if user.is_staff or user.is_superuser:
             return queryset
 
-        permitted_instrument_ids = InstrumentPermission.objects.filter(user=user, can_view=True).values_list(
+        permitted_instrument_ids = InstrumentPermission.objects.filter(user=user, can_manage=True).values_list(
             "instrument_id", flat=True
         )
 
@@ -1247,14 +1247,70 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
 class MaintenanceLogAnnotationViewSet(BaseViewSet):
     """ViewSet for MaintenanceLogAnnotation model."""
 
-    queryset = MaintenanceLogAnnotation.objects.all()
+    queryset = MaintenanceLogAnnotation.objects.select_related(
+        "maintenance_log", "maintenance_log__instrument", "annotation"
+    ).all()
     serializer_class = MaintenanceLogAnnotationSerializer
-    filterset_fields = ["maintenance_log", "folder", "annotation"]
-    search_fields = ["annotation__annotation", "folder__folder_name"]
-    ordering = ["-order"]
+    filterset_fields = ["maintenance_log", "annotation"]
+    search_fields = ["annotation__annotation", "annotation__name"]
+    ordering = ["order", "created_at"]
 
     def get_queryset(self):
-        """Filter annotations by maintenance log access permissions (staff only)."""
-        if self.request.user.is_staff:
-            return self.queryset
-        return self.queryset.none()
+        """
+        Filter maintenance log annotations based on instrument permission system.
+        Users can see annotations for maintenance logs they created, logs for instruments they own,
+        or logs for instruments they have manage permissions on.
+        """
+        user = self.request.user
+        queryset = super().get_queryset()
+
+        if user.is_staff or user.is_superuser:
+            return queryset
+
+        permitted_instrument_ids = InstrumentPermission.objects.filter(user=user, can_manage=True).values_list(
+            "instrument_id", flat=True
+        )
+
+        return queryset.filter(
+            Q(maintenance_log__created_by=user)
+            | Q(maintenance_log__instrument__user=user)
+            | Q(maintenance_log__instrument_id__in=permitted_instrument_ids)
+        )
+
+    def perform_create(self, serializer):
+        """
+        Create maintenance log annotation.
+        Requires can_manage permission on the instrument or staff/superuser.
+        """
+        user = self.request.user
+        maintenance_log = serializer.validated_data.get("maintenance_log")
+
+        if not maintenance_log:
+            raise PermissionDenied("Maintenance log is required")
+
+        if not maintenance_log.user_can_edit(user):
+            raise PermissionDenied("You do not have permission to add annotations to this maintenance log")
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """
+        Update maintenance log annotation.
+        Uses instrument permission system through maintenance log.
+        """
+        maintenance_log_annotation = serializer.instance
+
+        if not maintenance_log_annotation.can_edit(self.request.user):
+            raise PermissionDenied("You do not have permission to edit this maintenance log annotation")
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """
+        Delete maintenance log annotation.
+        Uses instrument permission system through maintenance log.
+        """
+        if not instance.can_delete(self.request.user):
+            raise PermissionDenied("You do not have permission to delete this maintenance log annotation")
+
+        instance.delete()
