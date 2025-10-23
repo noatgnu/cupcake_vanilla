@@ -647,7 +647,7 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
     instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
     folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
-    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
     transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
     transcription = serializers.CharField(
@@ -744,7 +744,7 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
     stored_reagent_name = serializers.CharField(source="stored_reagent.reagent.name", read_only=True)
     folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
-    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
     transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
     transcription = serializers.CharField(
@@ -840,7 +840,7 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
 
     maintenance_log_title = serializers.CharField(source="maintenance_log.maintenance_type", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
-    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
     transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
     transcription = serializers.CharField(

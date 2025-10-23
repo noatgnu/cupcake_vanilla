@@ -8,6 +8,7 @@ faithfully representing the migrated functionality.
 from django.db.models import Q
 from django.utils import timezone
 
+import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
@@ -930,6 +931,16 @@ class TimeKeeperViewSet(ModelViewSet):
         )
 
 
+class SessionAnnotationFilter(django_filters.FilterSet):
+    """Filter for SessionAnnotation with scratched support."""
+
+    scratched = django_filters.BooleanFilter(field_name="annotation__scratched")
+
+    class Meta:
+        model = SessionAnnotation
+        fields = ["session", "annotation", "scratched"]
+
+
 class SessionAnnotationViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing session annotations with metadata support.
@@ -941,7 +952,7 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
     serializer_class = SessionAnnotationSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["session", "annotation", "folder", "annotation__scratched"]
+    filterset_class = SessionAnnotationFilter
     search_fields = ["annotation__annotation", "annotation__name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
@@ -1062,6 +1073,16 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
             )
 
 
+class StepAnnotationFilter(django_filters.FilterSet):
+    """Filter for StepAnnotation with scratched support."""
+
+    scratched = django_filters.BooleanFilter(field_name="annotation__scratched")
+
+    class Meta:
+        model = StepAnnotation
+        fields = ["session", "step", "annotation", "scratched"]
+
+
 class StepAnnotationViewSet(ModelViewSet):
     """ViewSet for StepAnnotation model."""
 
@@ -1069,7 +1090,7 @@ class StepAnnotationViewSet(ModelViewSet):
     serializer_class = StepAnnotationSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["session", "step", "annotation", "annotation__scratched"]
+    filterset_class = StepAnnotationFilter
     search_fields = ["step__step_description", "annotation__name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]

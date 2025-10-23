@@ -10,6 +10,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
+import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
@@ -1132,6 +1133,16 @@ class InstrumentPermissionViewSet(BaseViewSet):
         ).distinct()
 
 
+class InstrumentAnnotationFilter(django_filters.FilterSet):
+    """Filter for InstrumentAnnotation with scratched support."""
+
+    scratched = django_filters.BooleanFilter(field_name="annotation__scratched")
+
+    class Meta:
+        model = InstrumentAnnotation
+        fields = ["instrument", "folder", "annotation", "scratched"]
+
+
 class InstrumentAnnotationViewSet(BaseViewSet):
     """
     ViewSet for InstrumentAnnotation model.
@@ -1144,7 +1155,7 @@ class InstrumentAnnotationViewSet(BaseViewSet):
 
     queryset = InstrumentAnnotation.objects.all()
     serializer_class = InstrumentAnnotationSerializer
-    filterset_fields = ["instrument", "folder", "annotation", "annotation__scratched"]
+    filterset_class = InstrumentAnnotationFilter
     search_fields = ["annotation__annotation", "folder__folder_name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
@@ -1193,6 +1204,16 @@ class InstrumentAnnotationViewSet(BaseViewSet):
         instance.delete()
 
 
+class StoredReagentAnnotationFilter(django_filters.FilterSet):
+    """Filter for StoredReagentAnnotation with scratched support."""
+
+    scratched = django_filters.BooleanFilter(field_name="annotation__scratched")
+
+    class Meta:
+        model = StoredReagentAnnotation
+        fields = ["stored_reagent", "folder", "annotation", "scratched"]
+
+
 class StoredReagentAnnotationViewSet(BaseViewSet):
     """
     ViewSet for StoredReagentAnnotation model.
@@ -1204,7 +1225,7 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
 
     queryset = StoredReagentAnnotation.objects.all()
     serializer_class = StoredReagentAnnotationSerializer
-    filterset_fields = ["stored_reagent", "folder", "annotation", "annotation__scratched"]
+    filterset_class = StoredReagentAnnotationFilter
     search_fields = ["annotation__annotation", "folder__folder_name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
@@ -1254,6 +1275,16 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
         instance.delete()
 
 
+class MaintenanceLogAnnotationFilter(django_filters.FilterSet):
+    """Filter for MaintenanceLogAnnotation with scratched support."""
+
+    scratched = django_filters.BooleanFilter(field_name="annotation__scratched")
+
+    class Meta:
+        model = MaintenanceLogAnnotation
+        fields = ["maintenance_log", "annotation", "scratched"]
+
+
 class MaintenanceLogAnnotationViewSet(BaseViewSet):
     """ViewSet for MaintenanceLogAnnotation model."""
 
@@ -1261,7 +1292,7 @@ class MaintenanceLogAnnotationViewSet(BaseViewSet):
         "maintenance_log", "maintenance_log__instrument", "annotation"
     ).all()
     serializer_class = MaintenanceLogAnnotationSerializer
-    filterset_fields = ["maintenance_log", "annotation", "annotation__scratched"]
+    filterset_class = MaintenanceLogAnnotationFilter
     search_fields = ["annotation__annotation", "annotation__name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order", "created_at"]

@@ -777,7 +777,7 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
     session_name = serializers.CharField(source="session.name", read_only=True)
     step_description = serializers.CharField(source="step.step_description", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
-    annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
     transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
     transcription = serializers.CharField(

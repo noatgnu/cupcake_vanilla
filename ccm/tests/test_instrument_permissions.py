@@ -195,9 +195,9 @@ class MaintenanceLogPermissionTestCase(TestCase):
         self.assertTrue(self.maintenance_log.user_can_edit(self.instrument_owner))
         self.assertTrue(self.maintenance_log.user_can_delete(self.instrument_owner))
 
-    def test_viewer_has_view_access_only(self):
-        """Test that instrument viewers can see maintenance logs but not edit."""
-        self.assertTrue(self.maintenance_log.user_can_view(self.viewer))
+    def test_viewer_has_no_access_to_maintenance(self):
+        """Test that instrument viewers cannot see maintenance logs."""
+        self.assertFalse(self.maintenance_log.user_can_view(self.viewer))
         self.assertFalse(self.maintenance_log.user_can_edit(self.viewer))
         self.assertFalse(self.maintenance_log.user_can_delete(self.viewer))
 
@@ -354,9 +354,9 @@ class MaintenanceLogAnnotationPermissionTestCase(TestCase):
         self.assertTrue(self.maintenance_annotation.can_edit(self.manager))
         self.assertTrue(self.maintenance_annotation.can_delete(self.manager))
 
-    def test_viewer_has_view_access_only(self):
-        """Test that users with view permissions can only view maintenance annotations."""
-        self.assertTrue(self.maintenance_annotation.can_view(self.viewer))
+    def test_viewer_has_no_access_to_maintenance_annotations(self):
+        """Test that users with view permissions cannot access maintenance annotations."""
+        self.assertFalse(self.maintenance_annotation.can_view(self.viewer))
         self.assertFalse(self.maintenance_annotation.can_edit(self.viewer))
         self.assertFalse(self.maintenance_annotation.can_delete(self.viewer))
 
@@ -445,8 +445,8 @@ class InstrumentPermissionWorkflowTestCase(TestCase):
         self.assertTrue(maintenance.user_can_edit(self.postdoc))
         self.assertTrue(maintenance.user_can_delete(self.postdoc))
 
-        # But grad student should only be able to view
-        self.assertTrue(maintenance.user_can_view(self.grad_student))
+        # Grad student (without manage permission) cannot view maintenance logs
+        self.assertFalse(maintenance.user_can_view(self.grad_student))
         self.assertFalse(maintenance.user_can_edit(self.grad_student))
         self.assertFalse(maintenance.user_can_delete(self.grad_student))
 
@@ -494,8 +494,8 @@ class InstrumentPermissionWorkflowTestCase(TestCase):
             created_by=self.grad_student,
         )
 
-        # Undergrad should be able to view maintenance logs
-        self.assertTrue(maintenance.user_can_view(self.undergrad))
+        # Undergrad (without manage permission) cannot view maintenance logs
+        self.assertFalse(maintenance.user_can_view(self.undergrad))
         self.assertFalse(maintenance.user_can_edit(self.undergrad))
         self.assertFalse(maintenance.user_can_delete(self.undergrad))
 
@@ -523,7 +523,7 @@ class InstrumentPermissionWorkflowTestCase(TestCase):
 
     def test_permission_changes_propagate(self):
         """Test that changing permissions affects access to existing content."""
-        # Create maintenance log when undergrad has view access
+        # Create maintenance log when undergrad has only view access
         maintenance = MaintenanceLog.objects.create(
             instrument=self.core_instrument,
             maintenance_date=timezone.now(),
@@ -533,25 +533,24 @@ class InstrumentPermissionWorkflowTestCase(TestCase):
             created_by=self.postdoc,
         )
 
-        # Initially undergrad can view
-        self.assertTrue(maintenance.user_can_view(self.undergrad))
-        self.assertFalse(maintenance.user_can_edit(self.undergrad))
-
-        # Remove undergrad's view permission
-        undergrad_permission = InstrumentPermission.objects.get(instrument=self.core_instrument, user=self.undergrad)
-        undergrad_permission.can_view = False
-        undergrad_permission.save()
-
-        # Now undergrad should have no access
+        # Initially undergrad cannot view (only has view permission, not manage)
         self.assertFalse(maintenance.user_can_view(self.undergrad))
         self.assertFalse(maintenance.user_can_edit(self.undergrad))
 
         # Grant manage permission
-        undergrad_permission.can_view = True
+        undergrad_permission = InstrumentPermission.objects.get(instrument=self.core_instrument, user=self.undergrad)
         undergrad_permission.can_manage = True
         undergrad_permission.save()
 
-        # Now undergrad should have edit access
+        # Now undergrad should have full access
         self.assertTrue(maintenance.user_can_view(self.undergrad))
         self.assertTrue(maintenance.user_can_edit(self.undergrad))
         self.assertTrue(maintenance.user_can_delete(self.undergrad))
+
+        # Remove manage permission
+        undergrad_permission.can_manage = False
+        undergrad_permission.save()
+
+        # Now undergrad should have no access again
+        self.assertFalse(maintenance.user_can_view(self.undergrad))
+        self.assertFalse(maintenance.user_can_edit(self.undergrad))

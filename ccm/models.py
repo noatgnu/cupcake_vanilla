@@ -832,7 +832,7 @@ class MaintenanceLog(models.Model):
             if self.instrument.user == user:
                 return True
 
-            # Only users with instrument manage permissions can see maintenance logs
+            # Only users with manage permissions can see maintenance logs
             if self.instrument.user_can_manage(user):
                 return True
 
