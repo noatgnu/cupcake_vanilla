@@ -5,6 +5,9 @@ This module contains serializers for user management, lab group collaboration,
 and site administration functionality.
 """
 
+import logging
+
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.urls import reverse
@@ -23,6 +26,8 @@ from .models import (
     SiteConfig,
     UserOrcidProfile,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SiteConfigSerializer(serializers.ModelSerializer):
@@ -817,6 +822,12 @@ class AnnotationSerializer(serializers.ModelSerializer):
     can_view = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
     owner_name = serializers.SerializerMethodField()
+    auto_transcribe = serializers.BooleanField(
+        write_only=True,
+        required=False,
+        default=True,
+        help_text="Whether to automatically transcribe audio/video files. Set to false if providing own transcription.",
+    )
 
     class Meta:
         model = Annotation
@@ -846,6 +857,7 @@ class AnnotationSerializer(serializers.ModelSerializer):
             "can_edit",
             "can_view",
             "can_delete",
+            "auto_transcribe",
         ]
         read_only_fields = ["created_at", "updated_at", "file_url", "file_size", "folder_path", "resource_type"]
 
@@ -927,11 +939,56 @@ class AnnotationSerializer(serializers.ModelSerializer):
         return None
 
     def create(self, validated_data):
-        """Set owner to current user and default resource type."""
+        """
+        Set owner to current user and default resource type.
+        Automatically queue transcription for audio/video files if auto_transcribe is True.
+        """
         request = self.context["request"]
         validated_data["owner"] = request.user
         validated_data["resource_type"] = "file"
-        return super().create(validated_data)
+
+        auto_transcribe = validated_data.pop("auto_transcribe", True)
+
+        annotation = super().create(validated_data)
+
+        if (
+            auto_transcribe
+            and getattr(settings, "USE_WHISPER", False)
+            and getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False)
+        ):
+            annotation_type = annotation.annotation_type
+
+            if annotation_type in ["audio", "video"] and annotation.file:
+                if not annotation.transcribed:
+                    try:
+                        from ccc.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+
+                        file_path = annotation.file.path
+                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
+
+                        if annotation_type == "audio":
+                            transcribe_audio.delay(
+                                audio_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued audio transcription for annotation {annotation.id}")
+                        elif annotation_type == "video":
+                            transcribe_audio_from_video.delay(
+                                video_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued video transcription for annotation {annotation.id}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to queue transcription for annotation {annotation.id}: {str(e)}")
+
+        return annotation
 
 
 class RemoteHostSerializer(serializers.ModelSerializer):

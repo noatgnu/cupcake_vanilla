@@ -940,6 +940,11 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
     queryset = SessionAnnotation.objects.all()
     serializer_class = SessionAnnotationSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["session", "annotation", "folder", "annotation__scratched"]
+    search_fields = ["annotation__annotation", "annotation__name"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
 
     def get_queryset(self):
         """Filter session annotations based on user permissions."""
@@ -1063,14 +1068,16 @@ class StepAnnotationViewSet(ModelViewSet):
     queryset = StepAnnotation.objects.all()
     serializer_class = StepAnnotationSerializer
     permission_classes = [IsAuthenticated]
-    filterset_fields = ["session", "step", "annotation"]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["session", "step", "annotation", "annotation__scratched"]
     search_fields = ["step__step_description", "annotation__name"]
-    ordering = ["-created_at"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
 
     def get_queryset(self):
         """Filter annotations by user access permissions."""
         user = self.request.user
-        return self.queryset.filter(session__user=user)
+        return self.queryset.filter(session__owner=user)
 
 
 class SessionAnnotationFolderViewSet(ModelViewSet):
@@ -1079,14 +1086,16 @@ class SessionAnnotationFolderViewSet(ModelViewSet):
     queryset = SessionAnnotationFolder.objects.all()
     serializer_class = SessionAnnotationFolderSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["session", "folder"]
     search_fields = ["folder__name"]
-    ordering = ["-created_at"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
 
     def get_queryset(self):
         """Filter annotation folders by user access permissions."""
         user = self.request.user
-        return self.queryset.filter(session__user=user)
+        return self.queryset.filter(session__owner=user)
 
 
 class InstrumentUsageSessionAnnotationViewSet(ModelViewSet):
@@ -1095,11 +1104,13 @@ class InstrumentUsageSessionAnnotationViewSet(ModelViewSet):
     queryset = InstrumentUsageSessionAnnotation.objects.all()
     serializer_class = InstrumentUsageSessionAnnotationSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["session_annotation", "instrument_usage"]
     search_fields = ["instrument_usage__instrument__instrument_name"]
-    ordering = ["-created_at"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
 
     def get_queryset(self):
         """Filter instrument usage annotations by user access permissions."""
         user = self.request.user
-        return self.queryset.filter(session_annotation__session__user=user)
+        return self.queryset.filter(session_annotation__session__owner=user)

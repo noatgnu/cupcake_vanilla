@@ -1136,9 +1136,10 @@ class InstrumentAnnotationViewSet(BaseViewSet):
 
     queryset = InstrumentAnnotation.objects.all()
     serializer_class = InstrumentAnnotationSerializer
-    filterset_fields = ["instrument", "folder", "annotation"]
+    filterset_fields = ["instrument", "folder", "annotation", "annotation__scratched"]
     search_fields = ["annotation__annotation", "folder__folder_name"]
-    ordering = ["-order"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
 
     def get_queryset(self):
         """Filter annotations by instrument access permissions and folder type."""
@@ -1195,9 +1196,10 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
 
     queryset = StoredReagentAnnotation.objects.all()
     serializer_class = StoredReagentAnnotationSerializer
-    filterset_fields = ["stored_reagent", "folder", "annotation"]
+    filterset_fields = ["stored_reagent", "folder", "annotation", "annotation__scratched"]
     search_fields = ["annotation__annotation", "folder__folder_name"]
-    ordering = ["-order"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
 
     def get_queryset(self):
         """Filter annotations by stored reagent access permissions."""
@@ -1251,8 +1253,9 @@ class MaintenanceLogAnnotationViewSet(BaseViewSet):
         "maintenance_log", "maintenance_log__instrument", "annotation"
     ).all()
     serializer_class = MaintenanceLogAnnotationSerializer
-    filterset_fields = ["maintenance_log", "annotation"]
+    filterset_fields = ["maintenance_log", "annotation", "annotation__scratched"]
     search_fields = ["annotation__annotation", "annotation__name"]
+    ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order", "created_at"]
 
     def get_queryset(self):

@@ -38,6 +38,49 @@ class InstrumentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser]
 
+    def _create_annotation_from_upload(self, upload, annotation_text, annotation_type, folder, user):
+        """Create annotation and queue CCM transcription if needed."""
+        import logging
+
+        from django.conf import settings
+
+        logger = logging.getLogger(__name__)
+
+        annotation = super()._create_annotation_from_upload(upload, annotation_text, annotation_type, folder, user)
+
+        if getattr(settings, "USE_WHISPER", False) and getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False):
+            if annotation_type in ["audio", "video"] and annotation.file:
+                if not annotation.transcribed:
+                    try:
+                        from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+
+                        file_path = annotation.file.path
+                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
+
+                        if annotation_type == "audio":
+                            transcribe_audio.delay(
+                                audio_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued CCM audio transcription for annotation {annotation.id}")
+                        elif annotation_type == "video":
+                            transcribe_audio_from_video.delay(
+                                video_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued CCM video transcription for annotation {annotation.id}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to queue CCM transcription for annotation {annotation.id}: {str(e)}")
+
+        return annotation
+
     def on_completion(self, uploaded_file, request):
         """
         Handle completion and automatically create instrument annotation junction.
@@ -46,10 +89,9 @@ class InstrumentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             instrument_id = request.data.get("instrument_id")
             folder_id = request.data.get("folder_id")
             annotation_text = request.data.get("annotation", "")
-            annotation_type = request.data.get(
-                "annotation_type",
-                self._detect_annotation_type(uploaded_file.filename),
-            )
+            annotation_type = request.data.get("annotation_type")
+            if not annotation_type:
+                annotation_type = self._detect_annotation_type(uploaded_file.filename)
 
             if not instrument_id:
                 return Response(
@@ -143,6 +185,49 @@ class StoredReagentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser]
 
+    def _create_annotation_from_upload(self, upload, annotation_text, annotation_type, folder, user):
+        """Create annotation and queue CCM transcription if needed."""
+        import logging
+
+        from django.conf import settings
+
+        logger = logging.getLogger(__name__)
+
+        annotation = super()._create_annotation_from_upload(upload, annotation_text, annotation_type, folder, user)
+
+        if getattr(settings, "USE_WHISPER", False) and getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False):
+            if annotation_type in ["audio", "video"] and annotation.file:
+                if not annotation.transcribed:
+                    try:
+                        from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+
+                        file_path = annotation.file.path
+                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
+
+                        if annotation_type == "audio":
+                            transcribe_audio.delay(
+                                audio_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued CCM audio transcription for annotation {annotation.id}")
+                        elif annotation_type == "video":
+                            transcribe_audio_from_video.delay(
+                                video_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued CCM video transcription for annotation {annotation.id}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to queue CCM transcription for annotation {annotation.id}: {str(e)}")
+
+        return annotation
+
     def on_completion(self, uploaded_file, request):
         """
         Handle completion and automatically create stored reagent annotation junction.
@@ -151,10 +236,9 @@ class StoredReagentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             stored_reagent_id = request.data.get("stored_reagent_id")
             folder_id = request.data.get("folder_id")
             annotation_text = request.data.get("annotation", "")
-            annotation_type = request.data.get(
-                "annotation_type",
-                self._detect_annotation_type(uploaded_file.filename),
-            )
+            annotation_type = request.data.get("annotation_type")
+            if not annotation_type:
+                annotation_type = self._detect_annotation_type(uploaded_file.filename)
 
             if not stored_reagent_id:
                 return Response(
@@ -242,6 +326,49 @@ class MaintenanceLogAnnotationChunkedUploadView(AnnotationChunkedUploadView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser]
 
+    def _create_annotation_from_upload(self, upload, annotation_text, annotation_type, folder, user):
+        """Create annotation and queue CCM transcription if needed."""
+        import logging
+
+        from django.conf import settings
+
+        logger = logging.getLogger(__name__)
+
+        annotation = super()._create_annotation_from_upload(upload, annotation_text, annotation_type, folder, user)
+
+        if getattr(settings, "USE_WHISPER", False) and getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False):
+            if annotation_type in ["audio", "video"] and annotation.file:
+                if not annotation.transcribed:
+                    try:
+                        from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+
+                        file_path = annotation.file.path
+                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
+
+                        if annotation_type == "audio":
+                            transcribe_audio.delay(
+                                audio_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued CCM audio transcription for annotation {annotation.id}")
+                        elif annotation_type == "video":
+                            transcribe_audio_from_video.delay(
+                                video_path=file_path,
+                                model_path=model_path,
+                                annotation_id=annotation.id,
+                                language="auto",
+                                translate=True,
+                            )
+                            logger.info(f"Queued CCM video transcription for annotation {annotation.id}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to queue CCM transcription for annotation {annotation.id}: {str(e)}")
+
+        return annotation
+
     def on_completion(self, uploaded_file, request):
         """
         Handle completion and automatically create maintenance log annotation junction.
@@ -249,10 +376,9 @@ class MaintenanceLogAnnotationChunkedUploadView(AnnotationChunkedUploadView):
         try:
             maintenance_log_id = request.data.get("maintenance_log_id")
             annotation_text = request.data.get("annotation", "")
-            annotation_type = request.data.get(
-                "annotation_type",
-                self._detect_annotation_type(uploaded_file.filename),
-            )
+            annotation_type = request.data.get("annotation_type")
+            if not annotation_type:
+                annotation_type = self._detect_annotation_type(uploaded_file.filename)
 
             if not maintenance_log_id:
                 return Response(

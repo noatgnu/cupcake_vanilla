@@ -176,10 +176,9 @@ class AnnotationChunkedUploadView(ChunkedUploadView):
         try:
             # Get annotation parameters from request
             annotation_text = request.data.get("annotation", "")
-            annotation_type = request.data.get(
-                "annotation_type",
-                self._detect_annotation_type(uploaded_file.filename),
-            )
+            annotation_type = request.data.get("annotation_type")
+            if not annotation_type:
+                annotation_type = self._detect_annotation_type(uploaded_file.filename)
             folder_id = request.data.get("folder_id")
 
             # Get folder if specified
@@ -249,7 +248,6 @@ class AnnotationChunkedUploadView(ChunkedUploadView):
 
     def _create_annotation_from_upload(self, upload, annotation_text, annotation_type, folder, user):
         """Create annotation record from completed upload."""
-        # Create annotation record
         annotation = Annotation.objects.create(
             owner=user,
             annotation_type=annotation_type,
@@ -258,9 +256,7 @@ class AnnotationChunkedUploadView(ChunkedUploadView):
             resource_type="file",
         )
 
-        # Attach the uploaded file to the annotation
         if upload.file:
-            # Copy the uploaded file to annotation
             with open(upload.file.path, "rb") as f:
                 file_content = f.read()
                 annotation.file.save(

@@ -1255,25 +1255,38 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
     pagination_class = LimitOffsetPagination
 
     def get_queryset(self):
-        """Return annotations accessible to the current user."""
+        """
+        Return ONLY standalone annotations accessible to the current user.
+
+        Annotations attached to parent resources (Instruments, Sessions, etc.) should
+        be accessed through their dedicated endpoints:
+        - /api/v1/instrument-annotations/
+        - /api/v1/step-annotations/
+        - /api/v1/maintenance-log-annotations/
+        - etc.
+
+        This endpoint handles:
+        - Standalone annotations in shared folders
+        - Personal notes not attached to any resource
+        - Annotations before they're attached to a parent
+        """
         user = self.request.user
+        base_queryset = Annotation.objects.filter(is_active=True, scratched=False)
+
+        base_queryset = base_queryset.filter(
+            instrument_attachments__isnull=True,
+            stored_reagent_attachments__isnull=True,
+            maintenance_log_attachments__isnull=True,
+            session_attachments__isnull=True,
+            step_attachments__isnull=True,
+        )
+
         if user.is_staff:
-            # Admins can see all annotations
-            return Annotation.objects.filter(is_active=True, scratched=False)
-        else:
-            # Regular users can only see annotations they can view
-            return (
-                Annotation.objects.filter(is_active=True, scratched=False)
-                .filter(
-                    # Owner can see their annotations
-                    # Public annotations can be seen by anyone
-                    # Group annotations can be seen by lab group members
-                    Q(owner=user)
-                    | Q(visibility="public")
-                    | (Q(visibility="group") & Q(lab_group__members=user))
-                )
-                .distinct()
-            )
+            return base_queryset
+
+        return base_queryset.filter(
+            Q(owner=user) | Q(visibility="public") | (Q(visibility="group") & Q(lab_group__members=user))
+        ).distinct()
 
     def perform_create(self, serializer):
         """Set owner and default values on annotation creation."""

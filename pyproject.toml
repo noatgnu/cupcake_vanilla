@@ -144,15 +144,16 @@ python-social-auth = {extras = ["django"], version = "^0.3.6"}
 whitenoise = "^6.7.0"
 django-cors-headers = "^4.3.1"
 gunicorn = "23.0.0"
-uvicorn = {extras = ["standard"], version = "^0.35.0"}
+uvicorn = {extras = ["standard"], version = "^0.38.0"}
 tqdm = "^4.67.1"
 channels = "^4.0.0"
 channels-redis = "^4.2.0"
 websockets = "^15.0.1"
-cryptography = "^45.0.7"
+cryptography = "^46.0.3"
 rq = "^2.5.0"
 django-rq = "^3.1"
 beautifulsoup4="^4.13.5"
+webvtt-py = "^0.5.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.12.0"

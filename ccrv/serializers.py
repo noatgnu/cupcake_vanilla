@@ -381,7 +381,16 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
 
     session_name = serializers.CharField(source="session.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
-    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
+    transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
+    transcription = serializers.CharField(
+        source="annotation.transcription", required=False, allow_blank=True, allow_null=True
+    )
+    language = serializers.CharField(source="annotation.language", required=False, allow_blank=True, allow_null=True)
+    translation = serializers.CharField(
+        source="annotation.translation", required=False, allow_blank=True, allow_null=True
+    )
+    scratched = serializers.BooleanField(source="annotation.scratched", required=False)
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     metadata_table_id = serializers.IntegerField(source="metadata_table.id", read_only=True)
     metadata_columns_count = serializers.SerializerMethodField()
@@ -396,6 +405,11 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "annotation",
             "annotation_type",
             "annotation_text",
+            "transcribed",
+            "transcription",
+            "language",
+            "translation",
+            "scratched",
             "file_url",
             "order",
             "metadata_table",
@@ -411,12 +425,36 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
             "session_name",
             "annotation_type",
-            "annotation_text",
+            "transcribed",
             "file_url",
             "metadata_table_name",
             "metadata_table_id",
             "metadata_columns_count",
         ]
+
+    def update(self, instance, validated_data):
+        """Update session annotation and nested annotation fields."""
+        annotation_data = {}
+
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if "annotation" in annotation_nested:
+                annotation_data["annotation"] = annotation_nested["annotation"]
+            if "transcription" in annotation_nested:
+                annotation_data["transcription"] = annotation_nested["transcription"]
+            if "language" in annotation_nested:
+                annotation_data["language"] = annotation_nested["language"]
+            if "translation" in annotation_nested:
+                annotation_data["translation"] = annotation_nested["translation"]
+            if "scratched" in annotation_nested:
+                annotation_data["scratched"] = annotation_nested["scratched"]
+
+        if annotation_data and instance.annotation:
+            for key, value in annotation_data.items():
+                setattr(instance.annotation, key, value)
+            instance.annotation.save()
+
+        return super().update(instance, validated_data)
 
     def get_metadata_columns_count(self, obj):
         """Get the number of metadata columns for this session annotation."""
@@ -740,7 +778,16 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
     step_description = serializers.CharField(source="step.step_description", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
-    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
+    transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
+    transcription = serializers.CharField(
+        source="annotation.transcription", required=False, allow_blank=True, allow_null=True
+    )
+    language = serializers.CharField(source="annotation.language", required=False, allow_blank=True, allow_null=True)
+    translation = serializers.CharField(
+        source="annotation.translation", required=False, allow_blank=True, allow_null=True
+    )
+    scratched = serializers.BooleanField(source="annotation.scratched", required=False)
     file_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -755,8 +802,15 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "annotation_name",
             "annotation_type",
             "annotation_text",
+            "transcribed",
+            "transcription",
+            "language",
+            "translation",
+            "scratched",
             "file_url",
+            "order",
             "created_at",
+            "updated_at",
         ]
         read_only_fields = [
             "id",
@@ -764,10 +818,35 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "step_description",
             "annotation_name",
             "annotation_type",
-            "annotation_text",
+            "transcribed",
             "file_url",
             "created_at",
+            "updated_at",
         ]
+
+    def update(self, instance, validated_data):
+        """Update step annotation and nested annotation fields."""
+        annotation_data = {}
+
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if "annotation" in annotation_nested:
+                annotation_data["annotation"] = annotation_nested["annotation"]
+            if "transcription" in annotation_nested:
+                annotation_data["transcription"] = annotation_nested["transcription"]
+            if "language" in annotation_nested:
+                annotation_data["language"] = annotation_nested["language"]
+            if "translation" in annotation_nested:
+                annotation_data["translation"] = annotation_nested["translation"]
+            if "scratched" in annotation_nested:
+                annotation_data["scratched"] = annotation_nested["scratched"]
+
+        if annotation_data and instance.annotation:
+            for key, value in annotation_data.items():
+                setattr(instance.annotation, key, value)
+            instance.annotation.save()
+
+        return super().update(instance, validated_data)
 
     def get_file_url(self, obj):
         """Get signed download URL for annotation file if exists."""

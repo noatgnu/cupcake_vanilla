@@ -183,6 +183,16 @@ RQ_QUEUES = {
             "health_check_interval": 30,
         },
     },
+    "transcribe": {
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
+        "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
+        "DEFAULT_TIMEOUT": 3600,  # 1 hour for transcription tasks
+        "CONNECTION_KWARGS": {
+            "health_check_interval": 30,
+        },
+    },
 }
 
 
@@ -384,3 +394,11 @@ LOGGING = {
         },
     },
 }
+
+# Whisper.cpp configuration for transcription
+WHISPERCPP_PATH = os.environ.get("WHISPERCPP_PATH", "/app/whisper.cpp/build/bin/whisper-cli")
+WHISPERCPP_DEFAULT_MODEL = os.environ.get("WHISPERCPP_DEFAULT_MODEL", "/app/whisper.cpp/models/ggml-medium.bin")
+WHISPERCPP_THREAD_COUNT = os.environ.get("WHISPERCPP_THREAD_COUNT", "6")
+
+# Feature flags
+USE_WHISPER = os.environ.get("USE_WHISPER", "False") == "True"

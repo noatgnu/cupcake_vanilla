@@ -1,0 +1,3 @@
+"""
+CCM tasks module.
+"""

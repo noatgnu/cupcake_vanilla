@@ -291,12 +291,12 @@ class CCMViewSetTests(APITestCase):
 
     def test_instrument_list_create(self):
         """Test instrument list and create endpoints."""
-        # Get initial count
         url = "/api/v1/instruments/"
         initial_response = self.client.get(url)
         initial_count = self._get_count_from_response(initial_response)
 
-        # Test create
+        self.client.force_authenticate(user=self.staff_user)
+
         data = {
             "instrument_name": "New LC-MS",
             "instrument_description": "Brand new instrument",
@@ -308,7 +308,6 @@ class CCMViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["instrument_name"], "New LC-MS")
 
-        # Test list - should have one more item
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         final_count = self._get_count_from_response(response)

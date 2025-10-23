@@ -8,7 +8,11 @@ from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
-from .annotation_chunked_upload import SessionAnnotationFolderChunkedUploadView, StepAnnotationChunkedUploadView
+from .annotation_chunked_upload import (
+    SessionAnnotationChunkedUploadView,
+    SessionAnnotationFolderChunkedUploadView,
+    StepAnnotationChunkedUploadView,
+)
 from .viewsets import (
     InstrumentUsageSessionAnnotationViewSet,
     ProjectViewSet,
@@ -62,6 +66,16 @@ urlpatterns = [
         "upload/step-annotation-chunks/<uuid:pk>/",
         StepAnnotationChunkedUploadView.as_view(),
         name="step-annotation-chunked-upload-detail",
+    ),
+    path(
+        "upload/session-annotation-chunks/",
+        SessionAnnotationChunkedUploadView.as_view(),
+        name="session-annotation-chunked-upload",
+    ),
+    path(
+        "upload/session-annotation-chunks/<uuid:pk>/",
+        SessionAnnotationChunkedUploadView.as_view(),
+        name="session-annotation-chunked-upload-detail",
     ),
     path(
         "upload/session-annotation-folder-chunks/",

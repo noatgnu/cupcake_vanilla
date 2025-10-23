@@ -26,6 +26,7 @@ class Instrument(models.Model):
     days_before_warranty_notification = models.IntegerField(blank=True, null=True, default=30)
     days_before_maintenance_notification = models.IntegerField(blank=True, null=True, default=14)
     accepts_bookings = models.BooleanField(default=True)
+    allow_overlapping_bookings = models.BooleanField(default=False)
 
     # Vaulting system for imported data
     user = models.ForeignKey(

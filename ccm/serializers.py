@@ -73,6 +73,7 @@ class InstrumentSerializer(serializers.ModelSerializer):
             "days_before_warranty_notification",
             "days_before_maintenance_notification",
             "accepts_bookings",
+            "allow_overlapping_bookings",
             "user",
             "owner_username",
             "is_vaulted",
@@ -271,9 +272,15 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
         Pre-approval conditions:
         - max_days_ahead_pre_approval: Booking starts within N days from now
         - max_days_within_usage_pre_approval: Booking duration is N days or less
+        - Overlapping bookings: If overlapping bookings exist and overlaps are allowed, requires approval
 
-        If BOTH conditions are met, booking is auto-approved.
-        If EITHER condition fails, booking requires manual approval.
+        Overlap handling:
+        - If allow_overlapping_bookings is False and overlap detected: Reject booking
+        - If allow_overlapping_bookings is True and overlap detected: Require approval
+        - If no overlap: Follow normal auto-approval logic
+
+        If ALL pre-approval conditions are met, booking is auto-approved.
+        If ANY condition fails, booking requires manual approval.
         """
         from django.utils import timezone
 
@@ -318,6 +325,22 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
                         f"booking duration is {booking_duration_days} days "
                         f"(exceeds {instrument.max_days_within_usage_pre_approval} day limit for pre-approval)"
                     )
+
+            overlapping_bookings = InstrumentUsage.objects.filter(
+                instrument=instrument, time_started__lt=time_ended, time_ended__gt=time_started
+            )
+
+            if self.instance:
+                overlapping_bookings = overlapping_bookings.exclude(id=self.instance.id)
+
+            if overlapping_bookings.exists():
+                if not instrument.allow_overlapping_bookings:
+                    raise serializers.ValidationError(
+                        "This instrument does not allow overlapping bookings. "
+                        f"There are {overlapping_bookings.count()} existing booking(s) during this time period."
+                    )
+                requires_approval = True
+                approval_reasons.append(f"overlaps with {overlapping_bookings.count()} existing booking(s)")
 
             if requires_approval and "approved" not in data:
                 data["approved"] = False
@@ -625,7 +648,16 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
     folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
-    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
+    transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
+    transcription = serializers.CharField(
+        source="annotation.transcription", required=False, allow_blank=True, allow_null=True
+    )
+    language = serializers.CharField(source="annotation.language", required=False, allow_blank=True, allow_null=True)
+    translation = serializers.CharField(
+        source="annotation.translation", required=False, allow_blank=True, allow_null=True
+    )
+    scratched = serializers.BooleanField(source="annotation.scratched", required=False)
     file_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -640,8 +672,15 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
             "annotation_name",
             "annotation_type",
             "annotation_text",
+            "transcribed",
+            "transcription",
+            "language",
+            "translation",
+            "scratched",
             "file_url",
+            "order",
             "created_at",
+            "updated_at",
         ]
         read_only_fields = [
             "id",
@@ -649,10 +688,35 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
             "folder_name",
             "annotation_name",
             "annotation_type",
-            "annotation_text",
+            "transcribed",
             "file_url",
             "created_at",
+            "updated_at",
         ]
+
+    def update(self, instance, validated_data):
+        """Update instrument annotation and nested annotation fields."""
+        annotation_data = {}
+
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if "annotation" in annotation_nested:
+                annotation_data["annotation"] = annotation_nested["annotation"]
+            if "transcription" in annotation_nested:
+                annotation_data["transcription"] = annotation_nested["transcription"]
+            if "language" in annotation_nested:
+                annotation_data["language"] = annotation_nested["language"]
+            if "translation" in annotation_nested:
+                annotation_data["translation"] = annotation_nested["translation"]
+            if "scratched" in annotation_nested:
+                annotation_data["scratched"] = annotation_nested["scratched"]
+
+        if annotation_data and instance.annotation:
+            for key, value in annotation_data.items():
+                setattr(instance.annotation, key, value)
+            instance.annotation.save()
+
+        return super().update(instance, validated_data)
 
     def get_file_url(self, obj):
         """Get signed download URL for annotation file if exists."""
@@ -681,7 +745,16 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
     folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
-    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
+    transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
+    transcription = serializers.CharField(
+        source="annotation.transcription", required=False, allow_blank=True, allow_null=True
+    )
+    language = serializers.CharField(source="annotation.language", required=False, allow_blank=True, allow_null=True)
+    translation = serializers.CharField(
+        source="annotation.translation", required=False, allow_blank=True, allow_null=True
+    )
+    scratched = serializers.BooleanField(source="annotation.scratched", required=False)
     file_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -696,8 +769,15 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
             "annotation_name",
             "annotation_type",
             "annotation_text",
+            "transcribed",
+            "transcription",
+            "language",
+            "translation",
+            "scratched",
             "file_url",
+            "order",
             "created_at",
+            "updated_at",
         ]
         read_only_fields = [
             "id",
@@ -705,10 +785,35 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
             "folder_name",
             "annotation_name",
             "annotation_type",
-            "annotation_text",
+            "transcribed",
             "file_url",
             "created_at",
+            "updated_at",
         ]
+
+    def update(self, instance, validated_data):
+        """Update stored reagent annotation and nested annotation fields."""
+        annotation_data = {}
+
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if "annotation" in annotation_nested:
+                annotation_data["annotation"] = annotation_nested["annotation"]
+            if "transcription" in annotation_nested:
+                annotation_data["transcription"] = annotation_nested["transcription"]
+            if "language" in annotation_nested:
+                annotation_data["language"] = annotation_nested["language"]
+            if "translation" in annotation_nested:
+                annotation_data["translation"] = annotation_nested["translation"]
+            if "scratched" in annotation_nested:
+                annotation_data["scratched"] = annotation_nested["scratched"]
+
+        if annotation_data and instance.annotation:
+            for key, value in annotation_data.items():
+                setattr(instance.annotation, key, value)
+            instance.annotation.save()
+
+        return super().update(instance, validated_data)
 
     def get_file_url(self, obj):
         """Get signed download URL for annotation file if exists."""
@@ -736,7 +841,16 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
     maintenance_log_title = serializers.CharField(source="maintenance_log.maintenance_type", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.resource_type", read_only=True)
-    annotation_text = serializers.CharField(source="annotation.annotation", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
+    transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
+    transcription = serializers.CharField(
+        source="annotation.transcription", required=False, allow_blank=True, allow_null=True
+    )
+    language = serializers.CharField(source="annotation.language", required=False, allow_blank=True, allow_null=True)
+    translation = serializers.CharField(
+        source="annotation.translation", required=False, allow_blank=True, allow_null=True
+    )
+    scratched = serializers.BooleanField(source="annotation.scratched", required=False)
     file_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -749,19 +863,50 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
             "annotation_name",
             "annotation_type",
             "annotation_text",
+            "transcribed",
+            "transcription",
+            "language",
+            "translation",
+            "scratched",
             "file_url",
             "order",
             "created_at",
+            "updated_at",
         ]
         read_only_fields = [
             "id",
             "maintenance_log_title",
             "annotation_name",
             "annotation_type",
-            "annotation_text",
+            "transcribed",
             "file_url",
             "created_at",
+            "updated_at",
         ]
+
+    def update(self, instance, validated_data):
+        """Update maintenance log annotation and nested annotation fields."""
+        annotation_data = {}
+
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if "annotation" in annotation_nested:
+                annotation_data["annotation"] = annotation_nested["annotation"]
+            if "transcription" in annotation_nested:
+                annotation_data["transcription"] = annotation_nested["transcription"]
+            if "language" in annotation_nested:
+                annotation_data["language"] = annotation_nested["language"]
+            if "translation" in annotation_nested:
+                annotation_data["translation"] = annotation_nested["translation"]
+            if "scratched" in annotation_nested:
+                annotation_data["scratched"] = annotation_nested["scratched"]
+
+        if annotation_data and instance.annotation:
+            for key, value in annotation_data.items():
+                setattr(instance.annotation, key, value)
+            instance.annotation.save()
+
+        return super().update(instance, validated_data)
 
     def get_file_url(self, obj):
         """

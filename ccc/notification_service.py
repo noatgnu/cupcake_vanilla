@@ -154,6 +154,32 @@ class BaseNotificationService:
         }
         self._send_to_group(f"{entity_type}_{entity_id}", f"{entity_type}_update", data)
 
+    def transcription_completed(
+        self, user_id: int, annotation_id: int, language: str = None, has_translation: bool = False, **kwargs
+    ):
+        """Notify user that transcription has completed."""
+        message = "Transcription completed"
+        if language:
+            message = f"Transcription completed (detected language: {language})"
+
+        extra = {"annotation_id": annotation_id}
+        if language:
+            extra["language"] = language
+        if has_translation:
+            extra["has_translation"] = has_translation
+
+        self.notify_user(user_id, "transcription.completed", message, **extra)
+
+    def transcription_failed(self, user_id: int, annotation_id: int, error: str, **kwargs):
+        """Notify user that transcription has failed."""
+        message = f"Transcription failed: {error}"
+        self.notify_user(user_id, "transcription.failed", message, annotation_id=annotation_id, error=error)
+
+    def transcription_started(self, user_id: int, annotation_id: int, **kwargs):
+        """Notify user that transcription has started."""
+        message = "Transcription started"
+        self.notify_user(user_id, "transcription.started", message, annotation_id=annotation_id)
+
 
 # Global base instance
 base_notification_service = BaseNotificationService()
