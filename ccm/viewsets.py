@@ -553,7 +553,15 @@ class InstrumentUsageViewSet(BaseViewSet):
 
     queryset = InstrumentUsage.objects.all()
     serializer_class = InstrumentUsageSerializer
-    filterset_fields = ["user", "instrument", "approved", "maintenance", "approved_by"]
+    filterset_fields = {
+        "user": ["exact"],
+        "instrument": ["exact"],
+        "approved": ["exact"],
+        "maintenance": ["exact"],
+        "approved_by": ["exact"],
+        "time_started": ["gte", "lte", "gt", "lt"],
+        "time_ended": ["gte", "lte", "gt", "lt"],
+    }
     search_fields = ["description"]
     ordering_fields = ["time_started", "time_ended", "usage_hours", "created_at"]
     ordering = ["-time_started"]
