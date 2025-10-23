@@ -97,7 +97,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
     def unread(self, request):
         """Get unread notifications for current user."""
         queryset = self.get_queryset().filter(
-            delivery_status__in=[DeliveryStatus.PENDING, DeliveryStatus.SENT, DeliveryStatus.DELIVERED]
+            delivery_status__in=[DeliveryStatus.PENDING, DeliveryStatus.SENT, DeliveryStatus.DELIVERED],
+            read_at__isnull=True,
         )
 
         page = self.paginate_queryset(queryset)

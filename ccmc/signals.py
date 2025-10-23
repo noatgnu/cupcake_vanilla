@@ -45,9 +45,10 @@ def notification_created(sender, instance, created, **kwargs):
 
         async_to_sync(channel_layer.group_send)(user_group_name, notification_data)
 
-        instance.delivery_status = "sent"
-        instance.sent_at = timezone.now()
-        instance.save(update_fields=["delivery_status", "sent_at"])
+        if instance.delivery_status != "read":
+            instance.delivery_status = "sent"
+            instance.sent_at = timezone.now()
+            instance.save(update_fields=["delivery_status", "sent_at"])
 
         logger.info(f"WebSocket notification sent to user {instance.recipient.username}: {instance.title}")
 

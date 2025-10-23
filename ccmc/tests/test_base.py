@@ -41,10 +41,11 @@ class NotificationModelTest(TestCase):
             priority=NotificationPriority.NORMAL,
         )
 
+        notification.refresh_from_db()
         self.assertEqual(notification.title, "Test Notification")
         self.assertEqual(notification.recipient, self.user1)
         self.assertEqual(notification.sender, self.user2)
-        self.assertEqual(notification.delivery_status, DeliveryStatus.PENDING)
+        self.assertEqual(notification.delivery_status, DeliveryStatus.SENT)
         self.assertIsNone(notification.read_at)
 
     def test_notification_mark_as_read(self):
@@ -53,8 +54,9 @@ class NotificationModelTest(TestCase):
             title="Test Notification", message="Test message", recipient=self.user1
         )
 
+        notification.refresh_from_db()
         self.assertIsNone(notification.read_at)
-        self.assertEqual(notification.delivery_status, DeliveryStatus.PENDING)
+        self.assertEqual(notification.delivery_status, DeliveryStatus.SENT)
 
         notification.mark_as_read()
 

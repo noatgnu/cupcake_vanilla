@@ -1003,11 +1003,11 @@ class OntologyViewTest(APITestCase, QuickTestDataMixin):
 
         if response.status_code == status.HTTP_200_OK:
             data = response.json()
-            self.assertIn("results", data)
+            self.assertIn("suggestions", data)
 
-            # Test suggestion structure if results exist
-            if data["results"]:
-                first_suggestion = data["results"][0]
+            # Test suggestion structure if suggestions exist
+            if data["suggestions"]:
+                first_suggestion = data["suggestions"][0]
                 self.assertIn("id", first_suggestion)
                 self.assertIn("value", first_suggestion)
                 self.assertIn("display_name", first_suggestion)
