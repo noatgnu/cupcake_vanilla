@@ -10,7 +10,7 @@ from django.urls import reverse
 
 from rest_framework import serializers
 
-from ccc.models import LabGroupPermission
+from ccc.models import Annotation, LabGroupPermission
 
 from .models import (
     ExternalContact,
@@ -644,6 +644,7 @@ class ReagentSubscriptionSerializer(serializers.ModelSerializer):
 class InstrumentAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for InstrumentAnnotation model."""
 
+    annotation_data = serializers.JSONField(write_only=True, required=False)
     instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
     folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
@@ -694,27 +695,82 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def update(self, instance, validated_data):
-        """Update instrument annotation and nested annotation fields."""
+    def create(self, validated_data):
+        """
+        Create instrument annotation with non-file annotation.
+        Accepts nested annotation object: {"instrument": 1, "folder": 2, "annotation": {"annotation": "text", "annotationType": "text"}}
+        Or existing annotation ID: {"instrument": 1, "folder": 2, "annotation": 5}
+        """
+        if "annotation" in validated_data and isinstance(validated_data["annotation"], Annotation):
+            if "order" not in validated_data:
+                instrument = validated_data.get("instrument")
+                folder = validated_data.get("folder")
+                if instrument and folder:
+                    order = InstrumentAnnotation.objects.filter(instrument=instrument, folder=folder).count()
+                    validated_data["order"] = order
+            return super().create(validated_data)
+
         annotation_data = {}
+        annotation_type = "text"
 
         if "annotation" in validated_data:
             annotation_nested = validated_data.pop("annotation")
-            if "annotation" in annotation_nested:
-                annotation_data["annotation"] = annotation_nested["annotation"]
-            if "transcription" in annotation_nested:
-                annotation_data["transcription"] = annotation_nested["transcription"]
-            if "language" in annotation_nested:
-                annotation_data["language"] = annotation_nested["language"]
-            if "translation" in annotation_nested:
-                annotation_data["translation"] = annotation_nested["translation"]
-            if "scratched" in annotation_nested:
-                annotation_data["scratched"] = annotation_nested["scratched"]
+            if isinstance(annotation_nested, dict):
+                annotation_data["annotation"] = annotation_nested.get("annotation", "")
+                annotation_data["transcription"] = annotation_nested.get("transcription")
+                annotation_data["language"] = annotation_nested.get("language")
+                annotation_data["translation"] = annotation_nested.get("translation")
+                annotation_data["scratched"] = annotation_nested.get("scratched", False)
+                annotation_type = annotation_nested.get("annotation_type", "text")
 
-        if annotation_data and instance.annotation:
-            for key, value in annotation_data.items():
-                setattr(instance.annotation, key, value)
-            instance.annotation.save()
+        if not annotation_data.get("annotation"):
+            raise serializers.ValidationError(
+                {"annotation": {"annotation": "This field is required for non-file annotations."}}
+            )
+
+        user = self.context["request"].user
+        folder = validated_data.get("folder")
+
+        annotation = Annotation.objects.create(
+            annotation=annotation_data["annotation"],
+            annotation_type=annotation_type,
+            transcription=annotation_data.get("transcription"),
+            language=annotation_data.get("language"),
+            translation=annotation_data.get("translation"),
+            scratched=annotation_data["scratched"],
+            folder=folder,
+            owner=user,
+        )
+
+        validated_data["annotation"] = annotation
+
+        if "order" not in validated_data:
+            instrument = validated_data.get("instrument")
+            if instrument and folder:
+                order = InstrumentAnnotation.objects.filter(instrument=instrument, folder=folder).count()
+                validated_data["order"] = order
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """
+        Update instrument annotation and nested annotation fields.
+        Accepts nested annotation object: {"annotation": {"annotation": "updated text", "language": "en"}}
+        """
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if isinstance(annotation_nested, dict) and instance.annotation:
+                if "annotation" in annotation_nested:
+                    instance.annotation.annotation = annotation_nested["annotation"]
+                if "transcription" in annotation_nested:
+                    instance.annotation.transcription = annotation_nested["transcription"]
+                if "language" in annotation_nested:
+                    instance.annotation.language = annotation_nested["language"]
+                if "translation" in annotation_nested:
+                    instance.annotation.translation = annotation_nested["translation"]
+                if "scratched" in annotation_nested:
+                    instance.annotation.scratched = annotation_nested["scratched"]
+                instance.annotation.save()
 
         return super().update(instance, validated_data)
 
@@ -791,27 +847,82 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def update(self, instance, validated_data):
-        """Update stored reagent annotation and nested annotation fields."""
+    def create(self, validated_data):
+        """
+        Create stored reagent annotation with non-file annotation.
+        Accepts nested annotation object: {"storedReagent": 1, "folder": 2, "annotation": {"annotation": "text", "annotationType": "text"}}
+        Or existing annotation ID: {"storedReagent": 1, "folder": 2, "annotation": 5}
+        """
+        if "annotation" in validated_data and isinstance(validated_data["annotation"], Annotation):
+            if "order" not in validated_data:
+                stored_reagent = validated_data.get("stored_reagent")
+                folder = validated_data.get("folder")
+                if stored_reagent and folder:
+                    order = StoredReagentAnnotation.objects.filter(stored_reagent=stored_reagent, folder=folder).count()
+                    validated_data["order"] = order
+            return super().create(validated_data)
+
         annotation_data = {}
+        annotation_type = "text"
 
         if "annotation" in validated_data:
             annotation_nested = validated_data.pop("annotation")
-            if "annotation" in annotation_nested:
-                annotation_data["annotation"] = annotation_nested["annotation"]
-            if "transcription" in annotation_nested:
-                annotation_data["transcription"] = annotation_nested["transcription"]
-            if "language" in annotation_nested:
-                annotation_data["language"] = annotation_nested["language"]
-            if "translation" in annotation_nested:
-                annotation_data["translation"] = annotation_nested["translation"]
-            if "scratched" in annotation_nested:
-                annotation_data["scratched"] = annotation_nested["scratched"]
+            if isinstance(annotation_nested, dict):
+                annotation_data["annotation"] = annotation_nested.get("annotation", "")
+                annotation_data["transcription"] = annotation_nested.get("transcription")
+                annotation_data["language"] = annotation_nested.get("language")
+                annotation_data["translation"] = annotation_nested.get("translation")
+                annotation_data["scratched"] = annotation_nested.get("scratched", False)
+                annotation_type = annotation_nested.get("annotation_type", "text")
 
-        if annotation_data and instance.annotation:
-            for key, value in annotation_data.items():
-                setattr(instance.annotation, key, value)
-            instance.annotation.save()
+        if not annotation_data.get("annotation"):
+            raise serializers.ValidationError(
+                {"annotation": {"annotation": "This field is required for non-file annotations."}}
+            )
+
+        user = self.context["request"].user
+        folder = validated_data.get("folder")
+
+        annotation = Annotation.objects.create(
+            annotation=annotation_data["annotation"],
+            annotation_type=annotation_type,
+            transcription=annotation_data.get("transcription"),
+            language=annotation_data.get("language"),
+            translation=annotation_data.get("translation"),
+            scratched=annotation_data["scratched"],
+            folder=folder,
+            owner=user,
+        )
+
+        validated_data["annotation"] = annotation
+
+        if "order" not in validated_data:
+            stored_reagent = validated_data.get("stored_reagent")
+            if stored_reagent and folder:
+                order = StoredReagentAnnotation.objects.filter(stored_reagent=stored_reagent, folder=folder).count()
+                validated_data["order"] = order
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """
+        Update stored reagent annotation and nested annotation fields.
+        Accepts nested annotation object: {"annotation": {"annotation": "updated text", "language": "en"}}
+        """
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if isinstance(annotation_nested, dict) and instance.annotation:
+                if "annotation" in annotation_nested:
+                    instance.annotation.annotation = annotation_nested["annotation"]
+                if "transcription" in annotation_nested:
+                    instance.annotation.transcription = annotation_nested["transcription"]
+                if "language" in annotation_nested:
+                    instance.annotation.language = annotation_nested["language"]
+                if "translation" in annotation_nested:
+                    instance.annotation.translation = annotation_nested["translation"]
+                if "scratched" in annotation_nested:
+                    instance.annotation.scratched = annotation_nested["scratched"]
+                instance.annotation.save()
 
         return super().update(instance, validated_data)
 
@@ -884,27 +995,79 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def update(self, instance, validated_data):
-        """Update maintenance log annotation and nested annotation fields."""
+    def create(self, validated_data):
+        """
+        Create maintenance log annotation with non-file annotation.
+        Accepts nested annotation object: {"maintenanceLog": 1, "annotation": {"annotation": "text", "annotationType": "text"}}
+        Or existing annotation ID: {"maintenanceLog": 1, "annotation": 5}
+        """
+        if "annotation" in validated_data and isinstance(validated_data["annotation"], Annotation):
+            if "order" not in validated_data:
+                maintenance_log = validated_data.get("maintenance_log")
+                if maintenance_log:
+                    order = MaintenanceLogAnnotation.objects.filter(maintenance_log=maintenance_log).count()
+                    validated_data["order"] = order
+            return super().create(validated_data)
+
         annotation_data = {}
+        annotation_type = "text"
 
         if "annotation" in validated_data:
             annotation_nested = validated_data.pop("annotation")
-            if "annotation" in annotation_nested:
-                annotation_data["annotation"] = annotation_nested["annotation"]
-            if "transcription" in annotation_nested:
-                annotation_data["transcription"] = annotation_nested["transcription"]
-            if "language" in annotation_nested:
-                annotation_data["language"] = annotation_nested["language"]
-            if "translation" in annotation_nested:
-                annotation_data["translation"] = annotation_nested["translation"]
-            if "scratched" in annotation_nested:
-                annotation_data["scratched"] = annotation_nested["scratched"]
+            if isinstance(annotation_nested, dict):
+                annotation_data["annotation"] = annotation_nested.get("annotation", "")
+                annotation_data["transcription"] = annotation_nested.get("transcription")
+                annotation_data["language"] = annotation_nested.get("language")
+                annotation_data["translation"] = annotation_nested.get("translation")
+                annotation_data["scratched"] = annotation_nested.get("scratched", False)
+                annotation_type = annotation_nested.get("annotation_type", "text")
 
-        if annotation_data and instance.annotation:
-            for key, value in annotation_data.items():
-                setattr(instance.annotation, key, value)
-            instance.annotation.save()
+        if not annotation_data.get("annotation"):
+            raise serializers.ValidationError(
+                {"annotation": {"annotation": "This field is required for non-file annotations."}}
+            )
+
+        user = self.context["request"].user
+
+        annotation = Annotation.objects.create(
+            annotation=annotation_data["annotation"],
+            annotation_type=annotation_type,
+            transcription=annotation_data.get("transcription"),
+            language=annotation_data.get("language"),
+            translation=annotation_data.get("translation"),
+            scratched=annotation_data["scratched"],
+            owner=user,
+        )
+
+        validated_data["annotation"] = annotation
+
+        if "order" not in validated_data:
+            maintenance_log = validated_data.get("maintenance_log")
+            if maintenance_log:
+                order = MaintenanceLogAnnotation.objects.filter(maintenance_log=maintenance_log).count()
+                validated_data["order"] = order
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """
+        Update maintenance log annotation and nested annotation fields.
+        Accepts nested annotation object: {"annotation": {"annotation": "updated text", "language": "en"}}
+        """
+        if "annotation" in validated_data:
+            annotation_nested = validated_data.pop("annotation")
+            if isinstance(annotation_nested, dict) and instance.annotation:
+                if "annotation" in annotation_nested:
+                    instance.annotation.annotation = annotation_nested["annotation"]
+                if "transcription" in annotation_nested:
+                    instance.annotation.transcription = annotation_nested["transcription"]
+                if "language" in annotation_nested:
+                    instance.annotation.language = annotation_nested["language"]
+                if "translation" in annotation_nested:
+                    instance.annotation.translation = annotation_nested["translation"]
+                if "scratched" in annotation_nested:
+                    instance.annotation.scratched = annotation_nested["scratched"]
+                instance.annotation.save()
 
         return super().update(instance, validated_data)
 

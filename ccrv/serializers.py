@@ -10,7 +10,7 @@ from django.urls import reverse
 
 from rest_framework import serializers
 
-from ccc.models import RemoteHost
+from ccc.models import Annotation, RemoteHost
 from ccm.models import Reagent
 from ccm.serializers import ReagentSerializer
 
@@ -379,6 +379,7 @@ class SessionSerializer(serializers.ModelSerializer):
 class SessionAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for session annotations with metadata table functionality."""
 
+    annotation_data = serializers.JSONField(write_only=True, required=False)
     session_name = serializers.CharField(source="session.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
@@ -403,6 +404,7 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "session",
             "session_name",
             "annotation",
+            "annotation_data",
             "annotation_type",
             "annotation_text",
             "transcribed",
@@ -432,26 +434,62 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "metadata_columns_count",
         ]
 
-    def update(self, instance, validated_data):
-        """Update session annotation and nested annotation fields."""
-        annotation_data = {}
+    def create(self, validated_data):
+        """
+        Create session annotation with non-file annotation.
+        Use annotation_data for nested object: {"session": 1, "annotation_data": {"annotation": "text", "annotationType": "text"}}
+        Use annotation for existing ID: {"session": 1, "annotation": 5}
+        """
+        annotation_data = validated_data.pop("annotation_data", None)
 
-        if "annotation" in validated_data:
-            annotation_nested = validated_data.pop("annotation")
-            if "annotation" in annotation_nested:
-                annotation_data["annotation"] = annotation_nested["annotation"]
-            if "transcription" in annotation_nested:
-                annotation_data["transcription"] = annotation_nested["transcription"]
-            if "language" in annotation_nested:
-                annotation_data["language"] = annotation_nested["language"]
-            if "translation" in annotation_nested:
-                annotation_data["translation"] = annotation_nested["translation"]
-            if "scratched" in annotation_nested:
-                annotation_data["scratched"] = annotation_nested["scratched"]
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+
+            if not annotation_text:
+                raise serializers.ValidationError(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}}
+                )
+
+            user = self.context["request"].user
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                owner=user,
+            )
+
+            validated_data["annotation"] = annotation
+
+        if "order" not in validated_data:
+            session = validated_data.get("session")
+            if session:
+                order = SessionAnnotation.objects.filter(session=session).count()
+                validated_data["order"] = order
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """
+        Update session annotation and nested annotation fields.
+        Use annotation_data: {"annotation_data": {"annotation": "updated text", "language": "en"}}
+        """
+        annotation_data = validated_data.pop("annotation_data", None)
 
         if annotation_data and instance.annotation:
-            for key, value in annotation_data.items():
-                setattr(instance.annotation, key, value)
+            if "annotation" in annotation_data:
+                instance.annotation.annotation = annotation_data["annotation"]
+            if "transcription" in annotation_data:
+                instance.annotation.transcription = annotation_data["transcription"]
+            if "language" in annotation_data:
+                instance.annotation.language = annotation_data["language"]
+            if "translation" in annotation_data:
+                instance.annotation.translation = annotation_data["translation"]
+            if "scratched" in annotation_data:
+                instance.annotation.scratched = annotation_data["scratched"]
             instance.annotation.save()
 
         return super().update(instance, validated_data)
@@ -774,6 +812,7 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
 class StepAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for StepAnnotation model."""
 
+    annotation_data = serializers.JSONField(write_only=True, required=False)
     session_name = serializers.CharField(source="session.name", read_only=True)
     step_description = serializers.CharField(source="step.step_description", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
@@ -799,6 +838,7 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "step",
             "step_description",
             "annotation",
+            "annotation_data",
             "annotation_name",
             "annotation_type",
             "annotation_text",
@@ -824,26 +864,63 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def update(self, instance, validated_data):
-        """Update step annotation and nested annotation fields."""
-        annotation_data = {}
+    def create(self, validated_data):
+        """
+        Create step annotation with non-file annotation.
+        Use annotation_data for nested object: {"session": 1, "step": 2, "annotation_data": {"annotation": "text", "annotationType": "text"}}
+        Use annotation for existing ID: {"session": 1, "step": 2, "annotation": 5}
+        """
+        annotation_data = validated_data.pop("annotation_data", None)
 
-        if "annotation" in validated_data:
-            annotation_nested = validated_data.pop("annotation")
-            if "annotation" in annotation_nested:
-                annotation_data["annotation"] = annotation_nested["annotation"]
-            if "transcription" in annotation_nested:
-                annotation_data["transcription"] = annotation_nested["transcription"]
-            if "language" in annotation_nested:
-                annotation_data["language"] = annotation_nested["language"]
-            if "translation" in annotation_nested:
-                annotation_data["translation"] = annotation_nested["translation"]
-            if "scratched" in annotation_nested:
-                annotation_data["scratched"] = annotation_nested["scratched"]
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+
+            if not annotation_text:
+                raise serializers.ValidationError(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}}
+                )
+
+            user = self.context["request"].user
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                owner=user,
+            )
+
+            validated_data["annotation"] = annotation
+
+        if "order" not in validated_data:
+            session = validated_data.get("session")
+            step = validated_data.get("step")
+            if session and step:
+                order = StepAnnotation.objects.filter(session=session, step=step).count()
+                validated_data["order"] = order
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """
+        Update step annotation and nested annotation fields.
+        Use annotation_data: {"annotation_data": {"annotation": "updated text", "language": "en"}}
+        """
+        annotation_data = validated_data.pop("annotation_data", None)
 
         if annotation_data and instance.annotation:
-            for key, value in annotation_data.items():
-                setattr(instance.annotation, key, value)
+            if "annotation" in annotation_data:
+                instance.annotation.annotation = annotation_data["annotation"]
+            if "transcription" in annotation_data:
+                instance.annotation.transcription = annotation_data["transcription"]
+            if "language" in annotation_data:
+                instance.annotation.language = annotation_data["language"]
+            if "translation" in annotation_data:
+                instance.annotation.translation = annotation_data["translation"]
+            if "scratched" in annotation_data:
+                instance.annotation.scratched = annotation_data["scratched"]
             instance.annotation.save()
 
         return super().update(instance, validated_data)
