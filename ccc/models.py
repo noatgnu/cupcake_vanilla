@@ -620,6 +620,14 @@ class SiteConfig(models.Model):
     allow_user_registration = models.BooleanField(default=False, help_text="Allow public user registration")
     enable_orcid_login = models.BooleanField(default=False, help_text="Enable ORCID OAuth login")
 
+    # Booking configuration
+    booking_deletion_window_minutes = models.PositiveIntegerField(
+        default=30,
+        help_text="Time window (in minutes) after booking creation during which the creator can delete it. "
+        "After this window, bookings become permanent and cannot be deleted by regular users. "
+        "Staff and instrument managers can always delete bookings.",
+    )
+
     # Audit trail
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

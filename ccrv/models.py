@@ -1053,6 +1053,65 @@ class StepAnnotation(models.Model):
         return f"{self.session} - {self.step} - {self.annotation}"
 
 
+class InstrumentUsageStepAnnotation(models.Model):
+    """
+    Junction model linking StepAnnotations to InstrumentUsage bookings.
+
+    This allows step annotations to be associated with specific instrument
+    usage bookings, enabling documentation of which instrument bookings
+    were used for specific protocol steps.
+    """
+
+    step_annotation = models.ForeignKey(
+        StepAnnotation,
+        on_delete=models.CASCADE,
+        related_name="instrument_usage_links",
+        help_text="Step annotation linked to instrument usage",
+    )
+    instrument_usage = models.ForeignKey(
+        "ccm.InstrumentUsage",
+        on_delete=models.CASCADE,
+        related_name="step_annotation_links",
+        help_text="Instrument usage booking this step annotation is linked to",
+    )
+
+    order = models.PositiveIntegerField(
+        default=0, help_text="Display order of step annotations within the instrument usage"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccrv"
+        unique_together = [["step_annotation", "instrument_usage"]]
+        ordering = ["order", "created_at"]
+
+    def can_view(self, user):
+        """
+        Check if user can view this step annotation to instrument usage link.
+        Can view if they can view either the step annotation OR the instrument usage.
+        """
+        return self.step_annotation.can_view(user) or self.instrument_usage.user_can_view(user)
+
+    def can_edit(self, user):
+        """
+        Check if user can edit this step annotation to instrument usage link.
+        Can edit if they can edit the step annotation OR manage the instrument.
+        """
+        return self.step_annotation.can_edit(user) or self.instrument_usage.user_can_edit(user)
+
+    def can_delete(self, user):
+        """
+        Check if user can delete this step annotation to instrument usage link.
+        Can delete if they can delete the step annotation OR edit the instrument usage.
+        """
+        return self.step_annotation.can_delete(user) or self.instrument_usage.user_can_edit(user)
+
+    def __str__(self):
+        return f"{self.step_annotation.session.name} - Step {self.step_annotation.step.step_number} - {self.instrument_usage.instrument.instrument_name}"
+
+
 class SessionAnnotationFolder(models.Model):
     """
     Junction model linking Sessions to AnnotationFolders for session-specific folder organization.

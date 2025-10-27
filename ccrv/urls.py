@@ -15,6 +15,7 @@ from .annotation_chunked_upload import (
 )
 from .viewsets import (
     InstrumentUsageSessionAnnotationViewSet,
+    InstrumentUsageStepAnnotationViewSet,
     ProjectViewSet,
     ProtocolModelViewSet,
     ProtocolRatingViewSet,
@@ -48,6 +49,11 @@ router.register("step-variations", StepVariationViewSet, basename="stepvariation
 router.register("time-keepers", TimeKeeperViewSet, basename="timekeeper")
 router.register("step-annotations", StepAnnotationViewSet, basename="stepannotation")
 router.register("session-annotation-folders", SessionAnnotationFolderViewSet, basename="sessionannotationfolder")
+router.register(
+    "instrument-usage-step-annotations",
+    InstrumentUsageStepAnnotationViewSet,
+    basename="instrumentusagestepannotation",
+)
 router.register(
     "instrument-usage-session-annotations",
     InstrumentUsageSessionAnnotationViewSet,

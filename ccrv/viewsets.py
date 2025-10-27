@@ -24,6 +24,7 @@ from ccv.serializers import MetadataColumnSerializer, MetadataTableSerializer
 
 from .models import (
     InstrumentUsageSessionAnnotation,
+    InstrumentUsageStepAnnotation,
     Project,
     ProtocolModel,
     ProtocolRating,
@@ -41,6 +42,7 @@ from .models import (
 )
 from .serializers import (
     InstrumentUsageSessionAnnotationSerializer,
+    InstrumentUsageStepAnnotationSerializer,
     ProjectCreateSerializer,
     ProjectSerializer,
     ProtocolModelCreateSerializer,
@@ -237,7 +239,7 @@ class SessionViewSet(viewsets.ModelViewSet):
     queryset = Session.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsOwnerEditorViewerOrNoAccess]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["unique_id", "enabled", "processing"]
+    filterset_fields = ["unique_id", "enabled", "processing", "projects"]
     search_fields = ["name"]
     ordering_fields = ["created_at", "started_at", "ended_at"]
     ordering = ["-created_at"]
@@ -970,6 +972,66 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
 
         return queryset.filter(id__in=accessible_sessions)
 
+    def create(self, request, *args, **kwargs):
+        """Create session annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+
+            if not annotation_text:
+                return Response(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from ccc.models import Annotation
+
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                owner=request.user,
+            )
+
+            data = request.data.copy()
+            data["annotation"] = annotation.id
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """Update session annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            instance = self.get_object()
+            if instance.annotation:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+
+            data = request.data.copy()
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().update(request, *args, **kwargs)
+
     @action(detail=True, methods=["post"])
     def create_metadata_table(self, request, pk=None):
         """Create a metadata table for this session annotation."""
@@ -1100,6 +1162,66 @@ class StepAnnotationViewSet(ModelViewSet):
         user = self.request.user
         return self.queryset.filter(session__owner=user)
 
+    def create(self, request, *args, **kwargs):
+        """Create step annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+
+            if not annotation_text:
+                return Response(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from ccc.models import Annotation
+
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                owner=request.user,
+            )
+
+            data = request.data.copy()
+            data["annotation"] = annotation.id
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """Update step annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            instance = self.get_object()
+            if instance.annotation:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+
+            data = request.data.copy()
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().update(request, *args, **kwargs)
+
 
 class SessionAnnotationFolderViewSet(ModelViewSet):
     """ViewSet for SessionAnnotationFolder model."""
@@ -1117,6 +1239,24 @@ class SessionAnnotationFolderViewSet(ModelViewSet):
         """Filter annotation folders by user access permissions."""
         user = self.request.user
         return self.queryset.filter(session__owner=user)
+
+
+class InstrumentUsageStepAnnotationViewSet(ModelViewSet):
+    """ViewSet for InstrumentUsageStepAnnotation model."""
+
+    queryset = InstrumentUsageStepAnnotation.objects.all()
+    serializer_class = InstrumentUsageStepAnnotationSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["step_annotation", "instrument_usage"]
+    search_fields = ["instrument_usage__instrument__instrument_name"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
+
+    def get_queryset(self):
+        """Filter instrument usage step annotations by user access permissions."""
+        user = self.request.user
+        return self.queryset.filter(step_annotation__session__owner=user)
 
 
 class InstrumentUsageSessionAnnotationViewSet(ModelViewSet):

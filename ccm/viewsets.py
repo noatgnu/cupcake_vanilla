@@ -378,7 +378,16 @@ class InstrumentJobViewSet(BaseViewSet):
 
     queryset = InstrumentJob.objects.all()
     serializer_class = InstrumentJobSerializer
-    filterset_fields = ["job_type", "status", "sample_type", "assigned", "user", "instrument", "metadata_table"]
+    filterset_fields = [
+        "job_type",
+        "status",
+        "sample_type",
+        "assigned",
+        "user",
+        "instrument",
+        "metadata_table",
+        "project",
+    ]
     search_fields = ["job_name", "method", "search_details", "location", "funder"]
     ordering_fields = ["job_name", "status", "created_at", "updated_at", "submitted_at", "completed_at"]
     ordering = ["-created_at"]
@@ -464,6 +473,33 @@ class InstrumentJobViewSet(BaseViewSet):
 
         serializer = self.get_serializer(assigned_jobs, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
+    def autocomplete_fields(self, request):
+        """
+        Get distinct funder and cost_center values from user's existing jobs for autocomplete.
+
+        Returns unique, non-null values that the current user has used in their previous jobs.
+        """
+        user_jobs = self.get_queryset().filter(user=request.user)
+
+        funders = (
+            user_jobs.exclude(funder__isnull=True)
+            .exclude(funder__exact="")
+            .values_list("funder", flat=True)
+            .distinct()
+            .order_by("funder")
+        )
+
+        cost_centers = (
+            user_jobs.exclude(cost_center__isnull=True)
+            .exclude(cost_center__exact="")
+            .values_list("cost_center", flat=True)
+            .distinct()
+            .order_by("cost_center")
+        )
+
+        return Response({"funders": list(funders), "cost_centers": list(cost_centers)})
 
     @action(detail=True, methods=["post"])
     def create_metadata_from_template(self, request, pk=None):
@@ -1088,7 +1124,7 @@ class ReagentActionViewSet(BaseViewSet):
 
     queryset = ReagentAction.objects.all()
     serializer_class = ReagentActionSerializer
-    filterset_fields = ["reagent", "user", "action_type"]
+    filterset_fields = ["reagent", "user", "action_type", "session", "step"]
     search_fields = ["reagent__reagent__name", "notes"]
     ordering_fields = ["quantity", "created_at"]
     ordering = ["-created_at"]
@@ -1183,6 +1219,72 @@ class InstrumentAnnotationViewSet(BaseViewSet):
 
         return queryset.filter(id__in=accessible_annotations)
 
+    def create(self, request, *args, **kwargs):
+        """Create instrument annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+
+            if not annotation_text:
+                return Response(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from ccc.models import Annotation
+
+            folder_id = request.data.get("folder")
+            from ccc.models import AnnotationFolder
+
+            folder = AnnotationFolder.objects.get(id=folder_id) if folder_id else None
+
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                folder=folder,
+                owner=request.user,
+            )
+
+            data = request.data.copy()
+            data["annotation"] = annotation.id
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """Update instrument annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            instance = self.get_object()
+            if instance.annotation:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+
+            data = request.data.copy()
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().update(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         """Only managers can upload documents."""
         instrument = serializer.validated_data.get("instrument")
@@ -1246,6 +1348,72 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
                 accessible_annotations.append(annotation_junction.id)
 
         return queryset.filter(id__in=accessible_annotations)
+
+    def create(self, request, *args, **kwargs):
+        """Create stored reagent annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+
+            if not annotation_text:
+                return Response(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from ccc.models import Annotation
+
+            folder_id = request.data.get("folder")
+            from ccc.models import AnnotationFolder
+
+            folder = AnnotationFolder.objects.get(id=folder_id) if folder_id else None
+
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                folder=folder,
+                owner=request.user,
+            )
+
+            data = request.data.copy()
+            data["annotation"] = annotation.id
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """Update stored reagent annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            instance = self.get_object()
+            if instance.annotation:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+
+            data = request.data.copy()
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().update(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         """Only staff or creator can upload documents."""
@@ -1318,6 +1486,66 @@ class MaintenanceLogAnnotationViewSet(BaseViewSet):
             | Q(maintenance_log__instrument__user=user)
             | Q(maintenance_log__instrument_id__in=permitted_instrument_ids)
         )
+
+    def create(self, request, *args, **kwargs):
+        """Create maintenance log annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+
+            if not annotation_text:
+                return Response(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from ccc.models import Annotation
+
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                owner=request.user,
+            )
+
+            data = request.data.copy()
+            data["annotation"] = annotation.id
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """Update maintenance log annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            instance = self.get_object()
+            if instance.annotation:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+
+            data = request.data.copy()
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().update(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         """

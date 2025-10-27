@@ -546,3 +546,83 @@ class InstrumentUsageWorkflowTestCase(TestCase):
 
         self.assertTrue(postdoc_booking.user_can_view(self.grad_student))
         self.assertTrue(postdoc_booking.user_can_edit(self.grad_student))  # Now has manage rights
+
+
+class ReagentActionDeletionWindowTestCase(TestCase):
+    """Test time-based deletion window for reagent actions."""
+
+    def setUp(self):
+        from ccc.models import SiteConfig
+        from ccm.models import Reagent, StoredReagent
+
+        self.owner = UserFactory.create_user()
+        self.user = UserFactory.create_user()
+        self.staff_user = User.objects.create_user("staff", "staff@test.com", "password", is_staff=True)
+
+        self.reagent = Reagent.objects.create(name="Test Reagent", unit="mL")
+
+        self.stored_reagent = StoredReagent.objects.create(reagent=self.reagent, quantity=100.0, user=self.owner)
+
+        self.config = SiteConfig.objects.create(booking_deletion_window_minutes=30)
+
+    def test_reagent_action_deletable_within_time_window(self):
+        """Test that reagent action creator can delete within time window."""
+        from ccm.models import ReagentAction
+
+        action = ReagentAction.objects.create(
+            reagent=self.stored_reagent, user=self.user, action_type="reserve", quantity=10.0, notes="Test action"
+        )
+
+        self.assertTrue(action.is_within_deletion_window())
+        self.assertTrue(action.user_can_delete(self.user))
+
+    def test_reagent_action_not_deletable_after_time_window(self):
+        """Test that reagent action creator cannot delete after time window expires."""
+        from ccm.models import ReagentAction
+
+        action = ReagentAction.objects.create(
+            reagent=self.stored_reagent, user=self.user, action_type="add", quantity=50.0, notes="Adding reagent"
+        )
+
+        action.created_at = timezone.now() - timedelta(minutes=31)
+        action.save()
+
+        self.assertFalse(action.is_within_deletion_window())
+        self.assertFalse(action.user_can_delete(self.user))
+
+    def test_staff_can_delete_reagent_action_after_time_window(self):
+        """Test that staff can delete reagent actions even after time window."""
+        from ccm.models import ReagentAction
+
+        action = ReagentAction.objects.create(
+            reagent=self.stored_reagent, user=self.user, action_type="reserve", quantity=25.0, notes="Test"
+        )
+
+        action.created_at = timezone.now() - timedelta(minutes=31)
+        action.save()
+
+        self.assertFalse(action.is_within_deletion_window())
+        self.assertTrue(action.user_can_delete(self.staff_user))
+
+    def test_configurable_deletion_window_for_reagent_action(self):
+        """Test that deletion window is configurable via SiteConfig."""
+        from ccm.models import ReagentAction
+
+        self.config.booking_deletion_window_minutes = 60
+        self.config.save()
+
+        action = ReagentAction.objects.create(
+            reagent=self.stored_reagent, user=self.user, action_type="add", quantity=15.0
+        )
+
+        action.created_at = timezone.now() - timedelta(minutes=45)
+        action.save()
+
+        self.assertTrue(action.is_within_deletion_window())
+        self.assertTrue(action.user_can_delete(self.user))
+
+        action.created_at = timezone.now() - timedelta(minutes=61)
+        action.save()
+
+        self.assertFalse(action.is_within_deletion_window())
+        self.assertFalse(action.user_can_delete(self.user))

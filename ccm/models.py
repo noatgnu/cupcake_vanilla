@@ -1,9 +1,10 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from simple_history.models import HistoricalRecords
 
-from ccc.models import LabGroup
+from ccc.models import LabGroup, SiteConfig
 
 
 class Instrument(models.Model):
@@ -662,6 +663,12 @@ class ReagentAction(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="reagent_actions", blank=True, null=True
     )
+    session = models.ForeignKey(
+        "ccrv.Session", on_delete=models.SET_NULL, related_name="reagent_actions", blank=True, null=True
+    )
+    step = models.ForeignKey(
+        "ccrv.ProtocolStep", on_delete=models.SET_NULL, related_name="reagent_actions", blank=True, null=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -671,6 +678,41 @@ class ReagentAction(models.Model):
 
     def __str__(self):
         return f"{self.action_type} {self.quantity} - {self.reagent.reagent.name}"
+
+    def is_within_deletion_window(self):
+        """
+        Check if this reagent action is still within the deletion time window.
+
+        Returns:
+            bool: True if action is within deletion window, False otherwise
+        """
+        config = SiteConfig.objects.first()
+        if not config:
+            return True
+
+        time_window = timezone.timedelta(minutes=config.booking_deletion_window_minutes)
+        time_since_creation = timezone.now() - self.created_at
+
+        return time_since_creation <= time_window
+
+    def user_can_delete(self, user):
+        """
+        Check if user can delete this reagent action.
+
+        Deletion is restricted by a time window after creation.
+        Regular users can only delete their actions within the configured time window.
+        Staff/superusers can delete at any time.
+        """
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_staff or user.is_superuser:
+            return True
+
+        if self.user == user and self.is_within_deletion_window():
+            return True
+
+        return False
 
 
 class InstrumentUsage(models.Model):
@@ -763,7 +805,7 @@ class InstrumentUsage(models.Model):
         """
         Check if user can delete this instrument usage.
         """
-        return self.user_can_edit(user)  # Same as edit permissions
+        return self.user_can_edit(user)
 
 
 class MaintenanceLog(models.Model):
@@ -898,6 +940,14 @@ class InstrumentJob(models.Model):
         blank=True,
         null=True,
         help_text="Lab group responsible for processing this job",
+    )
+    project = models.ForeignKey(
+        "ccrv.Project",
+        on_delete=models.SET_NULL,
+        related_name="instrument_jobs",
+        blank=True,
+        null=True,
+        help_text="Project this instrument job is associated with",
     )
 
     # Job details

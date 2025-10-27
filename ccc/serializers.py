@@ -45,6 +45,7 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "show_powered_by",
             "allow_user_registration",
             "enable_orcid_login",
+            "booking_deletion_window_minutes",
             "installed_apps",
             "created_at",
             "updated_at",
@@ -85,7 +86,7 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "ccmc": {
                 "name": "CUPCAKE Mint Chocolate",
                 "code": "ccmc",
-                "description": "Advanced data processing and analytics",
+                "description": "Communications",
                 "installed": "ccmc" in installed_app_names
                 and hasattr(settings, "ENABLE_CUPCAKE_MINT_CHOCOLATE")
                 and settings.ENABLE_CUPCAKE_MINT_CHOCOLATE,
@@ -93,7 +94,7 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "ccsc": {
                 "name": "CUPCAKE Salted Caramel",
                 "code": "ccsc",
-                "description": "Sample management and tracking",
+                "description": "Billing & Finance",
                 "installed": "ccsc" in installed_app_names
                 and hasattr(settings, "ENABLE_CUPCAKE_SALTED_CARAMEL")
                 and settings.ENABLE_CUPCAKE_SALTED_CARAMEL,

@@ -113,6 +113,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                     "show_powered_by": serializer.data["show_powered_by"],
                     "allow_user_registration": serializer.data["allow_user_registration"],
                     "enable_orcid_login": serializer.data["enable_orcid_login"],
+                    "booking_deletion_window_minutes": serializer.data["booking_deletion_window_minutes"],
                     "installed_apps": serializer.data["installed_apps"],
                 }
                 return Response(data)
@@ -128,6 +129,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                         "show_powered_by": True,
                         "allow_user_registration": False,
                         "enable_orcid_login": False,
+                        "booking_deletion_window_minutes": 30,
                         "installed_apps": temp_serializer.data["installed_apps"],
                     }
                 )
@@ -159,10 +161,10 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
         """Get current site configuration (admin only)."""
         try:
             site_config = SiteConfig.objects.first()
-            if site_config:
-                serializer = SiteConfigSerializer(site_config)
-                return Response(serializer.data)
-            return Response({"error": "Site configuration not found"}, status=status.HTTP_404_NOT_FOUND)
+            if not site_config:
+                site_config = SiteConfig.objects.create()
+            serializer = SiteConfigSerializer(site_config)
+            return Response(serializer.data)
         except Exception as e:
             return Response(
                 {"error": f"Failed to get site config: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR

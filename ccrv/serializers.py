@@ -10,12 +10,13 @@ from django.urls import reverse
 
 from rest_framework import serializers
 
-from ccc.models import Annotation, RemoteHost
+from ccc.models import RemoteHost
 from ccm.models import Reagent
 from ccm.serializers import ReagentSerializer
 
 from .models import (
     InstrumentUsageSessionAnnotation,
+    InstrumentUsageStepAnnotation,
     Project,
     ProtocolModel,
     ProtocolRating,
@@ -379,7 +380,6 @@ class SessionSerializer(serializers.ModelSerializer):
 class SessionAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for session annotations with metadata table functionality."""
 
-    annotation_data = serializers.JSONField(write_only=True, required=False)
     session_name = serializers.CharField(source="session.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
@@ -404,7 +404,6 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "session",
             "session_name",
             "annotation",
-            "annotation_data",
             "annotation_type",
             "annotation_text",
             "transcribed",
@@ -433,66 +432,6 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "metadata_table_id",
             "metadata_columns_count",
         ]
-
-    def create(self, validated_data):
-        """
-        Create session annotation with non-file annotation.
-        Use annotation_data for nested object: {"session": 1, "annotation_data": {"annotation": "text", "annotationType": "text"}}
-        Use annotation for existing ID: {"session": 1, "annotation": 5}
-        """
-        annotation_data = validated_data.pop("annotation_data", None)
-
-        if annotation_data:
-            annotation_type = annotation_data.get("annotation_type", "text")
-            annotation_text = annotation_data.get("annotation", "")
-
-            if not annotation_text:
-                raise serializers.ValidationError(
-                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}}
-                )
-
-            user = self.context["request"].user
-            annotation = Annotation.objects.create(
-                annotation=annotation_text,
-                annotation_type=annotation_type,
-                transcription=annotation_data.get("transcription"),
-                language=annotation_data.get("language"),
-                translation=annotation_data.get("translation"),
-                scratched=annotation_data.get("scratched", False),
-                owner=user,
-            )
-
-            validated_data["annotation"] = annotation
-
-        if "order" not in validated_data:
-            session = validated_data.get("session")
-            if session:
-                order = SessionAnnotation.objects.filter(session=session).count()
-                validated_data["order"] = order
-
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        """
-        Update session annotation and nested annotation fields.
-        Use annotation_data: {"annotation_data": {"annotation": "updated text", "language": "en"}}
-        """
-        annotation_data = validated_data.pop("annotation_data", None)
-
-        if annotation_data and instance.annotation:
-            if "annotation" in annotation_data:
-                instance.annotation.annotation = annotation_data["annotation"]
-            if "transcription" in annotation_data:
-                instance.annotation.transcription = annotation_data["transcription"]
-            if "language" in annotation_data:
-                instance.annotation.language = annotation_data["language"]
-            if "translation" in annotation_data:
-                instance.annotation.translation = annotation_data["translation"]
-            if "scratched" in annotation_data:
-                instance.annotation.scratched = annotation_data["scratched"]
-            instance.annotation.save()
-
-        return super().update(instance, validated_data)
 
     def get_metadata_columns_count(self, obj):
         """Get the number of metadata columns for this session annotation."""
@@ -526,6 +465,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     # Related data
     remote_host_info = RemoteHostSerializer(source="remote_host", read_only=True)
+    sessions = serializers.PrimaryKeyRelatedField(many=True, queryset=Session.objects.all(), required=False)
 
     # Computed fields
     session_count = serializers.SerializerMethodField()
@@ -812,7 +752,6 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
 class StepAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for StepAnnotation model."""
 
-    annotation_data = serializers.JSONField(write_only=True, required=False)
     session_name = serializers.CharField(source="session.name", read_only=True)
     step_description = serializers.CharField(source="step.step_description", read_only=True)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
@@ -828,6 +767,7 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
     )
     scratched = serializers.BooleanField(source="annotation.scratched", required=False)
     file_url = serializers.SerializerMethodField()
+    instrument_usage_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = StepAnnotation
@@ -838,7 +778,6 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "step",
             "step_description",
             "annotation",
-            "annotation_data",
             "annotation_name",
             "annotation_type",
             "annotation_text",
@@ -848,6 +787,7 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "translation",
             "scratched",
             "file_url",
+            "instrument_usage_ids",
             "order",
             "created_at",
             "updated_at",
@@ -860,70 +800,10 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "annotation_type",
             "transcribed",
             "file_url",
+            "instrument_usage_ids",
             "created_at",
             "updated_at",
         ]
-
-    def create(self, validated_data):
-        """
-        Create step annotation with non-file annotation.
-        Use annotation_data for nested object: {"session": 1, "step": 2, "annotation_data": {"annotation": "text", "annotationType": "text"}}
-        Use annotation for existing ID: {"session": 1, "step": 2, "annotation": 5}
-        """
-        annotation_data = validated_data.pop("annotation_data", None)
-
-        if annotation_data:
-            annotation_type = annotation_data.get("annotation_type", "text")
-            annotation_text = annotation_data.get("annotation", "")
-
-            if not annotation_text:
-                raise serializers.ValidationError(
-                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}}
-                )
-
-            user = self.context["request"].user
-            annotation = Annotation.objects.create(
-                annotation=annotation_text,
-                annotation_type=annotation_type,
-                transcription=annotation_data.get("transcription"),
-                language=annotation_data.get("language"),
-                translation=annotation_data.get("translation"),
-                scratched=annotation_data.get("scratched", False),
-                owner=user,
-            )
-
-            validated_data["annotation"] = annotation
-
-        if "order" not in validated_data:
-            session = validated_data.get("session")
-            step = validated_data.get("step")
-            if session and step:
-                order = StepAnnotation.objects.filter(session=session, step=step).count()
-                validated_data["order"] = order
-
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        """
-        Update step annotation and nested annotation fields.
-        Use annotation_data: {"annotation_data": {"annotation": "updated text", "language": "en"}}
-        """
-        annotation_data = validated_data.pop("annotation_data", None)
-
-        if annotation_data and instance.annotation:
-            if "annotation" in annotation_data:
-                instance.annotation.annotation = annotation_data["annotation"]
-            if "transcription" in annotation_data:
-                instance.annotation.transcription = annotation_data["transcription"]
-            if "language" in annotation_data:
-                instance.annotation.language = annotation_data["language"]
-            if "translation" in annotation_data:
-                instance.annotation.translation = annotation_data["translation"]
-            if "scratched" in annotation_data:
-                instance.annotation.scratched = annotation_data["scratched"]
-            instance.annotation.save()
-
-        return super().update(instance, validated_data)
 
     def get_file_url(self, obj):
         """Get signed download URL for annotation file if exists."""
@@ -943,6 +823,10 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
+
+    def get_instrument_usage_ids(self, obj):
+        """Get list of linked instrument usage booking IDs."""
+        return list(obj.instrument_usage_links.values_list("instrument_usage_id", flat=True))
 
 
 class SessionAnnotationFolderSerializer(serializers.ModelSerializer):
@@ -965,6 +849,30 @@ class SessionAnnotationFolderSerializer(serializers.ModelSerializer):
             "id",
             "session_name",
             "folder_name",
+            "created_at",
+        ]
+
+
+class InstrumentUsageStepAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for InstrumentUsageStepAnnotation model."""
+
+    step_annotation_details = StepAnnotationSerializer(source="step_annotation", read_only=True)
+    instrument_name = serializers.CharField(source="instrument_usage.instrument.instrument_name", read_only=True)
+
+    class Meta:
+        model = InstrumentUsageStepAnnotation
+        fields = [
+            "id",
+            "step_annotation",
+            "step_annotation_details",
+            "instrument_usage",
+            "instrument_name",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "step_annotation_details",
+            "instrument_name",
             "created_at",
         ]
 
