@@ -37,57 +37,92 @@ class MetadataTableAccessPermission(BasePermission):
         """
         Check CCM-specific permissions without importing CCM models.
         Uses reverse foreign key lookups to find related CCM objects.
+        Handles cases where CCM is not installed or unavailable.
         """
         user = request.user
         is_read_only = request.method in ["GET", "HEAD", "OPTIONS"]
 
-        # Check if this is an instrument metadata table
-        if hasattr(metadata_table, "instrument"):
-            instrument = metadata_table.instrument
-            if is_read_only:
-                # View permissions: owner, staff/admin
-                return user.is_staff or user.is_superuser or instrument.user == user
-            else:
-                # Edit permissions: only owner
-                return instrument.user == user
+        try:
+            # Check if this is an instrument metadata table
+            if hasattr(metadata_table, "instrument"):
+                instrument = metadata_table.instrument
+                if is_read_only:
+                    # View permissions: owner, staff/admin
+                    return user.is_staff or user.is_superuser or instrument.user == user
+                else:
+                    # Edit permissions: only owner
+                    return instrument.user == user
 
-        # Check if this is an instrument job metadata table
-        elif hasattr(metadata_table, "instrument_jobs") and metadata_table.instrument_jobs.exists():
-            job = metadata_table.instrument_jobs.first()
-            if is_read_only:
-                # Use job's can_user_view_metadata method
-                return self._check_job_view_permission(user, job)
-            else:
-                # Use job's can_user_edit_metadata method
-                return self._check_job_edit_permission(user, job)
+            # Check if this is an instrument job metadata table
+            elif hasattr(metadata_table, "instrument_jobs") and metadata_table.instrument_jobs.exists():
+                job = metadata_table.instrument_jobs.first()
+                if is_read_only:
+                    # Use job's can_user_view_metadata method
+                    return self._check_job_view_permission(user, job)
+                else:
+                    # Use job's can_user_edit_metadata method
+                    return self._check_job_edit_permission(user, job)
+        except (AttributeError, ImportError):
+            # CCM not available or models not accessible, fallback to standard permissions
+            pass
 
         # Fallback to standard permissions
         return metadata_table.can_view(user) if is_read_only else metadata_table.can_edit(user)
 
     def _check_job_view_permission(self, user, job):
-        """Check job view permissions using duck typing."""
-        # Draft status check
-        if job.status == "draft":
+        """
+        Check job view permissions using duck typing.
+        Safe for use when CCM may not be available.
+        """
+        try:
+            # Draft status check
+            if hasattr(job, "status") and job.status == "draft":
+                if user.is_staff or user.is_superuser:
+                    return True
+                return hasattr(job, "user") and job.user == user
+
+            # Non-draft permissions
             if user.is_staff or user.is_superuser:
                 return True
-            return job.user == user
-
-        # Non-draft permissions
-        if user.is_staff or user.is_superuser:
-            return True
-        if job.user == user:
-            return True
-        if hasattr(job, "staff") and user in job.staff.all():
-            return True
+            if hasattr(job, "user") and job.user == user:
+                return True
+            if hasattr(job, "staff") and user in job.staff.all():
+                return True
+        except (AttributeError, ImportError):
+            # CCM models not available or error accessing job attributes
+            pass
 
         return False
 
     def _check_job_edit_permission(self, user, job):
-        """Check job edit permissions using duck typing."""
-        if job.user == user:
-            return True
-        if hasattr(job, "staff") and user in job.staff.all():
-            return True
+        """
+        Check job edit permissions using duck typing.
+        Safe for use when CCM may not be available.
+
+        Rules:
+        - Draft status: Only job owner can edit
+        - After draft: Only assigned lab_group members or assigned staff can edit
+        """
+        try:
+            if user.is_staff or user.is_superuser:
+                return True
+
+            # Job owner can edit only in draft status
+            if hasattr(job, "user") and hasattr(job, "status"):
+                if job.user == user and job.status == "draft":
+                    return True
+
+            # After draft, only assigned staff or lab_group members can edit
+            if hasattr(job, "status") and job.status != "draft":
+                if hasattr(job, "staff") and user in job.staff.all():
+                    return True
+                # Check if user is from the assigned lab_group
+                if hasattr(job, "lab_group") and job.lab_group and hasattr(job.lab_group, "is_member"):
+                    if job.lab_group.is_member(user):
+                        return True
+        except (AttributeError, ImportError):
+            # CCM models not available or error accessing job attributes
+            pass
 
         return False
 

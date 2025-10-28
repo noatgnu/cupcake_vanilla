@@ -1412,7 +1412,7 @@ class MetadataColumn(models.Model):
                         for lookup, value in filter_value.items():
                             filter_kwargs = {f"{lookup}__{case_insensitive_search_type}": value}
                             queryset = queryset.filter(**filter_kwargs)
-        print(self.custom_ontology_filters)
+
         # Apply search filtering based on search_type and model type
         if search_term:
             search_queries = []
@@ -1485,57 +1485,76 @@ class MetadataColumn(models.Model):
                     combined_query |= query
                 queryset = queryset.filter(combined_query)
 
-        # Order by relevance - prioritize primary field matches first
+        # Order by relevance with proper prioritization
         if search_term and search_type in ["icontains", "istartswith"]:
-            from django.db.models import Case, IntegerField, When
-
-            if self.ontology_type == "species" or self.ontology_type == "ncbi_taxonomy":
-                # For species, prioritize scientific_name matches first
-                if search_type == "istartswith":
-                    primary_field_condition = models.Q(scientific_name__istartswith=search_term)
-                else:  # icontains
-                    primary_field_condition = models.Q(scientific_name__icontains=search_term)
+            if self.ontology_type == "ncbi_taxonomy":
+                from django.db.models import Case, IntegerField, Value, When
 
                 queryset = queryset.annotate(
-                    primary_match=Case(
-                        When(primary_field_condition, then=0),
-                        default=1,
+                    priority=Case(
+                        When(scientific_name__iexact=search_term, then=Value(0)),
+                        When(**{f"scientific_name__{search_type}": search_term}, then=Value(1)),
+                        When(**{f"common_name__{search_type}": search_term}, then=Value(2)),
+                        When(**{f"synonyms__{search_type}": search_term}, then=Value(3)),
+                        default=Value(4),
                         output_field=IntegerField(),
                     )
-                ).order_by("primary_match", "scientific_name")
-
-            elif self.ontology_type == "tissue":
-                # For tissue, prioritize official_name matches
-                if search_type == "istartswith":
-                    primary_field_condition = models.Q(official_name__istartswith=search_term)
-                else:  # icontains
-                    primary_field_condition = models.Q(official_name__icontains=search_term)
+                ).order_by("priority", "scientific_name")
+            elif self.ontology_type == "species":
+                from django.db.models import Case, IntegerField, Value, When
 
                 queryset = queryset.annotate(
-                    primary_match=Case(
-                        When(primary_field_condition, then=0),
-                        default=1,
+                    priority=Case(
+                        When(official_name__iexact=search_term, then=Value(0)),
+                        When(**{f"official_name__{search_type}": search_term}, then=Value(1)),
+                        When(**{f"common_name__{search_type}": search_term}, then=Value(2)),
+                        When(**{f"code__{search_type}": search_term}, then=Value(3)),
+                        default=Value(4),
                         output_field=IntegerField(),
                     )
-                ).order_by("primary_match", "official_name")
+                ).order_by("priority", "official_name")
+            elif self.ontology_type in [
+                "tissue",
+                "human_disease",
+                "subcellular_location",
+                "mondo",
+                "uberon",
+                "cell_ontology",
+                "psi_ms",
+                "chebi",
+            ]:
+                from django.db.models import Case, IntegerField, Value, When
 
-            elif hasattr(queryset.model, "name"):
-                # For other ontologies with 'name' field
-                if search_type == "istartswith":
-                    primary_field_condition = models.Q(name__istartswith=search_term)
-                else:  # icontains
-                    primary_field_condition = models.Q(name__icontains=search_term)
+                # For ontologies with 'name' field
+                if hasattr(model_class, "name"):
+                    queryset = queryset.annotate(
+                        priority=Case(
+                            When(name__iexact=search_term, then=Value(0)),
+                            When(**{f"name__{search_type}": search_term}, then=Value(1)),
+                            default=Value(2),
+                            output_field=IntegerField(),
+                        )
+                    ).order_by("priority", "name")
+                elif hasattr(model_class, "identifier"):
+                    queryset = queryset.annotate(
+                        priority=Case(
+                            When(identifier__iexact=search_term, then=Value(0)),
+                            When(**{f"identifier__{search_type}": search_term}, then=Value(1)),
+                            default=Value(2),
+                            output_field=IntegerField(),
+                        )
+                    ).order_by("priority", "identifier")
+            elif self.ontology_type in ["ms_unique_vocabularies", "unimod"]:
+                from django.db.models import Case, IntegerField, Value, When
 
                 queryset = queryset.annotate(
-                    primary_match=Case(
-                        When(primary_field_condition, then=0),
-                        default=1,
+                    priority=Case(
+                        When(name__iexact=search_term, then=Value(0)),
+                        When(**{f"name__{search_type}": search_term}, then=Value(1)),
+                        default=Value(2),
                         output_field=IntegerField(),
                     )
-                ).order_by("primary_match", "name")
-
-            elif hasattr(queryset.model, "identifier"):
-                queryset = queryset.order_by("identifier")
+                ).order_by("priority", "name")
 
         return list(queryset[:limit].values())
 
@@ -1682,6 +1701,39 @@ class MetadataColumn(models.Model):
 
         return ",".join(ranges)
 
+    def _parse_sample_indices_from_modifier_string(self, samples_str):
+        """
+        Parse sample indices from modifier string like '1,2,3' or '1-3,5'.
+
+        Args:
+            samples_str: String representing sample indices (e.g., "1,2,3" or "1-3,5")
+
+        Returns:
+            list[int]: List of parsed sample indices
+        """
+        indices = []
+        if not samples_str:
+            return indices
+
+        parts = samples_str.split(",")
+        for part in parts:
+            part = part.strip()
+            if "-" in part:
+                try:
+                    start, end = part.split("-", 1)
+                    start_idx = int(start.strip())
+                    end_idx = int(end.strip())
+                    indices.extend(range(start_idx, end_idx + 1))
+                except ValueError:
+                    pass
+            else:
+                try:
+                    indices.append(int(part))
+                except ValueError:
+                    pass
+
+        return indices
+
     def update_column_value_smart(self, value: str, sample_indices: list[int] = None, value_type: str = "default"):
         """
         Update column value with automatic modifier calculation.
@@ -1717,9 +1769,7 @@ class MetadataColumn(models.Model):
             for i, modifier in enumerate(self.modifiers):
                 if isinstance(modifier, dict) and "samples" in modifier:
                     existing_samples = self._parse_sample_indices_from_modifier_string(modifier["samples"])
-                    if set(existing_samples) & set(
-                        [idx - 1 for idx in sample_indices]
-                    ):  # Convert to 0-based for comparison
+                    if set(existing_samples) & set(sample_indices):
                         overlapping_modifier = i
                         break
 
@@ -1730,9 +1780,9 @@ class MetadataColumn(models.Model):
                 existing_samples = self._parse_sample_indices_from_modifier_string(
                     self.modifiers[overlapping_modifier]["samples"]
                 )
-                combined_samples = sorted(set(existing_samples + [idx - 1 for idx in sample_indices]))
+                combined_samples = sorted(set(existing_samples + sample_indices))
                 self.modifiers[overlapping_modifier]["samples"] = self._format_sample_indices_to_string(
-                    [idx + 1 for idx in combined_samples]  # Convert back to 1-based
+                    combined_samples
                 )
             else:
                 # Create new modifier

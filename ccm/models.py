@@ -996,6 +996,14 @@ class InstrumentJob(models.Model):
     staff = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="assigned_instrument_jobs", blank=True)
 
     # Metadata integration with CCV
+    metadata_table_template = models.ForeignKey(
+        "ccv.MetadataTableTemplate",
+        on_delete=models.SET_NULL,
+        related_name="instrument_jobs",
+        blank=True,
+        null=True,
+        help_text="Template selected for creating metadata table for this job",
+    )
     metadata_table = models.ForeignKey(
         "ccv.MetadataTable",
         on_delete=models.SET_NULL,
@@ -1127,13 +1135,23 @@ class InstrumentJob(models.Model):
         if user.is_staff or user.is_superuser:
             return True, True
 
-        # Job owner has read access only (write access subject to staff_only restrictions)
+        # Job owner has read access always
         if self.user == user:
-            return True, False
+            if action == "read":
+                return True, False
+            # Write access only in draft stage
+            elif action in ["write", "admin"] and self.status == "draft":
+                return True, False
+            else:
+                return False, False
 
-        # Check staff assignment
-        if user in self.staff.all():
-            return True, True
+        # Check staff assignment for non-draft jobs
+        if self.status != "draft":
+            if user in self.staff.all():
+                return True, True
+            # Check if user is from the assigned lab_group
+            if self.lab_group and self.lab_group.is_member(user):
+                return True, True
 
         return False, False
 
@@ -1173,6 +1191,10 @@ class InstrumentJob(models.Model):
         """
         Check if a user can edit metadata for this job.
 
+        Permission rules:
+        - Draft stage: Only job owner can edit
+        - After draft: Only assigned lab_group members or assigned staff can edit
+
         Args:
             user: User instance
 
@@ -1182,13 +1204,22 @@ class InstrumentJob(models.Model):
         if not user or not self.metadata_table:
             return False
 
-        # Job owner can edit their own metadata
-        if self.user == user:
+        # System admin always has access
+        if user.is_staff or user.is_superuser:
             return True
 
-        # Staff assigned to this specific job can edit metadata
-        if user in self.staff.all():
+        # Job owner can edit only in draft status
+        if self.user == user and self.status == "draft":
             return True
+
+        # After draft, only assigned staff or lab_group members can edit
+        if self.status != "draft":
+            # Staff assigned to this specific job can edit metadata
+            if user in self.staff.all():
+                return True
+            # Check if user is from the assigned lab_group
+            if self.lab_group and self.lab_group.is_member(user):
+                return True
 
         # For all other cases, no edit permission
         return False
@@ -1332,6 +1363,59 @@ class InstrumentJob(models.Model):
             "billable_hours_personnel": self.get_billable_hours("personnel"),
             "billable_hours_both": self.get_billable_hours("both"),
         }
+
+    def can_view(self, user):
+        """
+        Check if user can view this instrument job.
+
+        Args:
+            user: User instance
+
+        Returns:
+            bool: True if user has view permission
+        """
+        has_permission, _ = self.check_job_permissions(user, "read")
+        return has_permission
+
+    def can_edit(self, user):
+        """
+        Check if user can edit this instrument job.
+
+        Permission rules:
+        - Draft stage: Only job owner can edit
+        - After draft: Only assigned lab_group members or assigned staff can edit
+
+        Args:
+            user: User instance
+
+        Returns:
+            bool: True if user has edit permission
+        """
+        has_permission, _ = self.check_job_permissions(user, "write")
+        return has_permission
+
+    def can_delete(self, user):
+        """
+        Check if user can delete this instrument job.
+
+        Deletion rules:
+        - Only job owner can delete jobs in draft status
+        - System staff can delete any job
+
+        Args:
+            user: User instance
+
+        Returns:
+            bool: True if user has delete permission
+        """
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_staff or user.is_superuser:
+            return True
+
+        # Only owner can delete draft jobs
+        return self.user == user and self.status == "draft"
 
 
 # Annotation relationship models for CCM entities

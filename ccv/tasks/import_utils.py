@@ -631,7 +631,6 @@ def import_sdrf_data(
         # Update sample count and extend/truncate data if needed
         expected_sample_count = metadata_table.sample_count or len(data_rows)
         if len(data_rows) != expected_sample_count:
-            # Extend the number of samples to match expected count and fill with empty strings
             if len(data_rows) < expected_sample_count:
                 data_rows.extend(
                     [["" for i in range(len(headers))] for j in range(expected_sample_count - len(data_rows))]
@@ -639,15 +638,14 @@ def import_sdrf_data(
             else:
                 data_rows = data_rows[:expected_sample_count]
 
-                # If we removed SN= rows and truncated data, add SN= rows back for pool creation
-                if pooled_column_index is not None and sn_rows and sn_data:
-                    # Add SN= rows back to the end of the truncated data
-                    data_rows.extend(sn_data)
-                    # Update sn_rows indices to reflect their new positions at the end
-                    sn_rows = list(range(expected_sample_count, len(data_rows)))
+        # Add SN= rows back for column processing, but track them separately
+        pool_row_offset = len(data_rows)
+        if pooled_column_index is not None and sn_data:
+            data_rows.extend(sn_data)
+            sn_rows = list(range(pool_row_offset, len(data_rows)))
 
-        # Update metadata table sample count
-        metadata_table.sample_count = len(data_rows)
+        # Update metadata table sample count (excluding pool definition rows)
+        metadata_table.sample_count = expected_sample_count
         metadata_table.save(update_fields=["sample_count"])
 
         created_columns = []
@@ -1047,7 +1045,17 @@ def import_excel_data(
             hidden_row = hidden_data[i] if i < len(hidden_data) and hidden_data else []
             all_data.append(main_row + hidden_row)
 
-        metadata_table.sample_count = len(all_data)
+        # Enforce sample count: truncate or extend data to match expected count
+        expected_sample_count = metadata_table.sample_count or len(all_data)
+        if len(all_data) != expected_sample_count:
+            if len(all_data) < expected_sample_count:
+                num_cols = len(all_data[0]) if all_data else len(id_metadata_column_map)
+                all_data.extend([[None for _ in range(num_cols)] for _ in range(expected_sample_count - len(all_data))])
+            else:
+                all_data = all_data[:expected_sample_count]
+
+        # Pool data is in separate sheets (pool_main, pool_hidden), so sample_count only reflects main samples
+        metadata_table.sample_count = expected_sample_count
         metadata_table.save(update_fields=["sample_count"])
 
         columns_created = 0

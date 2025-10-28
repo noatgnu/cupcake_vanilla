@@ -112,6 +112,7 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
 
     user_username = serializers.CharField(source="user.username", read_only=True)
     instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
+    metadata_table_template_name = serializers.CharField(source="metadata_table_template.name", read_only=True)
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     staff_usernames = serializers.StringRelatedField(source="staff", many=True, read_only=True)
     lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
@@ -121,6 +122,32 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
     job_type_display = serializers.CharField(source="get_job_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     sample_type_display = serializers.CharField(source="get_sample_type_display", read_only=True)
+
+    # Permission fields
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+    can_edit_metadata = serializers.SerializerMethodField()
+
+    def get_can_edit(self, obj):
+        """Check if current user can edit this job."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_edit(request.user)
+        return False
+
+    def get_can_delete(self, obj):
+        """Check if current user can delete this job."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_delete(request.user)
+        return False
+
+    def get_can_edit_metadata(self, obj):
+        """Check if current user can edit metadata for this job."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_user_edit_metadata(request.user)
+        return False
 
     class Meta:
         model = InstrumentJob
@@ -155,6 +182,8 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "assigned",
             "staff",
             "staff_usernames",
+            "metadata_table_template",
+            "metadata_table_template_name",
             "metadata_table",
             "metadata_table_name",
             "user_annotations",
@@ -168,6 +197,9 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "updated_at",
             "submitted_at",
             "completed_at",
+            "can_edit",
+            "can_delete",
+            "can_edit_metadata",
         ]
         read_only_fields = [
             "id",
@@ -175,6 +207,7 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "updated_at",
             "user_username",
             "instrument_name",
+            "metadata_table_template_name",
             "metadata_table_name",
             "staff_usernames",
             "lab_group_name",
@@ -182,6 +215,9 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "job_type_display",
             "status_display",
             "sample_type_display",
+            "can_edit",
+            "can_delete",
+            "can_edit_metadata",
         ]
 
     def validate_job_name(self, value):

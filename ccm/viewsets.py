@@ -42,6 +42,7 @@ from .models import (
     StoredReagentAnnotation,
     SupportInformation,
 )
+from .permissions import InstrumentJobPermission
 from .serializers import (
     ExternalContactDetailsSerializer,
     ExternalContactSerializer,
@@ -378,6 +379,7 @@ class InstrumentJobViewSet(BaseViewSet):
 
     queryset = InstrumentJob.objects.all()
     serializer_class = InstrumentJobSerializer
+    permission_classes = [IsAuthenticated, InstrumentJobPermission]
     filterset_fields = [
         "job_type",
         "status",
@@ -401,6 +403,19 @@ class InstrumentJobViewSet(BaseViewSet):
     def perform_create(self, serializer):
         """Set the user when creating a job."""
         serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        """Check permissions before updating job."""
+        job = self.get_object()
+        if not job.can_edit(self.request.user):
+            raise PermissionDenied("You don't have permission to edit this job")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Check permissions before deleting job."""
+        if not instance.can_delete(self.request.user):
+            raise PermissionDenied("You don't have permission to delete this job")
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=["post"])
     def submit(self, request, pk=None):
