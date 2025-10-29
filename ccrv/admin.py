@@ -198,14 +198,13 @@ class SessionAdmin(BaseResourceAdmin):
         "owner__last_name",
         "projects__project_name",
     ]
-    filter_horizontal = ["protocols", "projects", "editors", "viewers"]
+    filter_horizontal = ["protocols", "editors", "viewers"]
+    readonly_fields = ["projects_info", "created_at", "updated_at"]
 
     fieldsets = (
         ("Session Information", {"fields": ("name", "enabled", "processing", "owner", "lab_group")}),
-        (
-            "Projects & Protocols",
-            {"fields": ("projects", "protocols"), "description": "Projects and protocols associated with this session"},
-        ),
+        ("Protocols", {"fields": ("protocols",), "description": "Lab protocols used in this session"}),
+        ("Projects", {"fields": ("projects_info",), "description": "Projects associated with this session (readonly)"}),
         ("Time Tracking", {"fields": ("started_at", "ended_at"), "description": "Session timing information"}),
         ("Permissions", {"fields": ("editors", "viewers"), "classes": ("collapse",)}),
         ("System Information", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
@@ -231,6 +230,27 @@ class SessionAdmin(BaseResourceAdmin):
         return "0 projects"
 
     projects_count.short_description = "Projects"
+
+    def projects_info(self, obj):
+        """Display list of associated projects with links."""
+        if not obj.pk:
+            return "Save session first to see projects"
+
+        projects = obj.projects.all()[:10]
+        if not projects:
+            return "No projects associated"
+
+        project_links = []
+        for project in projects:
+            url = reverse("admin:ccrv_project_change", args=[project.pk])
+            project_links.append(f'<a href="{url}">{project.project_name}</a>')
+
+        if obj.projects.count() > 10:
+            project_links.append(f"... and {obj.projects.count() - 10} more")
+
+        return format_html("<br>".join(project_links))
+
+    projects_info.short_description = "Associated Projects"
 
     def duration(self, obj):
         """Display session duration if available."""
