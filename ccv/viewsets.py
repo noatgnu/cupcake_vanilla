@@ -763,6 +763,100 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["post"])
+    def replace_column_value(self, request, pk=None):
+        """
+        Replace all occurrences of a specific value across columns in this table.
+
+        Can target a specific column or all columns.
+
+        Request body:
+        - old_value: Value to replace (required)
+        - new_value: New value (required)
+        - column_id: Specific column ID to update (optional, if not provided updates all columns)
+        - column_name: Specific column name to update (optional, alternative to column_id)
+        - update_pools: Whether to update pool columns (default: true)
+        """
+        metadata_table = self.get_object()
+        old_value = request.data.get("old_value")
+        new_value = request.data.get("new_value")
+        column_id = request.data.get("column_id")
+        column_name = request.data.get("column_name")
+        update_pools = request.data.get("update_pools", True)
+
+        if old_value is None:
+            return Response({"error": "old_value is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_value is None:
+            return Response({"error": "new_value is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Determine which columns to update
+        if column_id:
+            columns = metadata_table.columns.filter(id=column_id)
+            if not columns.exists():
+                return Response({"error": "Column not found in this table"}, status=status.HTTP_404_NOT_FOUND)
+        elif column_name:
+            columns = metadata_table.columns.filter(name=column_name)
+            if not columns.exists():
+                return Response(
+                    {"error": f"Column '{column_name}' not found in this table"}, status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            # Update all columns
+            columns = metadata_table.columns.all()
+
+        columns_updated = 0
+        total_modifiers_merged = 0
+        total_modifiers_deleted = 0
+        total_samples_reverted_to_default = 0
+        pools_updated = 0
+
+        for column in columns:
+            default_updated = False
+
+            # Update column default value
+            if column.value == old_value:
+                column.value = new_value
+                default_updated = True
+
+            # Update modifiers with smart merging
+            modifier_stats = MetadataColumnViewSet()._replace_value_in_modifiers(column, old_value, new_value)
+            total_modifiers_merged += modifier_stats["modifiers_merged"]
+            total_modifiers_deleted += modifier_stats["modifiers_deleted"]
+            total_samples_reverted_to_default += modifier_stats["samples_reverted_to_default"]
+
+            # Save column if anything changed
+            if (
+                default_updated
+                or modifier_stats["modifiers_merged"] > 0
+                or modifier_stats["modifiers_deleted"] > 0
+                or modifier_stats["samples_reverted_to_default"] > 0
+            ):
+                column.save()
+                columns_updated += 1
+
+            # Update pool metadata columns
+            if update_pools:
+                sample_pools = metadata_table.sample_pools.all()
+                for pool in sample_pools:
+                    pool_columns = pool.metadata_columns.filter(name=column.name, value=old_value)
+                    count = pool_columns.update(value=new_value)
+                    pools_updated += count
+
+        return Response(
+            {
+                "message": "Value replacement completed",
+                "old_value": old_value,
+                "new_value": new_value,
+                "columns_checked": columns.count(),
+                "columns_updated": columns_updated,
+                "modifiers_merged": total_modifiers_merged,
+                "modifiers_deleted": total_modifiers_deleted,
+                "samples_reverted_to_default": total_samples_reverted_to_default,
+                "pool_columns_updated": pools_updated,
+            }
+        )
+
 
 class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
     """ViewSet for managing MetadataColumn objects."""
@@ -1046,6 +1140,146 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
                 "column_name": column_name,
                 "column_type": column_type,
                 "detected_ontology_type": detected_type,
+            }
+        )
+
+    def _replace_value_in_modifiers(self, column, old_value, new_value):
+        """
+        Replace value in modifiers, merging sample ranges if necessary.
+
+        Handles several scenarios:
+        1. New value matches default: Delete old modifiers (samples revert to default)
+        2. New value exists in another modifier: Merge sample ranges
+        3. New value is unique: Create new modifier with combined samples
+
+        Returns:
+            dict: Statistics about the replacement with keys:
+                - modifiers_merged: Number of old modifiers merged into existing new_value modifier
+                - modifiers_deleted: Number of old modifiers deleted (when new_value = default)
+                - samples_reverted_to_default: Number of samples now using default value
+        """
+        if not column.modifiers:
+            return {"modifiers_merged": 0, "modifiers_deleted": 0, "samples_reverted_to_default": 0}
+
+        # Find modifiers with old_value and new_value
+        old_modifiers = []
+        new_modifier_idx = None
+        new_modifier_samples = []
+
+        for idx, modifier in enumerate(column.modifiers):
+            if modifier.get("value") == old_value:
+                old_modifiers.append((idx, modifier))
+            elif modifier.get("value") == new_value:
+                new_modifier_idx = idx
+                new_modifier_samples = column._parse_sample_indices_from_modifier_string(modifier.get("samples", ""))
+
+        if not old_modifiers:
+            return {"modifiers_merged": 0, "modifiers_deleted": 0, "samples_reverted_to_default": 0}
+
+        # Collect all sample indices from old_value modifiers
+        all_old_samples = []
+        for _, modifier in old_modifiers:
+            samples = column._parse_sample_indices_from_modifier_string(modifier.get("samples", ""))
+            all_old_samples.extend(samples)
+
+        # Remove old modifiers (in reverse order to preserve indices)
+        for idx, _ in reversed(old_modifiers):
+            column.modifiers.pop(idx)
+
+        modifiers_deleted = len(old_modifiers)
+        samples_count = len(set(all_old_samples))
+
+        # IMPORTANT: Check if new_value matches the default value
+        # If so, the old modifiers are deleted and those samples automatically use the default
+        if new_value == column.value:
+            return {
+                "modifiers_merged": 0,
+                "modifiers_deleted": modifiers_deleted,
+                "samples_reverted_to_default": samples_count,
+            }
+
+        # Merge with existing new_value modifier or create new one
+        if new_modifier_idx is not None:
+            # Merge sample ranges into existing modifier
+            combined_samples = sorted(set(new_modifier_samples + all_old_samples))
+            column.modifiers[new_modifier_idx]["samples"] = column._format_sample_indices_to_string(combined_samples)
+            return {"modifiers_merged": len(old_modifiers), "modifiers_deleted": 0, "samples_reverted_to_default": 0}
+        else:
+            # Create new modifier with merged samples
+            column.modifiers.append(
+                {"samples": column._format_sample_indices_to_string(sorted(set(all_old_samples))), "value": new_value}
+            )
+            return {"modifiers_merged": 0, "modifiers_deleted": 0, "samples_reverted_to_default": 0}
+
+    @action(detail=True, methods=["post"])
+    def replace_value(self, request, pk=None):
+        """
+        Replace all occurrences of a specific value with a new value in this column.
+
+        Intelligently handles modifiers by:
+        - Merging sample ranges when replacing with an existing modifier value
+        - Removing redundant modifiers when new value matches default
+        - Preserving sample-specific assignments
+
+        Updates:
+        - Column default value
+        - Values in modifiers (with smart merging)
+        - Pool metadata columns (optional)
+
+        Request body:
+        - old_value: Value to replace (required)
+        - new_value: New value (required)
+        - update_pools: Whether to update pool columns (default: true)
+        """
+        column = self.get_object()
+        old_value = request.data.get("old_value")
+        new_value = request.data.get("new_value")
+        update_pools = request.data.get("update_pools", True)
+
+        if old_value is None:
+            return Response({"error": "old_value is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_value is None:
+            return Response({"error": "new_value is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        default_updated = False
+
+        # Update column default value
+        if column.value == old_value:
+            column.value = new_value
+            default_updated = True
+
+        # Update modifiers with smart merging
+        modifier_stats = self._replace_value_in_modifiers(column, old_value, new_value)
+
+        # Save column if anything changed
+        if (
+            default_updated
+            or modifier_stats["modifiers_merged"] > 0
+            or modifier_stats["modifiers_deleted"] > 0
+            or modifier_stats["samples_reverted_to_default"] > 0
+        ):
+            column.save()
+
+        # Update pool metadata columns
+        pools_updated = 0
+        if update_pools:
+            sample_pools = column.metadata_table.sample_pools.all()
+            for pool in sample_pools:
+                pool_columns = pool.metadata_columns.filter(name=column.name, value=old_value)
+                count = pool_columns.update(value=new_value)
+                pools_updated += count
+
+        return Response(
+            {
+                "message": "Value replacement completed",
+                "old_value": old_value,
+                "new_value": new_value,
+                "default_value_updated": default_updated,
+                "modifiers_merged": modifier_stats["modifiers_merged"],
+                "modifiers_deleted": modifier_stats["modifiers_deleted"],
+                "samples_reverted_to_default": modifier_stats["samples_reverted_to_default"],
+                "pool_columns_updated": pools_updated,
             }
         )
 
