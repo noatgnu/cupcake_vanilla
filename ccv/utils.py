@@ -105,12 +105,13 @@ def sort_metadata(
                 if not value:
                     value = metadata.value or ""
 
-            # Handle empty values with not_applicable flag
-            if not value and metadata.not_applicable:
-                value = "not applicable"
-            elif not value and metadata.name.lower() != "pooled sample":
-                # Don't set "not available" for pooled sample column - empty is fine
-                value = "not available"
+            # Handle empty values with column flags
+            if not value:
+                if metadata.not_applicable:
+                    value = "not applicable"
+                elif metadata.not_available and metadata.name.lower() != "pooled sample":
+                    # Don't set "not available" for pooled sample column - empty is fine
+                    value = "not available"
 
             row.append(value)
         result.append(row)
@@ -583,11 +584,13 @@ def _calculate_most_common_value_for_column(data_rows, pooled_sample_indices, co
                     values.append(cell_value)
 
     if not values:
-        # No values found - check if column allows not applicable
+        # No values found - check column flags for appropriate default
         if metadata_column.not_applicable:
             return "not applicable"
-        else:
+        elif metadata_column.not_available:
             return "not available"
+        else:
+            return ""
 
     # Find the most common value
     value_counts = Counter(values)
@@ -688,11 +691,13 @@ def _calculate_most_common_value_for_pool_column(pool, table_column):
             return table_column.value
 
     if not values:
-        # No values found - check if column allows not applicable
+        # No values found - check column flags for appropriate default
         if table_column.not_applicable:
             return "not applicable"
-        else:
+        elif table_column.not_available:
             return "not available"
+        else:
+            return ""
 
     # Find the most common value
     value_counts = Counter(values)

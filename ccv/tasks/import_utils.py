@@ -226,6 +226,8 @@ def _find_or_create_matching_column(
                 hidden=template_column.hidden,
                 readonly=template_column.readonly,
                 auto_generated=template_column.auto_generated,
+                not_applicable=template_column.not_applicable,
+                not_available=template_column.not_available,
             )
         else:
             metadata_column = MetadataColumn.objects.create(
@@ -340,8 +342,10 @@ def _calculate_most_common_value_for_column(data_rows, pooled_sample_indices, co
     if not values:
         if metadata_column.not_applicable:
             return "not applicable"
-        else:
+        elif metadata_column.not_available:
             return "not available"
+        else:
+            return ""
 
     value_counts = Counter(values)
     most_common_value = value_counts.most_common(1)[0][0]
@@ -379,6 +383,8 @@ def create_pool_metadata_from_table_columns(pool):
                 value=pool.sdrf_value,
                 mandatory=table_column.mandatory,
                 hidden=table_column.hidden,
+                not_applicable=table_column.not_applicable,
+                not_available=table_column.not_available,
             )
         elif "source name" in table_column.name.lower():
             pool_metadata_column = MetadataColumn.objects.create(
@@ -387,6 +393,8 @@ def create_pool_metadata_from_table_columns(pool):
                 value=pool.pool_name,
                 mandatory=table_column.mandatory,
                 hidden=table_column.hidden,
+                not_applicable=table_column.not_applicable,
+                not_available=table_column.not_available,
             )
         else:
             pool_value = _calculate_most_common_value_for_pool_column(pool, table_column)
@@ -396,6 +404,8 @@ def create_pool_metadata_from_table_columns(pool):
                 value=pool_value,
                 mandatory=table_column.mandatory,
                 hidden=table_column.hidden,
+                not_applicable=table_column.not_applicable,
+                not_available=table_column.not_available,
             )
 
         pool.metadata_columns.add(pool_metadata_column)
@@ -461,8 +471,10 @@ def _calculate_most_common_value_for_pool_column(pool, table_column):
     if not values:
         if table_column.not_applicable:
             return "not applicable"
-        else:
+        elif table_column.not_available:
             return "not available"
+        else:
+            return ""
 
     value_counts = Counter(values)
     most_common_value = value_counts.most_common(1)[0][0]
@@ -511,6 +523,8 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
                 value=sdrf_value,
                 mandatory=metadata_column.mandatory,
                 hidden=metadata_column.hidden,
+                not_applicable=metadata_column.not_applicable,
+                not_available=metadata_column.not_available,
             )
         elif "source name" in metadata_column.name.lower():
             pool_metadata_column = MetadataColumn.objects.create(
@@ -519,6 +533,8 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
                 value=pool_name,
                 mandatory=metadata_column.mandatory,
                 hidden=metadata_column.hidden,
+                not_applicable=metadata_column.not_applicable,
+                not_available=metadata_column.not_available,
             )
         else:
             if has_sn_pattern and row:
@@ -534,6 +550,8 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
                 value=pool_value or "not available",
                 mandatory=metadata_column.mandatory,
                 hidden=metadata_column.hidden,
+                not_applicable=metadata_column.not_applicable,
+                not_available=metadata_column.not_available,
             )
 
         pool.metadata_columns.add(pool_metadata_column)
@@ -552,10 +570,13 @@ def import_sdrf_data(
 
     Example:
         >>> # Real proteomics SDRF with ontology terms from test fixtures
-        >>> content = "source name\tcharacteristics[organism]\tcharacteristics[cell line]\tcharacteristics[pooled sample]\n" + \
-        ...           "D-HEp3 #1\thomo sapiens\tNT=HEp-3 cell;AC=BTO:0005139\tpooled\n" + \
-        ...           "D-HEp3 #2\thomo sapiens\tNT=HEp-3 cell;AC=BTO:0005139\tpooled\n" + \
-        ...           "T-HEp3 #1\thomo sapiens\tNT=HEp-3 cell;AC=BTO:0005139\tnot pooled"
+        >>> content = (
+        ...     "source name\tcharacteristics[organism]\tcharacteristics[cell line]"
+        ...     "\tcharacteristics[pooled sample]\n"
+        ...     "D-HEp3 #1\thomo sapiens\tNT=HEp-3 cell;AC=BTO:0005139\tpooled\n"
+        ...     "D-HEp3 #2\thomo sapiens\tNT=HEp-3 cell;AC=BTO:0005139\tpooled\n"
+        ...     "T-HEp3 #1\thomo sapiens\tNT=HEp-3 cell;AC=BTO:0005139\tnot pooled"
+        ... )
         >>> result = import_sdrf_data(
         ...     file_content=content,
         ...     metadata_table=table,
@@ -689,6 +710,9 @@ def import_sdrf_data(
                         continue
                     if cell_value == "not applicable":
                         metadata_column.not_applicable = True
+                        continue
+                    if cell_value == "not available":
+                        metadata_column.not_available = True
                         continue
 
                     # Use the MetadataColumn instance method for proper SDRF conversion with ontology lookup
@@ -1234,6 +1258,8 @@ def import_excel_data(
                                 custom_ontology_filters=table_column.custom_ontology_filters or {},
                                 template=table_column.template,
                                 mandatory=table_column.mandatory,
+                                not_applicable=table_column.not_applicable,
+                                not_available=table_column.not_available,
                             )
 
                             current_pool.metadata_columns.add(pool_metadata_column)

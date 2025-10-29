@@ -1479,6 +1479,8 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 hidden=template_column.hidden,
                 auto_generated=template_column.auto_generated,
                 readonly=template_column.readonly,
+                not_applicable=template_column.not_applicable,
+                not_available=template_column.not_available,
                 modifiers=template_column.modifiers,
                 metadata_table=metadata_table,
             )
@@ -2231,18 +2233,19 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             for i, header in enumerate(result_main[0]):
                 name = header
 
+                # Find the corresponding metadata column
+                metadata_column = next((col for col in main_metadata if col.name == name), None)
+
                 # Build option list
                 option_list = []
-                # Required columns get "not applicable", others get "not available"
-                if name.lower() in [
-                    "organism",
-                    "disease",
-                    "organism part",
-                    "tissue",
-                    "biological replicate",
-                ]:
-                    option_list.append("not applicable")
+                # Use column flags to determine appropriate empty value option
+                if metadata_column:
+                    if metadata_column.not_applicable:
+                        option_list.append("not applicable")
+                    elif metadata_column.not_available:
+                        option_list.append("not available")
                 else:
+                    # Fallback for columns without metadata definition
                     option_list.append("not available")
 
                 # Add favourites if available
@@ -2265,18 +2268,19 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             for i, header in enumerate(result_hidden[0]):
                 name = header
 
+                # Find the corresponding metadata column
+                metadata_column = next((col for col in hidden_metadata if col.name == name), None)
+
                 # Build option list
                 option_list = []
-                # Required columns get "not applicable", others get "not available"
-                if name.lower() in [
-                    "organism",
-                    "disease",
-                    "organism part",
-                    "tissue",
-                    "biological replicate",
-                ]:
-                    option_list.append("not applicable")
+                # Use column flags to determine appropriate empty value option
+                if metadata_column:
+                    if metadata_column.not_applicable:
+                        option_list.append("not applicable")
+                    elif metadata_column.not_available:
+                        option_list.append("not available")
                 else:
+                    # Fallback for columns without metadata definition
                     option_list.append("not available")
 
                 # Add favourites if available
@@ -2552,6 +2556,8 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                     hidden=template_column.hidden,
                     readonly=template_column.readonly,
                     auto_generated=template_column.auto_generated,
+                    not_applicable=template_column.not_applicable,
+                    not_available=template_column.not_available,
                 )
             else:
                 # Create basic column without template
@@ -3434,17 +3440,12 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                         # Fill other columns with pool-specific default values
                         for i, metadata_column in enumerate(visible_metadata):
                             if i < len(pool_row) and not pool_row[i]:  # Only fill empty cells
-                                # Use column default value or "not applicable" for required fields
+                                # Use column default value or check column flags for appropriate empty value
                                 if metadata_column.value:
                                     pool_row[i] = metadata_column.value
-                                elif metadata_column.name.lower() in [
-                                    "organism",
-                                    "disease",
-                                    "organism part",
-                                    "tissue",
-                                ]:
+                                elif metadata_column.not_applicable:
                                     pool_row[i] = "not applicable"
-                                else:
+                                elif metadata_column.not_available:
                                     pool_row[i] = "not available"
 
                         # Add pool row to results

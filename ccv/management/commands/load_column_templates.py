@@ -209,6 +209,9 @@ class Command(BaseCommand):
             else:
                 column_type = "special"
 
+            allow_not_applicable = column.allow_not_applicable
+            allow_not_available = column.allow_not_available
+
             # Create template
             template = MetadataColumnTemplate(
                 name=display_name,
@@ -222,6 +225,8 @@ class Command(BaseCommand):
                 source_schema=schema_name,
                 schema=schema_obj,  # Link to Schema object
                 visibility="public",
+                not_available=allow_not_available,
+                not_applicable=allow_not_applicable,
             )
 
             # Process validators for ontology configuration

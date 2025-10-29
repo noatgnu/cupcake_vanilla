@@ -111,6 +111,7 @@ class MetadataColumnAdmin(SimpleHistoryAdmin):
         "staff_only",
         "auto_generated",
         "not_applicable",
+        "not_available",
         "created_at",
         "metadata_table",
     ]
@@ -121,7 +122,7 @@ class MetadataColumnAdmin(SimpleHistoryAdmin):
     fieldsets = (
         (
             "Basic Information",
-            {"fields": ("name", "type", "column_position", "value", "not_applicable")},
+            {"fields": ("name", "type", "column_position", "value", "not_applicable", "not_available")},
         ),
         (
             "Configuration",
@@ -607,6 +608,7 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
         "staff_only",
         "is_system_template",
         "enable_typeahead",
+        "not_available",
         "excel_validation",
         "created_at",
     ]
@@ -660,6 +662,7 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "enable_typeahead",
+                    "not_available",
                     "excel_validation",
                     "custom_validation_rules",
                     "api_enhancements",
@@ -832,7 +835,10 @@ class SchemaAdmin(admin.ModelAdmin):
             "Availability Control",
             {
                 "fields": ("is_active", "is_public"),
-                "description": "Control whether this schema is available for creating templates. Only active schemas appear in the frontend dropdown.",
+                "description": (
+                    "Control whether this schema is available for creating templates. "
+                    "Only active schemas appear in the frontend dropdown."
+                ),
             },
         ),
         ("Ownership", {"fields": ("creator",)}),

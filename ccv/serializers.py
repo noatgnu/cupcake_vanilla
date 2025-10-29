@@ -119,7 +119,10 @@ class MetadataTableSerializer(serializers.ModelSerializer):
 
                         raise serializers.ValidationError(
                             {
-                                "sample_count": f"Reducing sample count from {current_sample_count} to {new_sample_count} will remove data. Set sample_count_confirmed=true to proceed.",
+                                "sample_count": (
+                                    f"Reducing sample count from {current_sample_count} to {new_sample_count} "
+                                    "will remove data. Set sample_count_confirmed=true to proceed."
+                                ),
                                 "sample_count_confirmation_details": error_details,
                             }
                         )
@@ -179,6 +182,7 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
             "column_position",
             "value",
             "not_applicable",
+            "not_available",
             "mandatory",
             "hidden",
             "auto_generated",
@@ -582,6 +586,7 @@ class MetadataColumnTemplateSerializer(serializers.ModelSerializer):
             "ontology_type",
             "custom_ontology_filters",
             "enable_typeahead",
+            "not_available",
             "excel_validation",
             "custom_validation_rules",
             "api_enhancements",

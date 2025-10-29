@@ -1280,6 +1280,7 @@ class MetadataColumn(models.Model):
     column_position = models.IntegerField(blank=True, null=True, default=0, help_text="Position in column ordering")
     value = models.TextField(blank=True, null=True, help_text="Default or current value")
     not_applicable = models.BooleanField(default=False, help_text="Whether this column is marked as not applicable")
+    not_available = models.BooleanField(default=False, help_text="Whether this column is marked as not available")
 
     # Template reference (optional - tracks which template this column was created from)
     template = models.ForeignKey(
@@ -1836,7 +1837,10 @@ class SamplePool(models.Model):
     # Reference pool indicator for SDRF compliance
     is_reference = models.BooleanField(
         default=False,
-        help_text="Whether this pool is a reference pool for channel normalization (appears in SDRF export with SN= format)",
+        help_text=(
+            "Whether this pool is a reference pool for channel normalization "
+            "(appears in SDRF export with SN= format)"
+        ),
     )
 
     # Metadata relationships (unified for ccv - no user/staff separation)
@@ -2676,6 +2680,8 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                         readonly=template_column.readonly,
                         auto_generated=template_column.auto_generated,
                         modifiers=template_column.modifiers or [],
+                        not_applicable=template_column.not_applicable,
+                        not_available=template_column.not_available,
                     )
 
                 except Exception:
@@ -2889,6 +2895,8 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
             ontology_type=template.ontology_type,
             ontology_options=template.ontology_options,
             custom_ontology_filters=template.custom_ontology_filters,
+            not_applicable=template.not_applicable,
+            not_available=template.not_available,
             # Default behaviors (can be overridden later)
             mandatory=False,
             hidden=False,
@@ -3553,6 +3561,12 @@ class MetadataColumnTemplate(AbstractResource):
         help_text="Schema model this template is associated with",
     )
     staff_only = models.BooleanField(default=False, help_text="Whether only staff can edit this column")
+    not_applicable = models.BooleanField(
+        default=False, help_text="Whether this column is marked as not applicable by default"
+    )
+    not_available = models.BooleanField(
+        default=False, help_text="Whether this column is marked as not available by default"
+    )
     # Audit trail
     last_used_at = models.DateTimeField(blank=True, null=True, help_text="When this template was last used")
     base_column = models.BooleanField(

@@ -121,17 +121,12 @@ def export_sdrf_data(
                     # Fill other columns with pool-specific default values
                     for i, metadata_column in enumerate(visible_metadata):
                         if i < len(pool_row) and not pool_row[i]:  # Only fill empty cells
-                            # Use column default value or "not applicable" for required fields
+                            # Use column default value or check column flags for appropriate empty value
                             if metadata_column.value:
                                 pool_row[i] = metadata_column.value
-                            elif metadata_column.name.lower() in [
-                                "organism",
-                                "disease",
-                                "organism part",
-                                "tissue",
-                            ]:
+                            elif metadata_column.not_applicable:
                                 pool_row[i] = "not applicable"
-                            else:
+                            elif metadata_column.not_available:
                                 pool_row[i] = "not available"
 
                     # Add pool row to results
@@ -317,7 +312,7 @@ def export_excel_template(
             note_cell.alignment = Alignment(horizontal="left", vertical="center")
 
         # Add dropdown validation
-        _add_dropdown_validation(main_ws, result_main[0], favourites, field_mask_mapping, sample_number)
+        _add_dropdown_validation(main_ws, result_main[0], main_metadata, favourites, field_mask_mapping, sample_number)
 
     # Fill hidden worksheet
     if result_hidden:
@@ -326,7 +321,9 @@ def export_excel_template(
             hidden_ws.append(row)
 
         # Apply styling and validation
-        _add_dropdown_validation(hidden_ws, result_hidden[0], favourites, field_mask_mapping, sample_number)
+        _add_dropdown_validation(
+            hidden_ws, result_hidden[0], hidden_metadata, favourites, field_mask_mapping, sample_number
+        )
 
     # Fill pool data and mapping if pools exist (original CUPCAKE logic)
     if has_pools and pool_id_metadata_column_map_ws:
@@ -375,6 +372,7 @@ def export_excel_template(
             _add_dropdown_validation(
                 pool_main_ws,
                 pool_result_main[0],
+                pool_main_metadata,
                 favourites,
                 field_mask_mapping,
                 len(pools),
@@ -386,6 +384,7 @@ def export_excel_template(
 def _add_dropdown_validation(
     worksheet,
     headers: List[str],
+    metadata_columns: List,
     favourites: Dict[str, List[str]],
     field_mask_mapping: Dict[str, str],
     row_count: int,
@@ -396,12 +395,11 @@ def _add_dropdown_validation(
     Args:
         worksheet: Excel worksheet object
         headers: List of column headers
+        metadata_columns: List of MetadataColumn objects
         favourites: Dictionary of favourite options
         field_mask_mapping: Field name mappings
         row_count: Number of data rows
     """
-    required_metadata_names = {"tissue", "organism part", "disease", "species"}
-
     for i, header in enumerate(headers):
         name_splitted = header.split("[")
         if len(name_splitted) > 1:
@@ -409,7 +407,8 @@ def _add_dropdown_validation(
         else:
             name = name_splitted[0]
 
-        required_column = name.lower() in required_metadata_names
+        # Find the corresponding metadata column
+        metadata_column = next((col for col in metadata_columns if col.name == name), None)
 
         # Apply field masking
         name_capitalized = name.capitalize().replace("Ms1", "MS1").replace("Ms2", "MS2")
@@ -422,11 +421,15 @@ def _add_dropdown_validation(
             else:
                 worksheet.cell(row=1, column=i + 1).value = display_name.lower()
 
-        # Build option list
+        # Build option list based on column flags
         option_list = []
-        if required_column:
-            option_list.append("not applicable")
+        if metadata_column:
+            if metadata_column.not_applicable:
+                option_list.append("not applicable")
+            elif metadata_column.not_available:
+                option_list.append("not available")
         else:
+            # Fallback for columns without metadata definition
             option_list.append("not available")
 
         if name.lower() in favourites:
