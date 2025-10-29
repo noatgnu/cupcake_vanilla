@@ -109,6 +109,11 @@ class InstrumentJobModelTest(TestCase):
         mock_staff_manager.all.return_value = []  # No staff assigned by default
         mock_job.staff = mock_staff_manager
 
+        # Ensure lab_group is None if not explicitly set (avoid MagicMock truthy issues)
+        if not hasattr(mock_job, "lab_group") or isinstance(getattr(mock_job, "lab_group", None), MagicMock):
+            if "lab_group" not in job_attrs:
+                mock_job.lab_group = None
+
         # Mock methods for metadata permissions
         def can_user_view_metadata(user):
             if not mock_job.metadata_table:

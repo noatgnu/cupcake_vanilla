@@ -1192,8 +1192,9 @@ class InstrumentJob(models.Model):
         Check if a user can edit metadata for this job.
 
         Permission rules:
-        - Draft stage: Only job owner can edit
-        - After draft: Only assigned lab_group members or assigned staff can edit
+        - Draft stage: Job owner can edit
+        - If staff assigned: Only staff members (who must be in lab_group if lab_group exists) can edit
+        - If no staff but lab_group exists: lab_group members can edit
         - Django staff/superuser: Same rules as regular users (must be owner/assigned)
 
         Args:
@@ -1205,17 +1206,24 @@ class InstrumentJob(models.Model):
         if not user or not self.metadata_table:
             return False
 
-        # Job owner can edit only in draft status
+        # Job owner can edit in draft status
         if self.user == user and self.status == "draft":
             return True
 
-        # After draft, only assigned staff or lab_group members can edit
-        if self.status != "draft":
-            # Staff assigned to this specific job can edit metadata
-            if user in self.staff.all():
+        # Check if there are staff assigned to this job
+        assigned_staff = self.staff.all()
+        has_assigned_staff = assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
+
+        if has_assigned_staff:
+            # If staff are assigned, only those staff can edit
+            # Staff must also be members of the lab_group if lab_group exists
+            if user in assigned_staff:
+                if self.lab_group:
+                    return self.lab_group.is_member(user)
                 return True
-            # Check if user is from the assigned lab_group
-            if self.lab_group and self.lab_group.is_member(user):
+        else:
+            # No staff assigned, lab_group members can edit (after draft)
+            if self.status != "draft" and self.lab_group and self.lab_group.is_member(user):
                 return True
 
         # For all other cases, no edit permission

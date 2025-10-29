@@ -100,24 +100,38 @@ class MetadataTableAccessPermission(BasePermission):
         Safe for use when CCM may not be available.
 
         Rules:
-        - Draft status: Only job owner can edit
-        - After draft: Only assigned lab_group members or assigned staff can edit
+        - Draft status: Job owner can edit
+        - If staff assigned: Only staff members (who must be in lab_group if lab_group exists) can edit
+        - If no staff but lab_group exists: lab_group members can edit
         - Django staff/superuser: Same rules as regular users (must be owner/assigned)
         """
         try:
-            # Job owner can edit only in draft status
+            # Job owner can edit in draft status
             if hasattr(job, "user") and hasattr(job, "status"):
                 if job.user == user and job.status == "draft":
                     return True
 
-            # After draft, only assigned staff or lab_group members can edit
-            if hasattr(job, "status") and job.status != "draft":
-                if hasattr(job, "staff") and user in job.staff.all():
-                    return True
-                # Check if user is from the assigned lab_group
-                if hasattr(job, "lab_group") and job.lab_group and hasattr(job.lab_group, "is_member"):
-                    if job.lab_group.is_member(user):
+            # Check if there are staff assigned to this job
+            if hasattr(job, "staff"):
+                assigned_staff = job.staff.all()
+                has_assigned_staff = (
+                    assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
+                )
+
+                if has_assigned_staff:
+                    # If staff are assigned, only those staff can edit
+                    # Staff must also be members of the lab_group if lab_group exists
+                    if user in assigned_staff:
+                        if hasattr(job, "lab_group") and job.lab_group:
+                            if hasattr(job.lab_group, "is_member"):
+                                return job.lab_group.is_member(user)
                         return True
+                else:
+                    # No staff assigned, lab_group members can edit (after draft)
+                    if hasattr(job, "status") and job.status != "draft":
+                        if hasattr(job, "lab_group") and job.lab_group and hasattr(job.lab_group, "is_member"):
+                            if job.lab_group.is_member(user):
+                                return True
         except (AttributeError, ImportError):
             # CCM models not available or error accessing job attributes
             pass
