@@ -2682,6 +2682,7 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                         modifiers=template_column.modifiers or [],
                         not_applicable=template_column.not_applicable,
                         not_available=template_column.not_available,
+                        staff_only=template_column.staff_only,
                     )
 
                 except Exception:
@@ -2796,6 +2797,9 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                         hidden=False,
                         readonly=False,
                         auto_generated=False,
+                        not_applicable=column_template.not_applicable,
+                        not_available=column_template.not_available,
+                        staff_only=False,
                     )
                     position += 1
 

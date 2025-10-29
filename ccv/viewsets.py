@@ -857,6 +857,126 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["post"])
+    def bulk_delete_columns(self, request, pk=None):
+        """
+        Delete multiple columns from this metadata table.
+
+        For InstrumentJob metadata tables, respects staff-only permissions.
+        """
+        metadata_table = self.get_object()
+        column_ids = request.data.get("column_ids", [])
+
+        if not column_ids:
+            return Response({"error": "column_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not metadata_table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        columns = metadata_table.columns.filter(id__in=column_ids)
+        if not columns.exists():
+            return Response({"error": "No columns found with the provided IDs"}, status=status.HTTP_404_NOT_FOUND)
+
+        deleted_count = 0
+        permission_denied_columns = []
+        deleted_columns = []
+
+        for column in columns:
+            if metadata_table.source_app == "ccm":
+                if hasattr(metadata_table, "instrument_jobs") and metadata_table.instrument_jobs.exists():
+                    job = metadata_table.instrument_jobs.first()
+                    if column.staff_only:
+                        assigned_staff = job.staff.all()
+                        has_assigned_staff = (
+                            assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
+                        )
+                        if has_assigned_staff:
+                            if request.user not in assigned_staff:
+                                permission_denied_columns.append({"id": column.id, "name": column.name})
+                                continue
+                            if job.lab_group and not job.lab_group.is_member(request.user):
+                                permission_denied_columns.append({"id": column.id, "name": column.name})
+                                continue
+
+            deleted_columns.append({"id": column.id, "name": column.name})
+            column.delete()
+            deleted_count += 1
+
+        return Response(
+            {
+                "message": f"Deleted {deleted_count} column(s)",
+                "deleted_count": deleted_count,
+                "deleted_columns": deleted_columns,
+                "permission_denied_columns": permission_denied_columns,
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def bulk_update_staff_only(self, request, pk=None):
+        """
+        Mark or unmark multiple columns as staff-only.
+
+        For InstrumentJob metadata tables, only assigned staff can modify staff_only status.
+        """
+        metadata_table = self.get_object()
+        column_ids = request.data.get("column_ids", [])
+        staff_only = request.data.get("staff_only")
+
+        if not column_ids:
+            return Response({"error": "column_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if staff_only is None:
+            return Response({"error": "staff_only is required (true or false)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not metadata_table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        columns = metadata_table.columns.filter(id__in=column_ids)
+        if not columns.exists():
+            return Response({"error": "No columns found with the provided IDs"}, status=status.HTTP_404_NOT_FOUND)
+
+        updated_count = 0
+        permission_denied_columns = []
+        updated_columns = []
+
+        for column in columns:
+            if metadata_table.source_app == "ccm":
+                if hasattr(metadata_table, "instrument_jobs") and metadata_table.instrument_jobs.exists():
+                    job = metadata_table.instrument_jobs.first()
+                    assigned_staff = job.staff.all()
+                    has_assigned_staff = (
+                        assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
+                    )
+
+                    if has_assigned_staff:
+                        if request.user not in assigned_staff:
+                            permission_denied_columns.append({"id": column.id, "name": column.name})
+                            continue
+                        if job.lab_group and not job.lab_group.is_member(request.user):
+                            permission_denied_columns.append({"id": column.id, "name": column.name})
+                            continue
+
+            column.staff_only = staff_only
+            column.save(update_fields=["staff_only"])
+            updated_columns.append({"id": column.id, "name": column.name, "staff_only": staff_only})
+            updated_count += 1
+
+        return Response(
+            {
+                "message": f"Updated {updated_count} column(s)",
+                "updated_count": updated_count,
+                "updated_columns": updated_columns,
+                "permission_denied_columns": permission_denied_columns,
+                "staff_only": staff_only,
+            }
+        )
+
 
 class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
     """ViewSet for managing MetadataColumn objects."""
@@ -2131,6 +2251,93 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 "template_id": template.id,
                 "columns": column_data,
                 "field_mask_mapping": field_masks,
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def bulk_delete_columns(self, request, pk=None):
+        """
+        Delete multiple columns from this metadata table template.
+
+        Request body:
+        - column_ids: List of column IDs to delete
+        """
+        template = self.get_object()
+        column_ids = request.data.get("column_ids", [])
+
+        if not column_ids:
+            return Response({"error": "column_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not template.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this template"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        columns = template.user_columns.filter(id__in=column_ids)
+        if not columns.exists():
+            return Response({"error": "No columns found with the provided IDs"}, status=status.HTTP_404_NOT_FOUND)
+
+        deleted_count = 0
+        deleted_columns = []
+
+        for column in columns:
+            deleted_columns.append({"id": column.id, "name": column.name})
+            column.delete()
+            deleted_count += 1
+
+        return Response(
+            {
+                "message": f"Deleted {deleted_count} column(s)",
+                "deleted_count": deleted_count,
+                "deleted_columns": deleted_columns,
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def bulk_update_staff_only(self, request, pk=None):
+        """
+        Mark or unmark multiple columns as staff-only in this template.
+
+        Request body:
+        - column_ids: List of column IDs to update
+        - staff_only: Boolean value (true or false)
+        """
+        template = self.get_object()
+        column_ids = request.data.get("column_ids", [])
+        staff_only = request.data.get("staff_only")
+
+        if not column_ids:
+            return Response({"error": "column_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if staff_only is None:
+            return Response({"error": "staff_only is required (true or false)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not template.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this template"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        columns = template.user_columns.filter(id__in=column_ids)
+        if not columns.exists():
+            return Response({"error": "No columns found with the provided IDs"}, status=status.HTTP_404_NOT_FOUND)
+
+        updated_count = 0
+        updated_columns = []
+
+        for column in columns:
+            column.staff_only = staff_only
+            column.save(update_fields=["staff_only"])
+            updated_columns.append({"id": column.id, "name": column.name, "staff_only": staff_only})
+            updated_count += 1
+
+        return Response(
+            {
+                "message": f"Updated {updated_count} column(s)",
+                "updated_count": updated_count,
+                "updated_columns": updated_columns,
+                "staff_only": staff_only,
             }
         )
 

@@ -127,6 +127,7 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
     can_edit = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
     can_edit_metadata = serializers.SerializerMethodField()
+    can_edit_staff_only_columns = serializers.SerializerMethodField()
 
     def get_can_edit(self, obj):
         """Check if current user can edit this job."""
@@ -147,6 +148,25 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_user_edit_metadata(request.user)
+        return False
+
+    def get_can_edit_staff_only_columns(self, obj):
+        """Check if current user can edit staff-only columns."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            user = request.user
+            if not obj.metadata_table:
+                return False
+            assigned_staff = obj.staff.all()
+            has_assigned_staff = (
+                assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
+            )
+            if has_assigned_staff:
+                if user in assigned_staff:
+                    if obj.lab_group:
+                        return obj.lab_group.is_member(user)
+                    return True
+            return False
         return False
 
     class Meta:
@@ -200,6 +220,7 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "can_edit",
             "can_delete",
             "can_edit_metadata",
+            "can_edit_staff_only_columns",
         ]
         read_only_fields = [
             "id",
