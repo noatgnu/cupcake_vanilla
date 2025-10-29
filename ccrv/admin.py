@@ -179,14 +179,33 @@ class ProtocolModelAdmin(BaseResourceAdmin):
 class SessionAdmin(BaseResourceAdmin):
     """Admin interface for experimental sessions."""
 
-    list_display = ["name", "owner_display", "enabled", "processing", "protocols_count", "duration", "created_at"]
+    list_display = [
+        "name",
+        "owner_display",
+        "enabled",
+        "processing",
+        "protocols_count",
+        "projects_count",
+        "duration",
+        "created_at",
+    ]
     list_filter = ["enabled", "processing", "created_at", "updated_at", "started_at", "ended_at", "lab_group"]
-    search_fields = ["name", "unique_id", "owner__username", "owner__first_name", "owner__last_name"]
-    filter_horizontal = ["protocols", "editors", "viewers"]
+    search_fields = [
+        "name",
+        "unique_id",
+        "owner__username",
+        "owner__first_name",
+        "owner__last_name",
+        "projects__project_name",
+    ]
+    filter_horizontal = ["protocols", "projects", "editors", "viewers"]
 
     fieldsets = (
         ("Session Information", {"fields": ("name", "enabled", "processing", "owner", "lab_group")}),
-        ("Protocols", {"fields": ("protocols",), "description": "Lab protocols used in this session"}),
+        (
+            "Projects & Protocols",
+            {"fields": ("projects", "protocols"), "description": "Projects and protocols associated with this session"},
+        ),
         ("Time Tracking", {"fields": ("started_at", "ended_at"), "description": "Session timing information"}),
         ("Permissions", {"fields": ("editors", "viewers"), "classes": ("collapse",)}),
         ("System Information", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
@@ -202,6 +221,16 @@ class SessionAdmin(BaseResourceAdmin):
         return "0 protocols"
 
     protocols_count.short_description = "Protocols"
+
+    def projects_count(self, obj):
+        """Display count of associated projects."""
+        count = obj.projects.count()
+        if count > 0:
+            url = reverse("admin:ccrv_project_changelist")
+            return format_html('<a href="{}?sessions__id__exact={}">{} projects</a>', url, obj.id, count)
+        return "0 projects"
+
+    projects_count.short_description = "Projects"
 
     def duration(self, obj):
         """Display session duration if available."""
@@ -220,7 +249,7 @@ class SessionAdmin(BaseResourceAdmin):
             super()
             .get_queryset(request)
             .select_related("owner", "lab_group", "remote_host")
-            .prefetch_related("protocols", "editors", "viewers")
+            .prefetch_related("protocols", "projects", "editors", "viewers")
         )
 
 

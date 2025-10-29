@@ -417,10 +417,16 @@ class InstrumentJobViewSet(BaseViewSet):
             raise PermissionDenied("You don't have permission to delete this job")
         super().perform_destroy(instance)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def submit(self, request, pk=None):
-        """Submit a job for processing."""
-        job = self.get_object()
+        """
+        Submit a job for processing.
+        Only job owner can submit draft jobs.
+        """
+        job = InstrumentJob.objects.get(pk=pk)
+
+        if job.user != request.user:
+            raise PermissionDenied("Only the job owner can submit the job")
 
         if job.status != "draft":
             return Response({"error": "Only draft jobs can be submitted"}, status=status.HTTP_400_BAD_REQUEST)
@@ -432,10 +438,23 @@ class InstrumentJobViewSet(BaseViewSet):
         serializer = self.get_serializer(job)
         return Response({"message": "Job submitted successfully", "job": serializer.data})
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def complete(self, request, pk=None):
-        """Mark a job as completed."""
-        job = self.get_object()
+        """
+        Mark a job as completed.
+        Can be done by job owner, assigned staff, or lab_group members.
+        """
+        job = InstrumentJob.objects.get(pk=pk)
+
+        # Check permissions: owner, assigned staff, or lab_group member
+        can_complete = (
+            job.user == request.user
+            or request.user in job.staff.all()
+            or (job.lab_group and job.lab_group.is_member(request.user))
+        )
+
+        if not can_complete:
+            raise PermissionDenied("You don't have permission to complete this job")
 
         if job.status not in ["submitted", "pending", "in_progress"]:
             return Response(
@@ -449,10 +468,23 @@ class InstrumentJobViewSet(BaseViewSet):
         serializer = self.get_serializer(job)
         return Response({"message": "Job completed successfully", "job": serializer.data})
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def cancel(self, request, pk=None):
-        """Cancel a job."""
-        job = self.get_object()
+        """
+        Cancel a job.
+        Can be done by job owner, assigned staff, or lab_group members.
+        """
+        job = InstrumentJob.objects.get(pk=pk)
+
+        # Check permissions: owner, assigned staff, or lab_group member
+        can_cancel = (
+            job.user == request.user
+            or request.user in job.staff.all()
+            or (job.lab_group and job.lab_group.is_member(request.user))
+        )
+
+        if not can_cancel:
+            raise PermissionDenied("You don't have permission to cancel this job")
 
         if job.status == "completed":
             return Response({"error": "Cannot cancel a completed job"}, status=status.HTTP_400_BAD_REQUEST)

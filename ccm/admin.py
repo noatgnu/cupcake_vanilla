@@ -6,14 +6,18 @@ from .models import (
     ExternalContact,
     ExternalContactDetails,
     Instrument,
+    InstrumentAnnotation,
     InstrumentJob,
+    InstrumentPermission,
     InstrumentUsage,
     MaintenanceLog,
+    MaintenanceLogAnnotation,
     Reagent,
     ReagentAction,
     ReagentSubscription,
     StorageObject,
     StoredReagent,
+    StoredReagentAnnotation,
     SupportInformation,
 )
 
@@ -113,9 +117,10 @@ class ReagentSubscriptionAdmin(admin.ModelAdmin):
 
 @admin.register(ReagentAction)
 class ReagentActionAdmin(admin.ModelAdmin):
-    list_display = ["action_type", "reagent", "quantity", "user", "created_at"]
+    list_display = ["action_type", "reagent", "quantity", "user", "session", "step", "created_at"]
     list_filter = ["action_type", "created_at"]
     search_fields = ["reagent__reagent__name", "user__username", "notes"]
+    raw_id_fields = ["reagent", "user", "session", "step"]
     readonly_fields = ["created_at", "updated_at"]
 
 
@@ -142,26 +147,46 @@ class InstrumentJobAdmin(admin.ModelAdmin):
         "job_name_display",
         "instrument",
         "user",
+        "lab_group",
+        "project",
         "status",
         "job_type",
         "sample_number",
         "billing_hours",
         "created_at",
     ]
-    list_filter = ["status", "job_type", "sample_type", "assigned", "created_at", "completed_at"]
+    list_filter = ["status", "job_type", "sample_type", "assigned", "lab_group", "created_at", "completed_at"]
     search_fields = [
         "job_name",
         "user__username",
         "user__email",
         "instrument__instrument_name",
+        "lab_group__name",
+        "project__project_name",
         "cost_center",
         "funder",
     ]
-    raw_id_fields = ["user", "instrument", "instrument_usage", "metadata_table", "stored_reagent"]
+    raw_id_fields = [
+        "user",
+        "instrument",
+        "instrument_usage",
+        "lab_group",
+        "project",
+        "metadata_table_template",
+        "metadata_table",
+        "stored_reagent",
+    ]
     filter_horizontal = ["staff", "user_annotations", "staff_annotations"]
 
     fieldsets = (
-        ("Basic Information", {"fields": ("job_name", "job_type", "status", "user", "instrument")}),
+        (
+            "Basic Information",
+            {"fields": ("job_name", "job_type", "status", "user", "instrument", "lab_group", "project")},
+        ),
+        (
+            "Permissions",
+            {"fields": ("permission_info",), "classes": ("collapse",)},
+        ),
         ("Sample Information", {"fields": ("sample_number", "sample_type", "injection_volume", "injection_unit")}),
         (
             "Technical Details",
@@ -173,7 +198,14 @@ class InstrumentJobAdmin(admin.ModelAdmin):
         (
             "Billing & Administrative",
             {
-                "fields": ("cost_center", "funder", "metadata_table"),
+                "fields": ("cost_center", "funder"),
+            },
+        ),
+        (
+            "Metadata",
+            {
+                "fields": ("metadata_table_template", "metadata_table"),
+                "classes": ("collapse",),
             },
         ),
         ("Staff Assignment", {"fields": ("assigned", "staff"), "classes": ("collapse",)}),
@@ -199,7 +231,7 @@ class InstrumentJobAdmin(admin.ModelAdmin):
         ("Timestamps", {"fields": ("submitted_at", "completed_at"), "classes": ("collapse",)}),
     )
 
-    readonly_fields = ["created_at", "updated_at"]
+    readonly_fields = ["created_at", "updated_at", "permission_info"]
     date_hierarchy = "created_at"
 
     def job_name_display(self, obj):
@@ -218,5 +250,84 @@ class InstrumentJobAdmin(admin.ModelAdmin):
 
     billing_hours.short_description = "Billing Hours (Instrument:Personnel)"
 
+    def permission_info(self, obj):
+        """Display permission information for the job."""
+        if not obj.pk:
+            return "Save job first to see permissions"
+
+        info = []
+        if obj.status == "draft":
+            info.append(f"🔒 Draft - Only owner ({obj.user.username}) can edit")
+        else:
+            info.append(f"📝 {obj.get_status_display()}")
+            editors = []
+            if obj.lab_group:
+                editors.append(f"Lab Group: {obj.lab_group.name}")
+            if obj.staff.exists():
+                staff_names = ", ".join([s.username for s in obj.staff.all()[:3]])
+                if obj.staff.count() > 3:
+                    staff_names += f" (+{obj.staff.count() - 3} more)"
+                editors.append(f"Staff: {staff_names}")
+            if editors:
+                info.append("Can edit: " + " | ".join(editors))
+            else:
+                info.append("⚠️ No assigned staff or lab group")
+
+        return format_html("<br>".join(info))
+
+    permission_info.short_description = "Permissions"
+
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("user", "instrument", "metadata_table", "stored_reagent")
+        return (
+            super()
+            .get_queryset(request)
+            .select_related(
+                "user",
+                "instrument",
+                "lab_group",
+                "project",
+                "metadata_table",
+                "metadata_table_template",
+                "stored_reagent",
+            )
+            .prefetch_related("staff")
+        )
+
+
+@admin.register(InstrumentPermission)
+class InstrumentPermissionAdmin(admin.ModelAdmin):
+    list_display = ["instrument", "user", "can_view", "can_book", "can_manage", "created_at"]
+    list_filter = ["can_view", "can_book", "can_manage", "created_at"]
+    search_fields = ["instrument__instrument_name", "user__username", "user__email"]
+    raw_id_fields = ["instrument", "user"]
+    readonly_fields = ["created_at", "updated_at"]
+
+
+@admin.register(InstrumentAnnotation)
+class InstrumentAnnotationAdmin(admin.ModelAdmin):
+    list_display = ["instrument", "folder", "annotation", "order", "created_at"]
+    list_filter = ["folder", "created_at"]
+    search_fields = ["instrument__instrument_name", "annotation__file_name", "folder__folder_name"]
+    raw_id_fields = ["instrument", "annotation", "folder"]
+    readonly_fields = ["created_at", "updated_at"]
+    ordering = ["instrument", "folder", "order"]
+
+
+@admin.register(StoredReagentAnnotation)
+class StoredReagentAnnotationAdmin(admin.ModelAdmin):
+    list_display = ["stored_reagent", "folder", "annotation", "order", "created_at"]
+    list_filter = ["folder", "created_at"]
+    search_fields = ["stored_reagent__reagent__name", "annotation__file_name", "folder__folder_name"]
+    raw_id_fields = ["stored_reagent", "annotation", "folder"]
+    readonly_fields = ["created_at", "updated_at"]
+    ordering = ["stored_reagent", "folder", "order"]
+
+
+@admin.register(MaintenanceLogAnnotation)
+class MaintenanceLogAnnotationAdmin(admin.ModelAdmin):
+    list_display = ["maintenance_log", "annotation", "order", "created_at"]
+    list_filter = ["created_at"]
+    search_fields = ["maintenance_log__maintenance_description", "annotation__file_name"]
+    raw_id_fields = ["maintenance_log", "annotation"]
+    readonly_fields = ["created_at", "updated_at"]
+    ordering = ["maintenance_log", "order"]

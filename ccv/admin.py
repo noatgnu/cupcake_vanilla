@@ -4,6 +4,8 @@ Django Admin configuration for CUPCAKE Vanilla metadata models.
 
 from django.contrib import admin
 from django.db import models
+from django.urls import reverse
+from django.utils.html import format_html
 
 from simple_history.admin import SimpleHistoryAdmin
 
@@ -40,30 +42,49 @@ class MetadataTableAdmin(SimpleHistoryAdmin):
         "description",
         "sample_count",
         "get_column_count",
+        "source_app",
         "owner",
         "lab_group",
         "is_published",
         "is_locked",
         "created_at",
     ]
-    list_filter = ["is_published", "is_locked", "lab_group", "owner", "created_at"]
+    list_filter = ["is_published", "is_locked", "source_app", "lab_group", "owner", "created_at"]
     search_fields = ["name", "description"]
     ordering = ["-created_at", "name"]
-    readonly_fields = ["created_at", "updated_at"]
+    readonly_fields = ["created_at", "updated_at", "associated_jobs_info"]
 
     fieldsets = (
         (
             "Basic Information",
-            {"fields": ("name", "description", "sample_count", "version")},
+            {"fields": ("name", "description", "sample_count", "version", "source_app")},
         ),
         ("Ownership", {"fields": ("owner", "lab_group", "visibility")}),
         ("Status", {"fields": ("is_locked", "is_published")}),
         (
             "Optional Association",
-            {"fields": ("content_type", "object_id"), "classes": ("collapse",)},
+            {"fields": ("content_type", "object_id", "associated_jobs_info"), "classes": ("collapse",)},
         ),
         ("Audit", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
     )
+
+    def associated_jobs_info(self, obj):
+        """Display information about associated instrument jobs if any."""
+        if not obj.pk:
+            return "Save table first to see associations"
+
+        if hasattr(obj, "instrument_jobs") and obj.instrument_jobs.exists():
+            jobs = obj.instrument_jobs.all()[:5]
+            job_links = []
+            for job in jobs:
+                url = reverse("admin:ccm_instrumentjob_change", args=[job.pk])
+                job_links.append(f'<a href="{url}">{job.job_name or f"Job #{job.pk}"} ({job.get_status_display()})</a>')
+            if obj.instrument_jobs.count() > 5:
+                job_links.append(f"... and {obj.instrument_jobs.count() - 5} more")
+            return format_html("<br>".join(job_links))
+        return "No associated jobs"
+
+    associated_jobs_info.short_description = "Associated Jobs"
 
 
 @admin.register(MetadataColumn)
@@ -78,6 +99,7 @@ class MetadataColumnAdmin(SimpleHistoryAdmin):
         "mandatory",
         "hidden",
         "readonly",
+        "staff_only",
         "metadata_table",
         "created_at",
     ]
@@ -86,6 +108,7 @@ class MetadataColumnAdmin(SimpleHistoryAdmin):
         "mandatory",
         "hidden",
         "readonly",
+        "staff_only",
         "auto_generated",
         "not_applicable",
         "created_at",
@@ -102,7 +125,7 @@ class MetadataColumnAdmin(SimpleHistoryAdmin):
         ),
         (
             "Configuration",
-            {"fields": ("mandatory", "hidden", "auto_generated", "readonly")},
+            {"fields": ("mandatory", "hidden", "auto_generated", "readonly", "staff_only")},
         ),
         (
             "Advanced",
@@ -569,6 +592,7 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
         "ontology_type",
         "schema",
         "visibility",
+        "staff_only",
         "owner",
         "lab_group",
         "usage_count",
@@ -580,6 +604,7 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
         "ontology_type",
         "schema",
         "is_active",
+        "staff_only",
         "is_system_template",
         "enable_typeahead",
         "excel_validation",
@@ -656,6 +681,7 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "visibility",
+                    "staff_only",
                     "owner",
                     "lab_group",
                     "is_system_template",

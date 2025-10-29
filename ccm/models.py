@@ -1194,6 +1194,7 @@ class InstrumentJob(models.Model):
         Permission rules:
         - Draft stage: Only job owner can edit
         - After draft: Only assigned lab_group members or assigned staff can edit
+        - Django staff/superuser: Same rules as regular users (must be owner/assigned)
 
         Args:
             user: User instance
@@ -1203,10 +1204,6 @@ class InstrumentJob(models.Model):
         """
         if not user or not self.metadata_table:
             return False
-
-        # System admin always has access
-        if user.is_staff or user.is_superuser:
-            return True
 
         # Job owner can edit only in draft status
         if self.user == user and self.status == "draft":

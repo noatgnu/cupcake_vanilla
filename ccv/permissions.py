@@ -102,11 +102,9 @@ class MetadataTableAccessPermission(BasePermission):
         Rules:
         - Draft status: Only job owner can edit
         - After draft: Only assigned lab_group members or assigned staff can edit
+        - Django staff/superuser: Same rules as regular users (must be owner/assigned)
         """
         try:
-            if user.is_staff or user.is_superuser:
-                return True
-
             # Job owner can edit only in draft status
             if hasattr(job, "user") and hasattr(job, "status"):
                 if job.user == user and job.status == "draft":
