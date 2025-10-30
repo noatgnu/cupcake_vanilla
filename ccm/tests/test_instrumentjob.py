@@ -518,7 +518,7 @@ class InstrumentJobStaffAssignmentTest(TestCase):
         self.assertIn("staff2", str(serializer.errors["staff"]))
 
     def test_staff_assignment_no_lab_group(self):
-        """Test that staff can be assigned without lab_group (no validation)."""
+        """Test that staff cannot be assigned without lab_group (validation enforced)."""
         from ccm.serializers import InstrumentJobSerializer
 
         job_data = {
@@ -528,4 +528,8 @@ class InstrumentJobStaffAssignmentTest(TestCase):
         }
 
         serializer = InstrumentJobSerializer(data=job_data)
-        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("lab_group", serializer.errors)
+        self.assertEqual(
+            str(serializer.errors["lab_group"][0]), "Lab group is required when staff members are assigned to the job"
+        )

@@ -331,6 +331,45 @@ The Team
         return paginator.get_paginated_response(serializer.data)
 
     @action(detail=True, methods=["get"])
+    def check_membership(self, request, pk=None):
+        """
+        Check if a user is a member of this lab group.
+
+        Query Parameters:
+            - user_id: User ID to check (optional, defaults to current user)
+
+        Returns:
+            - is_member: Boolean indicating membership status
+            - is_direct_member: Boolean indicating direct membership (not through subgroup)
+            - user_id: ID of the checked user
+        """
+        lab_group = self.get_object()
+        user_id = request.query_params.get("user_id")
+
+        if user_id:
+            try:
+                from django.contrib.auth import get_user_model
+
+                User = get_user_model()
+                check_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            check_user = request.user
+
+        is_member = lab_group.is_member(check_user)
+        is_direct_member = lab_group.members.filter(id=check_user.id).exists()
+
+        return Response(
+            {
+                "is_member": is_member,
+                "is_direct_member": is_direct_member,
+                "user_id": check_user.id,
+                "user_username": check_user.username,
+            }
+        )
+
+    @action(detail=True, methods=["get"])
     def invitations(self, request, pk=None):
         """Get invitations for this lab group."""
         lab_group = self.get_object()

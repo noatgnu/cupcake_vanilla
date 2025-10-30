@@ -151,7 +151,15 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
         return False
 
     def get_can_edit_staff_only_columns(self, obj):
-        """Check if current user can edit staff-only columns."""
+        """
+        Check if current user can edit staff-only columns.
+
+        Rules:
+        - If staff assigned: Only assigned staff can edit (staff are always direct lab_group members)
+        - If no staff but lab_group exists: Direct lab_group members can edit (not subgroup members)
+
+        Note: Staff-only permissions require DIRECT membership in the lab_group for security.
+        """
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             user = request.user
@@ -162,9 +170,9 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
                 assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
             )
             if has_assigned_staff:
-                if user in assigned_staff:
-                    if obj.lab_group:
-                        return obj.lab_group.is_member(user)
+                return user in assigned_staff
+            else:
+                if obj.lab_group and obj.lab_group.members.filter(id=user.id).exists():
                     return True
             return False
         return False
@@ -261,17 +269,44 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """
-        Validate that assigned staff members have can_process_jobs permission for the lab_group.
+        Validate staff assignment and lab_group requirements.
 
-        Staff can only be assigned if they have can_process_jobs=True permission
-        for the specified lab_group.
+        Rules:
+        1. If staff is assigned, lab_group MUST be present
+        2. All assigned staff MUST be DIRECT members of the lab_group (not subgroup members)
+        3. All assigned staff MUST have can_process_jobs permission for the lab_group
+        4. Staff and lab_group can both be cleared (set to empty/None)
+
+        Note: Staff assignment requires DIRECT membership in the lab_group for security.
         """
-        staff = attrs.get("staff", [])
+        staff = attrs.get("staff")
         lab_group = attrs.get("lab_group")
 
+        # Get existing values if not in attrs (for partial updates)
+        if self.instance:
+            if staff is None:
+                staff = list(self.instance.staff.all())
+            if lab_group is None:
+                lab_group = self.instance.lab_group
+
+        # Rule 1: If staff is assigned, lab_group is required
+        if staff and not lab_group:
+            raise serializers.ValidationError(
+                {"lab_group": "Lab group is required when staff members are assigned to the job"}
+            )
+
+        # Rules 2 & 3: Validate staff members
         if staff and lab_group:
             invalid_staff = []
+            not_direct_member_staff = []
+
             for staff_user in staff:
+                # Check if staff is a DIRECT member of the lab_group (not subgroup)
+                if not lab_group.members.filter(id=staff_user.id).exists():
+                    not_direct_member_staff.append(staff_user.username)
+                    continue
+
+                # Check if staff has can_process_jobs permission
                 has_permission = LabGroupPermission.objects.filter(
                     user=staff_user, lab_group=lab_group, can_process_jobs=True
                 ).exists()
@@ -279,10 +314,17 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
                 if not has_permission:
                     invalid_staff.append(staff_user.username)
 
+            if not_direct_member_staff:
+                raise serializers.ValidationError(
+                    {
+                        "staff": f"The following users are not direct members of the lab group: {', '.join(not_direct_member_staff)}"
+                    }
+                )
+
             if invalid_staff:
                 raise serializers.ValidationError(
                     {
-                        "staff": f"The following users cannot be assigned as they don't have can_process_jobs permission for this lab group: {', '.join(invalid_staff)}"
+                        "staff": f"The following users don't have can_process_jobs permission for this lab group: {', '.join(invalid_staff)}"
                     }
                 )
 
