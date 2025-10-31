@@ -5,6 +5,9 @@ Provides REST API serialization for instrument management, jobs, usage tracking,
 and maintenance functionality.
 """
 
+import logging
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 
@@ -12,12 +15,15 @@ from rest_framework import serializers
 
 from ccc.models import Annotation, LabGroupPermission
 
+logger = logging.getLogger(__name__)
+
 from .models import (
     ExternalContact,
     ExternalContactDetails,
     Instrument,
     InstrumentAnnotation,
     InstrumentJob,
+    InstrumentJobAnnotation,
     InstrumentPermission,
     InstrumentUsage,
     MaintenanceLog,
@@ -32,6 +38,62 @@ from .models import (
 )
 
 User = get_user_model()
+
+
+def queue_annotation_transcription(annotation, auto_transcribe=True):
+    """
+    Queue transcription task for audio/video annotations.
+
+    Args:
+        annotation: The Annotation object to transcribe
+        auto_transcribe: Whether to automatically queue transcription (default: True)
+    """
+    if not auto_transcribe:
+        return
+
+    if not getattr(settings, "USE_WHISPER", False):
+        return
+
+    if not getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False):
+        return
+
+    annotation_type = annotation.annotation_type
+    if annotation_type not in ["audio", "video"]:
+        return
+
+    if not annotation.file:
+        return
+
+    if annotation.transcribed:
+        return
+
+    try:
+        from ccc.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+
+        file_path = annotation.file.path
+        model_path = settings.WHISPERCPP_DEFAULT_MODEL
+
+        if annotation_type == "audio":
+            transcribe_audio.delay(
+                audio_path=file_path,
+                model_path=model_path,
+                annotation_id=annotation.id,
+                language="auto",
+                translate=True,
+            )
+            logger.info(f"Queued audio transcription for annotation {annotation.id}")
+        elif annotation_type == "video":
+            transcribe_audio_from_video.delay(
+                video_path=file_path,
+                model_path=model_path,
+                annotation_id=annotation.id,
+                language="auto",
+                translate=True,
+            )
+            logger.info(f"Queued video transcription for annotation {annotation.id}")
+
+    except Exception as e:
+        logger.error(f"Failed to queue transcription for annotation {annotation.id}: {str(e)}")
 
 
 class UserBasicSerializer(serializers.ModelSerializer):
@@ -214,8 +276,6 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
             "metadata_table_template_name",
             "metadata_table",
             "metadata_table_name",
-            "user_annotations",
-            "staff_annotations",
             "stored_reagent",
             "instrument_start_time",
             "instrument_end_time",
@@ -815,7 +875,7 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """
         Create instrument annotation with non-file annotation.
-        Use annotation_data for nested object: {"instrument": 1, "folder": 2, "annotation_data": {"annotation": "text", "annotationType": "text"}}
+        Use annotation_data for nested object: {"instrument": 1, "folder": 2, "annotation_data": {"annotation": "text", "annotationType": "text", "auto_transcribe": true}}
         Use annotation for existing ID: {"instrument": 1, "folder": 2, "annotation": 5}
         """
         annotation_data = validated_data.pop("annotation_data", None)
@@ -823,6 +883,7 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
         if annotation_data:
             annotation_type = annotation_data.get("annotation_type", "text")
             annotation_text = annotation_data.get("annotation", "")
+            auto_transcribe = annotation_data.get("auto_transcribe", True)
 
             if not annotation_text:
                 raise serializers.ValidationError(
@@ -842,6 +903,8 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
                 folder=folder,
                 owner=user,
             )
+
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             validated_data["annotation"] = annotation
 
@@ -894,6 +957,119 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
+
+
+class InstrumentJobAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for InstrumentJobAnnotation model."""
+
+    annotation = serializers.PrimaryKeyRelatedField(queryset=Annotation.objects.all(), required=False, allow_null=True)
+    annotation_data = serializers.JSONField(write_only=True, required=False)
+    instrument_job_name = serializers.CharField(source="instrument_job.job_name", read_only=True)
+    folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
+    annotation_name = serializers.CharField(source="annotation.name", read_only=True)
+    annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
+    annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
+    annotation_user = serializers.CharField(source="annotation.user.username", read_only=True)
+    transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
+    transcription = serializers.CharField(
+        source="annotation.transcription", required=False, allow_blank=True, allow_null=True
+    )
+    language = serializers.CharField(source="annotation.language", required=False, allow_blank=True, allow_null=True)
+    translation = serializers.CharField(
+        source="annotation.translation", required=False, allow_blank=True, allow_null=True
+    )
+    scratched = serializers.BooleanField(source="annotation.scratched", required=False)
+    file_url = serializers.SerializerMethodField()
+
+    # Permission fields
+    can_view = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InstrumentJobAnnotation
+        fields = [
+            "id",
+            "instrument_job",
+            "instrument_job_name",
+            "folder",
+            "folder_name",
+            "annotation",
+            "annotation_data",
+            "annotation_name",
+            "annotation_type",
+            "annotation_text",
+            "annotation_user",
+            "transcribed",
+            "transcription",
+            "language",
+            "translation",
+            "scratched",
+            "file_url",
+            "order",
+            "can_view",
+            "can_edit",
+            "can_delete",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "instrument_job_name",
+            "folder_name",
+            "annotation_name",
+            "annotation_type",
+            "annotation_user",
+            "transcribed",
+            "file_url",
+            "can_view",
+            "can_edit",
+            "can_delete",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_file_url(self, obj):
+        """Get signed download URL for annotation file if exists."""
+        if not obj.annotation or not obj.annotation.file:
+            return None
+
+        request = self.context.get("request")
+        if not request or not hasattr(request, "user") or not request.user.is_authenticated:
+            return None
+
+        if not obj.annotation.can_view(request.user):
+            return None
+
+        try:
+            from django.urls import reverse
+
+            token = obj.annotation.generate_download_token(request.user)
+            download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.annotation.id})
+            return request.build_absolute_uri(f"{download_path}?token={token}")
+        except Exception:
+            return None
+
+    def get_can_view(self, obj):
+        """Check if user can view this annotation."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_view(request.user)
+        return False
+
+    def get_can_edit(self, obj):
+        """Check if user can edit this annotation."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_edit(request.user)
+        return False
+
+    def get_can_delete(self, obj):
+        """Check if user can delete this annotation."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            return obj.can_delete(request.user)
+        return False
 
 
 class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
@@ -967,7 +1143,7 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """
         Create stored reagent annotation with non-file annotation.
-        Use annotation_data for nested object: {"storedReagent": 1, "folder": 2, "annotation_data": {"annotation": "text", "annotationType": "text"}}
+        Use annotation_data for nested object: {"storedReagent": 1, "folder": 2, "annotation_data": {"annotation": "text", "annotationType": "text", "auto_transcribe": true}}
         Use annotation for existing ID: {"storedReagent": 1, "folder": 2, "annotation": 5}
         """
         annotation_data = validated_data.pop("annotation_data", None)
@@ -975,6 +1151,7 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
         if annotation_data:
             annotation_type = annotation_data.get("annotation_type", "text")
             annotation_text = annotation_data.get("annotation", "")
+            auto_transcribe = annotation_data.get("auto_transcribe", True)
 
             if not annotation_text:
                 raise serializers.ValidationError(
@@ -994,6 +1171,8 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
                 folder=folder,
                 owner=user,
             )
+
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             validated_data["annotation"] = annotation
 
@@ -1115,7 +1294,7 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """
         Create maintenance log annotation with non-file annotation.
-        Use annotation_data for nested object: {"maintenanceLog": 1, "annotation_data": {"annotation": "text", "annotationType": "text"}}
+        Use annotation_data for nested object: {"maintenanceLog": 1, "annotation_data": {"annotation": "text", "annotationType": "text", "auto_transcribe": true}}
         Use annotation for existing ID: {"maintenanceLog": 1, "annotation": 5}
         """
         annotation_data = validated_data.pop("annotation_data", None)
@@ -1123,6 +1302,7 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
         if annotation_data:
             annotation_type = annotation_data.get("annotation_type", "text")
             annotation_text = annotation_data.get("annotation", "")
+            auto_transcribe = annotation_data.get("auto_transcribe", True)
 
             if not annotation_text:
                 raise serializers.ValidationError(
@@ -1140,6 +1320,8 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
                 scratched=annotation_data.get("scratched", False),
                 owner=user,
             )
+
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             validated_data["annotation"] = annotation
 

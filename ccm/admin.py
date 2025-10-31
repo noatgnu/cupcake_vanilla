@@ -8,6 +8,7 @@ from .models import (
     Instrument,
     InstrumentAnnotation,
     InstrumentJob,
+    InstrumentJobAnnotation,
     InstrumentPermission,
     InstrumentUsage,
     MaintenanceLog,
@@ -176,7 +177,7 @@ class InstrumentJobAdmin(admin.ModelAdmin):
         "metadata_table",
         "stored_reagent",
     ]
-    filter_horizontal = ["staff", "user_annotations", "staff_annotations"]
+    filter_horizontal = ["staff"]
 
     fieldsets = (
         (
@@ -331,3 +332,13 @@ class MaintenanceLogAnnotationAdmin(admin.ModelAdmin):
     raw_id_fields = ["maintenance_log", "annotation"]
     readonly_fields = ["created_at", "updated_at"]
     ordering = ["maintenance_log", "order"]
+
+
+@admin.register(InstrumentJobAnnotation)
+class InstrumentJobAnnotationAdmin(admin.ModelAdmin):
+    list_display = ["instrument_job", "folder", "annotation", "order", "created_at"]
+    list_filter = ["folder", "created_at"]
+    search_fields = ["instrument_job__job_name", "annotation__file_name", "folder__folder_name"]
+    raw_id_fields = ["instrument_job", "annotation", "folder"]
+    readonly_fields = ["created_at", "updated_at"]
+    ordering = ["instrument_job", "folder", "order"]

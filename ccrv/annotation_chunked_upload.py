@@ -43,6 +43,7 @@ class StepAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             if not annotation_type:
                 annotation_type = self._detect_annotation_type(uploaded_file.filename)
             folder_id = request.data.get("folder_id")
+            auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
 
             if not session_id:
                 return Response(
@@ -91,6 +92,7 @@ class StepAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 annotation_type,
                 folder,
                 request.user,
+                auto_transcribe,
             )
 
             order = StepAnnotation.objects.filter(session=session, step=step).count()
@@ -142,6 +144,7 @@ class SessionAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             if not annotation_type:
                 annotation_type = self._detect_annotation_type(uploaded_file.filename)
             folder_id = request.data.get("folder_id")
+            auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
 
             if not session_id:
                 return Response(
@@ -176,6 +179,7 @@ class SessionAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 annotation_type,
                 folder,
                 request.user,
+                auto_transcribe,
             )
 
             order = SessionAnnotation.objects.filter(session=session).count()
@@ -226,6 +230,7 @@ class SessionAnnotationFolderChunkedUploadView(AnnotationChunkedUploadView):
             annotation_type = request.data.get("annotation_type")
             if not annotation_type:
                 annotation_type = self._detect_annotation_type(uploaded_file.filename)
+            auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
 
             if not session_id:
                 return Response(
@@ -267,6 +272,7 @@ class SessionAnnotationFolderChunkedUploadView(AnnotationChunkedUploadView):
                 annotation_type,
                 folder,
                 request.user,
+                auto_transcribe,
             )
 
             order = SessionAnnotationFolder.objects.filter(session=session, folder=folder).count()

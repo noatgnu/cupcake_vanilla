@@ -1445,7 +1445,6 @@ class Annotation(AbstractResource):
         ("calculator", "Calculator"),
         ("mcalculator", "Molarity Calculator"),
         ("randomization", "Randomization"),
-        ("instrument", "Instrument"),
         ("metadata", "Metadata"),
         ("booking", "Booking"),
     ]

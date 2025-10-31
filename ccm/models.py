@@ -1014,8 +1014,10 @@ class InstrumentJob(models.Model):
     )
 
     # Attachments via CCC annotation system
-    user_annotations = models.ManyToManyField("ccc.Annotation", related_name="instrument_jobs", blank=True)
-    staff_annotations = models.ManyToManyField("ccc.Annotation", related_name="assigned_instrument_jobs", blank=True)
+    # NOTE: Annotations now use junction models InstrumentJobUserAnnotation and InstrumentJobStaffAnnotation
+    # Old fields kept for migration compatibility but should not be used directly
+    # user_annotations = models.ManyToManyField("ccc.Annotation", related_name="instrument_jobs", blank=True)
+    # staff_annotations = models.ManyToManyField("ccc.Annotation", related_name="assigned_instrument_jobs", blank=True)
 
     # Reagents
     stored_reagent = models.ForeignKey(
@@ -1241,6 +1243,25 @@ class InstrumentJob(models.Model):
 
         # Return the metadata table (staff permissions are checked separately)
         return self.metadata_table
+
+    def get_annotations(self, user=None):
+        """
+        Get annotations for this instrument job that the user can view.
+
+        Args:
+            user: User to check permissions for. If None, returns all annotations.
+
+        Returns:
+            QuerySet: InstrumentJobAnnotation objects the user can view
+        """
+        annotations = self.instrument_job_annotations.select_related("annotation", "folder")
+
+        if user:
+            # Filter based on view permissions
+            viewable_annotations = [anno for anno in annotations if anno.can_view(user)]
+            return annotations.filter(id__in=[a.id for a in viewable_annotations])
+
+        return annotations
 
     def get_metadata_summary(self):
         """
@@ -1666,6 +1687,115 @@ class MaintenanceLogAnnotation(models.Model):
 
     def __str__(self):
         return f"{self.maintenance_log} - {self.annotation}"
+
+
+class InstrumentJobAnnotation(models.Model):
+    """
+    Junction model linking InstrumentJobs to Annotations.
+
+    Permissions are determined by who created the annotation and the instrument job's
+    staff-only metadata edit permission rules.
+    """
+
+    instrument_job = models.ForeignKey(
+        InstrumentJob,
+        on_delete=models.CASCADE,
+        related_name="instrument_job_annotations",
+        help_text="InstrumentJob this annotation is attached to",
+    )
+    annotation = models.ForeignKey(
+        "ccc.Annotation",
+        on_delete=models.CASCADE,
+        related_name="instrument_job_attachments",
+        help_text="Annotation attached to this instrument job",
+    )
+    folder = models.ForeignKey(
+        "ccc.AnnotationFolder",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="instrument_job_annotations",
+        help_text="Folder containing this annotation",
+    )
+
+    order = models.PositiveIntegerField(default=0, help_text="Display order of annotations within the job")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccm"
+        unique_together = [["instrument_job", "annotation"]]
+        ordering = ["order", "created_at"]
+
+    def can_view(self, user):
+        """
+        Check if user can view this annotation.
+        Uses the same permission logic as staff-only metadata columns.
+        """
+        if not user:
+            return False
+
+        # Job owner can always view
+        if self.instrument_job.user == user:
+            return True
+
+        # Check staff-only metadata edit permission
+        assigned_staff = self.instrument_job.staff.all()
+        has_assigned_staff = assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
+
+        if has_assigned_staff:
+            # Only assigned staff can view
+            return user in assigned_staff
+        else:
+            # No staff assigned, lab_group members can view
+            if self.instrument_job.lab_group:
+                return self.instrument_job.lab_group.members.filter(id=user.id).exists()
+
+        return False
+
+    def can_edit(self, user):
+        """
+        Check if user can edit this annotation.
+        Only the annotation creator can edit.
+        """
+        return self.annotation.user == user
+
+    def can_delete(self, user):
+        """
+        Check if user can delete this annotation.
+        Only the annotation creator can delete.
+        """
+        return self.annotation.user == user
+
+    def can_create(self, user):
+        """
+        Check if user can create annotations for this job.
+        Uses the same permission logic as staff-only metadata columns.
+        """
+        if not user:
+            return False
+
+        # Job owner can always create
+        if self.instrument_job.user == user:
+            return True
+
+        # Check staff-only metadata edit permission
+        assigned_staff = self.instrument_job.staff.all()
+        has_assigned_staff = assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
+
+        if has_assigned_staff:
+            # Only assigned staff can create
+            return user in assigned_staff
+        else:
+            # No staff assigned, lab_group direct members can create
+            if self.instrument_job.lab_group:
+                return self.instrument_job.lab_group.members.filter(id=user.id).exists()
+
+        return False
+
+    def __str__(self):
+        return f"{self.instrument_job} - {self.annotation}"
 
 
 class InstrumentPermission(models.Model):

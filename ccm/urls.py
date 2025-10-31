@@ -10,6 +10,7 @@ from rest_framework.routers import DefaultRouter
 
 from .annotation_chunked_upload import (
     InstrumentAnnotationChunkedUploadView,
+    InstrumentJobAnnotationChunkedUploadView,
     MaintenanceLogAnnotationChunkedUploadView,
     StoredReagentAnnotationChunkedUploadView,
 )
@@ -17,6 +18,7 @@ from .viewsets import (
     ExternalContactDetailsViewSet,
     ExternalContactViewSet,
     InstrumentAnnotationViewSet,
+    InstrumentJobAnnotationViewSet,
     InstrumentJobViewSet,
     InstrumentPermissionViewSet,
     InstrumentUsageViewSet,
@@ -41,6 +43,7 @@ router = DefaultRouter()
 router.register(r"instruments", InstrumentViewSet, basename="instrument")
 router.register(r"instrument-annotations", InstrumentAnnotationViewSet, basename="instrumentannotation")
 router.register(r"instrument-jobs", InstrumentJobViewSet, basename="instrumentjob")
+router.register(r"instrument-job-annotations", InstrumentJobAnnotationViewSet, basename="instrumentjobannotation")
 router.register(r"instrument-usage", InstrumentUsageViewSet, basename="instrumentusage")
 router.register(r"maintenance-logs", MaintenanceLogViewSet, basename="maintenancelog")
 router.register(r"maintenance-log-annotations", MaintenanceLogAnnotationViewSet, basename="maintenancelogannotation")
@@ -69,6 +72,16 @@ urlpatterns = [
         "upload/instrument-annotation-chunks/<uuid:pk>/",
         InstrumentAnnotationChunkedUploadView.as_view(),
         name="instrument-annotation-chunked-upload-detail",
+    ),
+    path(
+        "upload/instrument-job-annotation-chunks/",
+        InstrumentJobAnnotationChunkedUploadView.as_view(),
+        name="instrument-job-annotation-chunked-upload",
+    ),
+    path(
+        "upload/instrument-job-annotation-chunks/<uuid:pk>/",
+        InstrumentJobAnnotationChunkedUploadView.as_view(),
+        name="instrument-job-annotation-chunked-upload-detail",
     ),
     path(
         "upload/stored-reagent-annotation-chunks/",

@@ -14,9 +14,10 @@ import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.viewsets import ModelViewSet
 
 from ccc.models import AnnotationFolder, ResourceType
 from ccc.serializers import AnnotationFolderSerializer
@@ -30,6 +31,7 @@ from .models import (
     Instrument,
     InstrumentAnnotation,
     InstrumentJob,
+    InstrumentJobAnnotation,
     InstrumentPermission,
     InstrumentUsage,
     MaintenanceLog,
@@ -48,6 +50,7 @@ from .serializers import (
     ExternalContactSerializer,
     InstrumentAnnotationSerializer,
     InstrumentDetailSerializer,
+    InstrumentJobAnnotationSerializer,
     InstrumentJobDetailSerializer,
     InstrumentJobSerializer,
     InstrumentPermissionSerializer,
@@ -1629,5 +1632,101 @@ class MaintenanceLogAnnotationViewSet(BaseViewSet):
         """
         if not instance.can_delete(self.request.user):
             raise PermissionDenied("You do not have permission to delete this maintenance log annotation")
+
+        instance.delete()
+
+
+class InstrumentJobAnnotationViewSet(ModelViewSet):
+    """ViewSet for InstrumentJobAnnotation model."""
+
+    queryset = InstrumentJobAnnotation.objects.all()
+    serializer_class = InstrumentJobAnnotationSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["instrument_job", "folder"]
+    search_fields = ["instrument_job__job_name", "annotation__name"]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
+
+    def get_queryset(self):
+        """Filter annotations by user access permissions."""
+        user = self.request.user
+        queryset = self.queryset.select_related("instrument_job", "annotation", "folder")
+
+        if user.is_staff:
+            return queryset
+
+        accessible_annotations = []
+        for annotation_junction in queryset:
+            if annotation_junction.can_view(user):
+                accessible_annotations.append(annotation_junction.id)
+
+        return queryset.filter(id__in=accessible_annotations)
+
+    def create(self, request, *args, **kwargs):
+        """Create instrument job annotation, handling annotation_data if provided."""
+        annotation_data = request.data.get("annotation_data")
+
+        if annotation_data:
+            annotation_type = annotation_data.get("annotation_type", "text")
+            annotation_text = annotation_data.get("annotation", "")
+            auto_transcribe = annotation_data.get("auto_transcribe", True)
+
+            if not annotation_text:
+                return Response(
+                    {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from ccc.models import Annotation
+            from ccm.serializers import queue_annotation_transcription
+
+            annotation = Annotation.objects.create(
+                annotation=annotation_text,
+                annotation_type=annotation_type,
+                transcription=annotation_data.get("transcription"),
+                language=annotation_data.get("language"),
+                translation=annotation_data.get("translation"),
+                scratched=annotation_data.get("scratched", False),
+                owner=request.user,
+            )
+
+            queue_annotation_transcription(annotation, auto_transcribe)
+
+            data = request.data.copy()
+            data["annotation"] = annotation.id
+            if "annotation_data" in data:
+                del data["annotation_data"]
+            request._full_data = data
+
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        """Create instrument job annotation with permission checks."""
+        instrument_job = serializer.validated_data.get("instrument_job")
+
+        if not instrument_job:
+            raise ValidationError({"instrument_job": "This field is required."})
+
+        # Create a temporary instance to check permissions
+        temp_instance = InstrumentJobAnnotation(instrument_job=instrument_job)
+        if not temp_instance.can_create(self.request.user):
+            raise PermissionDenied("You do not have permission to add annotations to this instrument job")
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Update instrument job annotation with permission checks."""
+        annotation_junction = serializer.instance
+
+        if not annotation_junction.can_edit(self.request.user):
+            raise PermissionDenied("You do not have permission to edit this annotation")
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Delete instrument job annotation with permission checks."""
+        if not instance.can_delete(self.request.user):
+            raise PermissionDenied("You do not have permission to delete this annotation")
 
         instance.delete()

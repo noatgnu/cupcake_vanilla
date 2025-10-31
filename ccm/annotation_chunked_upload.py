@@ -18,6 +18,8 @@ from ccc.models import AnnotationFolder
 from .models import (
     Instrument,
     InstrumentAnnotation,
+    InstrumentJob,
+    InstrumentJobAnnotation,
     MaintenanceLog,
     MaintenanceLogAnnotation,
     StoredReagent,
@@ -38,47 +40,16 @@ class InstrumentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser]
 
-    def _create_annotation_from_upload(self, upload, annotation_text, annotation_type, folder, user):
+    def _create_annotation_from_upload(
+        self, upload, annotation_text, annotation_type, folder, user, auto_transcribe=True
+    ):
         """Create annotation and queue CCM transcription if needed."""
-        import logging
+        from ccm.serializers import queue_annotation_transcription
 
-        from django.conf import settings
-
-        logger = logging.getLogger(__name__)
-
-        annotation = super()._create_annotation_from_upload(upload, annotation_text, annotation_type, folder, user)
-
-        if getattr(settings, "USE_WHISPER", False) and getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False):
-            if annotation_type in ["audio", "video"] and annotation.file:
-                if not annotation.transcribed:
-                    try:
-                        from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
-
-                        file_path = annotation.file.path
-                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
-
-                        if annotation_type == "audio":
-                            transcribe_audio.delay(
-                                audio_path=file_path,
-                                model_path=model_path,
-                                annotation_id=annotation.id,
-                                language="auto",
-                                translate=True,
-                            )
-                            logger.info(f"Queued CCM audio transcription for annotation {annotation.id}")
-                        elif annotation_type == "video":
-                            transcribe_audio_from_video.delay(
-                                video_path=file_path,
-                                model_path=model_path,
-                                annotation_id=annotation.id,
-                                language="auto",
-                                translate=True,
-                            )
-                            logger.info(f"Queued CCM video transcription for annotation {annotation.id}")
-
-                    except Exception as e:
-                        logger.error(f"Failed to queue CCM transcription for annotation {annotation.id}: {str(e)}")
-
+        annotation = super()._create_annotation_from_upload(
+            upload, annotation_text, annotation_type, folder, user, auto_transcribe
+        )
+        queue_annotation_transcription(annotation, auto_transcribe)
         return annotation
 
     def on_completion(self, uploaded_file, request):
@@ -92,6 +63,7 @@ class InstrumentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             annotation_type = request.data.get("annotation_type")
             if not annotation_type:
                 annotation_type = self._detect_annotation_type(uploaded_file.filename)
+            auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
 
             if not instrument_id:
                 return Response(
@@ -145,6 +117,7 @@ class InstrumentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 annotation_type,
                 folder,
                 request.user,
+                auto_transcribe,
             )
 
             order = InstrumentAnnotation.objects.filter(instrument=instrument, folder=folder).count()
@@ -172,6 +145,106 @@ class InstrumentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             return Response(result, status=status.HTTP_200_OK)
 
 
+class InstrumentJobAnnotationChunkedUploadView(AnnotationChunkedUploadView):
+    """
+    Chunked upload view for instrument job annotations with automatic binding.
+
+    Accepts instrument_job_id and optional folder_id, uploads file, creates Annotation,
+    and automatically creates InstrumentJobAnnotation junction record.
+    """
+
+    model = AnnotationFileUpload
+    serializer_class = AnnotationFileUploadSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser]
+
+    def _create_annotation_from_upload(
+        self, upload, annotation_text, annotation_type, folder, user, auto_transcribe=True
+    ):
+        """Create annotation and queue CCM transcription if needed."""
+        from ccm.serializers import queue_annotation_transcription
+
+        annotation = super()._create_annotation_from_upload(
+            upload, annotation_text, annotation_type, folder, user, auto_transcribe
+        )
+        queue_annotation_transcription(annotation, auto_transcribe)
+        return annotation
+
+    def on_completion(self, uploaded_file, request):
+        """
+        Handle completion and automatically create instrument job annotation junction.
+        """
+        try:
+            instrument_job_id = request.data.get("instrument_job_id")
+            folder_id = request.data.get("folder_id")
+            annotation_text = request.data.get("annotation", "")
+            annotation_type = request.data.get("annotation_type")
+            if not annotation_type:
+                annotation_type = self._detect_annotation_type(uploaded_file.filename)
+            auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
+
+            if not instrument_job_id:
+                return Response(
+                    {"error": "instrument_job_id is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                instrument_job = InstrumentJob.objects.get(id=instrument_job_id)
+            except InstrumentJob.DoesNotExist:
+                return Response(
+                    {"error": "InstrumentJob not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            temp_instance = InstrumentJobAnnotation(instrument_job=instrument_job)
+            if not temp_instance.can_create(request.user):
+                return Response(
+                    {"error": "Permission denied: cannot add annotations to this instrument job"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            folder = None
+            if folder_id:
+                try:
+                    folder = AnnotationFolder.objects.get(id=folder_id, owner=request.user)
+                except AnnotationFolder.DoesNotExist:
+                    pass
+
+            annotation = self._create_annotation_from_upload(
+                uploaded_file,
+                annotation_text,
+                annotation_type,
+                folder,
+                request.user,
+                auto_transcribe,
+            )
+
+            order = InstrumentJobAnnotation.objects.filter(instrument_job=instrument_job).count()
+
+            instrument_job_annotation = InstrumentJobAnnotation.objects.create(
+                instrument_job=instrument_job,
+                annotation=annotation,
+                folder=folder,
+                order=order,
+            )
+
+            result = {
+                "annotation_id": annotation.id,
+                "instrument_job_annotation_id": instrument_job_annotation.id,
+                "message": "Instrument job annotation created successfully",
+            }
+            return Response(result, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create instrument job annotation: {str(e)}")
+            result = {"warning": f"File uploaded but annotation creation failed: {str(e)}"}
+            return Response(result, status=status.HTTP_200_OK)
+
+
 class StoredReagentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
     """
     Chunked upload view for stored reagent annotations with automatic binding.
@@ -185,47 +258,16 @@ class StoredReagentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser]
 
-    def _create_annotation_from_upload(self, upload, annotation_text, annotation_type, folder, user):
+    def _create_annotation_from_upload(
+        self, upload, annotation_text, annotation_type, folder, user, auto_transcribe=True
+    ):
         """Create annotation and queue CCM transcription if needed."""
-        import logging
+        from ccm.serializers import queue_annotation_transcription
 
-        from django.conf import settings
-
-        logger = logging.getLogger(__name__)
-
-        annotation = super()._create_annotation_from_upload(upload, annotation_text, annotation_type, folder, user)
-
-        if getattr(settings, "USE_WHISPER", False) and getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False):
-            if annotation_type in ["audio", "video"] and annotation.file:
-                if not annotation.transcribed:
-                    try:
-                        from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
-
-                        file_path = annotation.file.path
-                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
-
-                        if annotation_type == "audio":
-                            transcribe_audio.delay(
-                                audio_path=file_path,
-                                model_path=model_path,
-                                annotation_id=annotation.id,
-                                language="auto",
-                                translate=True,
-                            )
-                            logger.info(f"Queued CCM audio transcription for annotation {annotation.id}")
-                        elif annotation_type == "video":
-                            transcribe_audio_from_video.delay(
-                                video_path=file_path,
-                                model_path=model_path,
-                                annotation_id=annotation.id,
-                                language="auto",
-                                translate=True,
-                            )
-                            logger.info(f"Queued CCM video transcription for annotation {annotation.id}")
-
-                    except Exception as e:
-                        logger.error(f"Failed to queue CCM transcription for annotation {annotation.id}: {str(e)}")
-
+        annotation = super()._create_annotation_from_upload(
+            upload, annotation_text, annotation_type, folder, user, auto_transcribe
+        )
+        queue_annotation_transcription(annotation, auto_transcribe)
         return annotation
 
     def on_completion(self, uploaded_file, request):
@@ -239,6 +281,7 @@ class StoredReagentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             annotation_type = request.data.get("annotation_type")
             if not annotation_type:
                 annotation_type = self._detect_annotation_type(uploaded_file.filename)
+            auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
 
             if not stored_reagent_id:
                 return Response(
@@ -286,6 +329,7 @@ class StoredReagentAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 annotation_type,
                 folder,
                 request.user,
+                auto_transcribe,
             )
 
             order = StoredReagentAnnotation.objects.filter(stored_reagent=stored_reagent, folder=folder).count()
@@ -326,47 +370,16 @@ class MaintenanceLogAnnotationChunkedUploadView(AnnotationChunkedUploadView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser]
 
-    def _create_annotation_from_upload(self, upload, annotation_text, annotation_type, folder, user):
+    def _create_annotation_from_upload(
+        self, upload, annotation_text, annotation_type, folder, user, auto_transcribe=True
+    ):
         """Create annotation and queue CCM transcription if needed."""
-        import logging
+        from ccm.serializers import queue_annotation_transcription
 
-        from django.conf import settings
-
-        logger = logging.getLogger(__name__)
-
-        annotation = super()._create_annotation_from_upload(upload, annotation_text, annotation_type, folder, user)
-
-        if getattr(settings, "USE_WHISPER", False) and getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", False):
-            if annotation_type in ["audio", "video"] and annotation.file:
-                if not annotation.transcribed:
-                    try:
-                        from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
-
-                        file_path = annotation.file.path
-                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
-
-                        if annotation_type == "audio":
-                            transcribe_audio.delay(
-                                audio_path=file_path,
-                                model_path=model_path,
-                                annotation_id=annotation.id,
-                                language="auto",
-                                translate=True,
-                            )
-                            logger.info(f"Queued CCM audio transcription for annotation {annotation.id}")
-                        elif annotation_type == "video":
-                            transcribe_audio_from_video.delay(
-                                video_path=file_path,
-                                model_path=model_path,
-                                annotation_id=annotation.id,
-                                language="auto",
-                                translate=True,
-                            )
-                            logger.info(f"Queued CCM video transcription for annotation {annotation.id}")
-
-                    except Exception as e:
-                        logger.error(f"Failed to queue CCM transcription for annotation {annotation.id}: {str(e)}")
-
+        annotation = super()._create_annotation_from_upload(
+            upload, annotation_text, annotation_type, folder, user, auto_transcribe
+        )
+        queue_annotation_transcription(annotation, auto_transcribe)
         return annotation
 
     def on_completion(self, uploaded_file, request):
@@ -379,6 +392,7 @@ class MaintenanceLogAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             annotation_type = request.data.get("annotation_type")
             if not annotation_type:
                 annotation_type = self._detect_annotation_type(uploaded_file.filename)
+            auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
 
             if not maintenance_log_id:
                 return Response(
@@ -406,6 +420,7 @@ class MaintenanceLogAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 annotation_type,
                 None,
                 request.user,
+                auto_transcribe,
             )
 
             order = MaintenanceLogAnnotation.objects.filter(maintenance_log=maintenance_log).count()

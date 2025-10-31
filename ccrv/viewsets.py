@@ -979,6 +979,7 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
         if annotation_data:
             annotation_type = annotation_data.get("annotation_type", "text")
             annotation_text = annotation_data.get("annotation", "")
+            auto_transcribe = annotation_data.get("auto_transcribe", True)
 
             if not annotation_text:
                 return Response(
@@ -987,6 +988,7 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
                 )
 
             from ccc.models import Annotation
+            from ccm.serializers import queue_annotation_transcription
 
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
@@ -997,6 +999,8 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
                 scratched=annotation_data.get("scratched", False),
                 owner=request.user,
             )
+
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             data = request.data.copy()
             data["annotation"] = annotation.id
@@ -1169,6 +1173,7 @@ class StepAnnotationViewSet(ModelViewSet):
         if annotation_data:
             annotation_type = annotation_data.get("annotation_type", "text")
             annotation_text = annotation_data.get("annotation", "")
+            auto_transcribe = annotation_data.get("auto_transcribe", True)
 
             if not annotation_text:
                 return Response(
@@ -1177,6 +1182,7 @@ class StepAnnotationViewSet(ModelViewSet):
                 )
 
             from ccc.models import Annotation
+            from ccm.serializers import queue_annotation_transcription
 
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
@@ -1187,6 +1193,8 @@ class StepAnnotationViewSet(ModelViewSet):
                 scratched=annotation_data.get("scratched", False),
                 owner=request.user,
             )
+
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             data = request.data.copy()
             data["annotation"] = annotation.id
