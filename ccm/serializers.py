@@ -26,6 +26,7 @@ from .models import (
     InstrumentJobAnnotation,
     InstrumentPermission,
     InstrumentUsage,
+    InstrumentUsageJobAnnotation,
     MaintenanceLog,
     MaintenanceLogAnnotation,
     Reagent,
@@ -1006,6 +1007,7 @@ class InstrumentJobAnnotationSerializer(serializers.ModelSerializer):
             "translation",
             "scratched",
             "file_url",
+            "role",
             "order",
             "can_view",
             "can_edit",
@@ -1070,6 +1072,38 @@ class InstrumentJobAnnotationSerializer(serializers.ModelSerializer):
         if request and hasattr(request, "user"):
             return obj.can_delete(request.user)
         return False
+
+
+class InstrumentUsageJobAnnotationSerializer(serializers.ModelSerializer):
+    """Serializer for InstrumentUsageJobAnnotation model."""
+
+    instrument_job_annotation_details = InstrumentJobAnnotationSerializer(
+        source="instrument_job_annotation", read_only=True
+    )
+    instrument_name = serializers.CharField(source="instrument_usage.instrument.instrument_name", read_only=True)
+    job_name = serializers.CharField(source="instrument_job_annotation.instrument_job.job_name", read_only=True)
+
+    class Meta:
+        model = InstrumentUsageJobAnnotation
+        fields = [
+            "id",
+            "instrument_job_annotation",
+            "instrument_job_annotation_details",
+            "instrument_usage",
+            "instrument_name",
+            "job_name",
+            "order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "instrument_job_annotation_details",
+            "instrument_name",
+            "job_name",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class StoredReagentAnnotationSerializer(serializers.ModelSerializer):

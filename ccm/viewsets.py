@@ -34,6 +34,7 @@ from .models import (
     InstrumentJobAnnotation,
     InstrumentPermission,
     InstrumentUsage,
+    InstrumentUsageJobAnnotation,
     MaintenanceLog,
     MaintenanceLogAnnotation,
     Reagent,
@@ -55,6 +56,7 @@ from .serializers import (
     InstrumentJobSerializer,
     InstrumentPermissionSerializer,
     InstrumentSerializer,
+    InstrumentUsageJobAnnotationSerializer,
     InstrumentUsageSerializer,
     MaintenanceLogAnnotationSerializer,
     MaintenanceLogSerializer,
@@ -1643,7 +1645,7 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
     serializer_class = InstrumentJobAnnotationSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["instrument_job", "folder"]
+    filterset_fields = ["instrument_job", "folder", "role"]
     search_fields = ["instrument_job__job_name", "annotation__name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
@@ -1702,7 +1704,14 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        """Create instrument job annotation with permission checks."""
+        """
+        Create instrument job annotation with permission checks.
+
+        Automatically determines the role if not provided:
+        - If user is job owner: role='user'
+        - If user is assigned staff: role='staff'
+        - If user is both, uses provided role or defaults to 'user'
+        """
         instrument_job = serializer.validated_data.get("instrument_job")
 
         if not instrument_job:
@@ -1712,6 +1721,24 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
         temp_instance = InstrumentJobAnnotation(instrument_job=instrument_job)
         if not temp_instance.can_create(self.request.user):
             raise PermissionDenied("You do not have permission to add annotations to this instrument job")
+
+        # Auto-detect role if not provided
+        role = serializer.validated_data.get("role")
+        if not role:
+            user = self.request.user
+            is_owner = instrument_job.user == user
+            is_staff = user in instrument_job.staff.all()
+
+            if is_owner and not is_staff:
+                role = "user"
+            elif is_staff and not is_owner:
+                role = "staff"
+            else:
+                # User is both owner and staff, default to 'user'
+                # They can explicitly set role='staff' if needed
+                role = "user"
+
+            serializer.validated_data["role"] = role
 
         serializer.save()
 
@@ -1728,5 +1755,74 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
         """Delete instrument job annotation with permission checks."""
         if not instance.can_delete(self.request.user):
             raise PermissionDenied("You do not have permission to delete this annotation")
+
+        instance.delete()
+
+
+class InstrumentUsageJobAnnotationViewSet(ModelViewSet):
+    """ViewSet for InstrumentUsageJobAnnotation model."""
+
+    queryset = InstrumentUsageJobAnnotation.objects.all()
+    serializer_class = InstrumentUsageJobAnnotationSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ["instrument_job_annotation", "instrument_usage"]
+    search_fields = [
+        "instrument_usage__instrument__instrument_name",
+        "instrument_job_annotation__instrument_job__job_name",
+    ]
+    ordering_fields = ["order", "created_at", "updated_at"]
+    ordering = ["order"]
+
+    def get_queryset(self):
+        """Filter instrument usage job annotations by user access permissions."""
+        user = self.request.user
+        queryset = self.queryset.select_related(
+            "instrument_job_annotation__instrument_job", "instrument_usage__instrument"
+        )
+
+        if user.is_staff:
+            return queryset
+
+        accessible_links = []
+        for link in queryset:
+            if link.can_view(user):
+                accessible_links.append(link.id)
+
+        return queryset.filter(id__in=accessible_links)
+
+    def perform_create(self, serializer):
+        """Create instrument usage job annotation link with permission checks."""
+        user = self.request.user
+        instrument_job_annotation = serializer.validated_data.get("instrument_job_annotation")
+        instrument_usage = serializer.validated_data.get("instrument_usage")
+
+        if not instrument_job_annotation:
+            raise PermissionDenied("Instrument job annotation is required")
+
+        if not instrument_usage:
+            raise PermissionDenied("Instrument usage is required")
+
+        if not instrument_job_annotation.can_view(user):
+            raise PermissionDenied("You do not have permission to link this job annotation")
+
+        if not instrument_usage.user_can_view(user):
+            raise PermissionDenied("You do not have permission to link this instrument usage")
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Update instrument usage job annotation link with permission checks."""
+        link = serializer.instance
+
+        if not link.can_edit(self.request.user):
+            raise PermissionDenied("You do not have permission to edit this link")
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Delete instrument usage job annotation link with permission checks."""
+        if not instance.can_delete(self.request.user):
+            raise PermissionDenied("You do not have permission to delete this link")
 
         instance.delete()

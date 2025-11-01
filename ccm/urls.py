@@ -21,6 +21,7 @@ from .viewsets import (
     InstrumentJobAnnotationViewSet,
     InstrumentJobViewSet,
     InstrumentPermissionViewSet,
+    InstrumentUsageJobAnnotationViewSet,
     InstrumentUsageViewSet,
     InstrumentViewSet,
     MaintenanceLogAnnotationViewSet,
@@ -45,6 +46,9 @@ router.register(r"instrument-annotations", InstrumentAnnotationViewSet, basename
 router.register(r"instrument-jobs", InstrumentJobViewSet, basename="instrumentjob")
 router.register(r"instrument-job-annotations", InstrumentJobAnnotationViewSet, basename="instrumentjobannotation")
 router.register(r"instrument-usage", InstrumentUsageViewSet, basename="instrumentusage")
+router.register(
+    r"instrument-usage-job-annotations", InstrumentUsageJobAnnotationViewSet, basename="instrumentusagejobannotation"
+)
 router.register(r"maintenance-logs", MaintenanceLogViewSet, basename="maintenancelog")
 router.register(r"maintenance-log-annotations", MaintenanceLogAnnotationViewSet, basename="maintenancelogannotation")
 router.register(r"storage-objects", StorageObjectViewSet, basename="storageobject")

@@ -11,7 +11,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from .communication import is_ccmc_available, send_maintenance_alert, send_notification
-from .models import Instrument, InstrumentUsage, MaintenanceLog, ReagentAction, StoredReagent
+from .models import Instrument, InstrumentJobAnnotation, InstrumentUsage, MaintenanceLog, ReagentAction, StoredReagent
 
 logger = logging.getLogger(__name__)
 
@@ -172,3 +172,93 @@ def create_stored_reagent_default_folders(sender, instance, created, **kwargs):
         except Exception as e:
             reagent_name = instance.reagent.name if instance.reagent else "Unknown Reagent"
             logger.error(f"Failed to create default folders for stored reagent {reagent_name}: {e}")
+
+
+@receiver(post_save, sender=InstrumentJobAnnotation)
+def merge_instrument_metadata_on_booking(sender, instance, created, **kwargs):
+    """
+    Merge instrument metadata into job metadata when a booking annotation is created.
+
+    When a booking annotation is created for an instrument job:
+    1. Check if the instrument has metadata
+    2. Check if the job has a metadata table
+    3. For each instrument metadata column:
+       - If job has a column with the same name and type:
+         - If job column is empty/blank/N/A, replace with instrument value
+       - If job doesn't have this column, add it
+    """
+    if not created:
+        return
+
+    if not instance.annotation or instance.annotation.annotation_type != "booking":
+        return
+
+    instrument_job = instance.instrument_job
+    if not instrument_job or not instrument_job.instrument:
+        return
+
+    instrument = instrument_job.instrument
+    if not instrument.metadata_table:
+        logger.debug(f"Instrument {instrument.id} has no metadata table")
+        return
+
+    if not instrument_job.metadata_table:
+        logger.debug(f"InstrumentJob {instrument_job.id} has no metadata table")
+        return
+
+    try:
+        instrument_columns = instrument.metadata_table.columns.all()
+        job_columns = instrument_job.metadata_table.columns.all()
+
+        job_columns_dict = {(col.name, col.type): col for col in job_columns}
+
+        columns_merged = 0
+        columns_added = 0
+
+        for inst_col in instrument_columns:
+            key = (inst_col.name, inst_col.type)
+
+            if key in job_columns_dict:
+                job_col = job_columns_dict[key]
+
+                should_replace = (
+                    not job_col.value or job_col.value.strip() == "" or job_col.not_applicable or job_col.not_available
+                )
+
+                if should_replace and inst_col.value:
+                    job_col.value = inst_col.value
+                    job_col.not_applicable = inst_col.not_applicable
+                    job_col.not_available = inst_col.not_available
+                    job_col.save(update_fields=["value", "not_applicable", "not_available"])
+                    columns_merged += 1
+                    logger.info(f"Merged instrument metadata column '{inst_col.name}' " f"into job {instrument_job.id}")
+            else:
+                from ccv.models import MetadataColumn
+
+                MetadataColumn.objects.create(
+                    metadata_table=instrument_job.metadata_table,
+                    name=inst_col.name,
+                    type=inst_col.type,
+                    value=inst_col.value,
+                    not_applicable=inst_col.not_applicable,
+                    not_available=inst_col.not_available,
+                    column_position=inst_col.column_position,
+                    template=inst_col.template,
+                    mandatory=inst_col.mandatory,
+                    hidden=inst_col.hidden,
+                    readonly=inst_col.readonly,
+                    staff_only=inst_col.staff_only,
+                    ontology_type=inst_col.ontology_type,
+                )
+                columns_added += 1
+                logger.info(f"Added instrument metadata column '{inst_col.name}' " f"to job {instrument_job.id}")
+
+        if columns_merged > 0 or columns_added > 0:
+            logger.info(
+                f"Booking annotation created: merged {columns_merged} columns, "
+                f"added {columns_added} columns from instrument {instrument.id} "
+                f"to job {instrument_job.id}"
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to merge instrument metadata into job {instrument_job.id}: {e}", exc_info=True)

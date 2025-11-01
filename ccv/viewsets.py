@@ -1220,6 +1220,84 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             )
 
     @action(detail=True, methods=["post"])
+    def bulk_update_sample_values(self, request, pk=None):
+        """
+        Bulk update column values for multiple samples with different values.
+
+        Request body:
+        {
+            "updates": [
+                {"sample_index": 1, "value": "run 1"},
+                {"sample_index": 2, "value": "run 2"},
+                {"sample_index": 3, "value": "run 3"}
+            ]
+        }
+
+        Response:
+        {
+            "message": "Bulk update completed successfully",
+            "updated_count": 3,
+            "failed_count": 0,
+            "column": {...}
+        }
+        """
+        column = self.get_object()
+
+        if not column.metadata_table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        updates = request.data.get("updates", [])
+        if not updates or not isinstance(updates, list):
+            return Response(
+                {"error": "updates must be a non-empty list of {sample_index, value} objects"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        max_samples = column.metadata_table.sample_count
+        updated_count = 0
+        failed_updates = []
+
+        for update in updates:
+            sample_index = update.get("sample_index")
+            value = update.get("value", "")
+
+            if not isinstance(sample_index, int) or sample_index < 1 or sample_index > max_samples:
+                failed_updates.append(
+                    {
+                        "sample_index": sample_index,
+                        "error": f"Invalid sample index. Must be between 1 and {max_samples}",
+                    }
+                )
+                continue
+
+            try:
+                column.update_column_value_smart(
+                    value=value, sample_indices=[sample_index], value_type="sample_specific"
+                )
+                updated_count += 1
+            except Exception as e:
+                failed_updates.append({"sample_index": sample_index, "error": str(e)})
+
+        column.save()
+
+        serializer = MetadataColumnSerializer(column)
+
+        response_data = {
+            "message": "Bulk update completed",
+            "updated_count": updated_count,
+            "failed_count": len(failed_updates),
+            "column": serializer.data,
+        }
+
+        if failed_updates:
+            response_data["failed_updates"] = failed_updates
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
     def apply_ontology_mapping(self, request, pk=None):
         """Apply automatic ontology mapping to a column."""
         column = self.get_object()

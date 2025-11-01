@@ -1695,7 +1695,15 @@ class InstrumentJobAnnotation(models.Model):
 
     Permissions are determined by who created the annotation and the instrument job's
     staff-only metadata edit permission rules.
+
+    The 'role' field allows distinguishing between annotations created by the job owner
+    versus annotations created by assigned staff, even when the same user has both roles.
     """
+
+    ROLE_CHOICES = [
+        ("user", "Job Owner"),
+        ("staff", "Assigned Staff"),
+    ]
 
     instrument_job = models.ForeignKey(
         InstrumentJob,
@@ -1716,6 +1724,13 @@ class InstrumentJobAnnotation(models.Model):
         blank=True,
         related_name="instrument_job_annotations",
         help_text="Folder containing this annotation",
+    )
+
+    role = models.CharField(
+        max_length=10,
+        choices=ROLE_CHOICES,
+        default="user",
+        help_text="Role in which this annotation was created: 'user' for job owner, 'staff' for assigned staff",
     )
 
     order = models.PositiveIntegerField(default=0, help_text="Display order of annotations within the job")
@@ -1759,14 +1774,14 @@ class InstrumentJobAnnotation(models.Model):
         Check if user can edit this annotation.
         Only the annotation creator can edit.
         """
-        return self.annotation.user == user
+        return self.annotation.owner == user
 
     def can_delete(self, user):
         """
         Check if user can delete this annotation.
         Only the annotation creator can delete.
         """
-        return self.annotation.user == user
+        return self.annotation.owner == user
 
     def can_create(self, user):
         """
@@ -1796,6 +1811,64 @@ class InstrumentJobAnnotation(models.Model):
 
     def __str__(self):
         return f"{self.instrument_job} - {self.annotation}"
+
+
+class InstrumentUsageJobAnnotation(models.Model):
+    """
+    Junction model linking InstrumentJobAnnotations to InstrumentUsage bookings.
+
+    This allows instrument job annotations to be associated with specific instrument
+    usage bookings, mirroring the pattern used in CCRV for StepAnnotation and SessionAnnotation.
+    """
+
+    instrument_job_annotation = models.ForeignKey(
+        InstrumentJobAnnotation,
+        on_delete=models.CASCADE,
+        related_name="instrument_usage_links",
+        help_text="Instrument job annotation linked to instrument usage",
+    )
+    instrument_usage = models.ForeignKey(
+        InstrumentUsage,
+        on_delete=models.CASCADE,
+        related_name="job_annotation_links",
+        help_text="Instrument usage booking this job annotation is linked to",
+    )
+
+    order = models.PositiveIntegerField(
+        default=0, help_text="Display order of job annotations within the instrument usage"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccm"
+        unique_together = [["instrument_job_annotation", "instrument_usage"]]
+        ordering = ["order", "created_at"]
+
+    def can_view(self, user):
+        """
+        Check if user can view this job annotation to instrument usage link.
+        Can view if they can view either the job annotation OR the instrument usage.
+        """
+        return self.instrument_job_annotation.can_view(user) or self.instrument_usage.user_can_view(user)
+
+    def can_edit(self, user):
+        """
+        Check if user can edit this job annotation to instrument usage link.
+        Can edit if they can edit the job annotation OR manage the instrument.
+        """
+        return self.instrument_job_annotation.can_edit(user) or self.instrument_usage.user_can_edit(user)
+
+    def can_delete(self, user):
+        """
+        Check if user can delete this job annotation to instrument usage link.
+        Can delete if they can delete the job annotation OR edit the instrument usage.
+        """
+        return self.instrument_job_annotation.can_delete(user) or self.instrument_usage.user_can_edit(user)
+
+    def __str__(self):
+        return f"{self.instrument_job_annotation.instrument_job} - {self.instrument_usage.instrument.instrument_name}"
 
 
 class InstrumentPermission(models.Model):
