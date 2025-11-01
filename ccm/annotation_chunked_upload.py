@@ -182,6 +182,7 @@ class InstrumentJobAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             if not annotation_type:
                 annotation_type = self._detect_annotation_type(uploaded_file.filename)
             auto_transcribe = request.data.get("auto_transcribe", "true").lower() == "true"
+            role = request.data.get("role")
 
             if not instrument_job_id:
                 return Response(
@@ -203,6 +204,18 @@ class InstrumentJobAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                     {"error": "Permission denied: cannot add annotations to this instrument job"},
                     status=status.HTTP_403_FORBIDDEN,
                 )
+
+            if not role:
+                user = request.user
+                is_owner = instrument_job.user == user
+                is_staff = user in instrument_job.staff.all()
+
+                if is_owner and not is_staff:
+                    role = "user"
+                elif is_staff and not is_owner:
+                    role = "staff"
+                else:
+                    role = "user"
 
             folder = None
             if folder_id:
@@ -227,6 +240,7 @@ class InstrumentJobAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 annotation=annotation,
                 folder=folder,
                 order=order,
+                role=role,
             )
 
             result = {
