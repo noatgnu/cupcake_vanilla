@@ -69,7 +69,7 @@ def queue_annotation_transcription(annotation, auto_transcribe=True):
         return
 
     try:
-        from ccc.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+        from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
 
         file_path = annotation.file.path
         model_path = settings.WHISPERCPP_DEFAULT_MODEL

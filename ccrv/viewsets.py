@@ -12,6 +12,7 @@ import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -1229,6 +1230,49 @@ class StepAnnotationViewSet(ModelViewSet):
             request._full_data = data
 
         return super().update(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"])
+    def retrigger_transcription(self, request, pk=None):
+        """
+        Retrigger transcription and translation for audio/video annotations.
+
+        Only available to admin and staff users.
+        Clears existing transcription data and queues a new transcription task.
+        """
+        if not (request.user.is_staff or request.user.is_superuser):
+            raise PermissionDenied("Only staff and admin users can retrigger transcription")
+
+        step_annotation = self.get_object()
+        annotation = step_annotation.annotation
+
+        if not annotation:
+            return Response({"error": "No annotation found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if annotation.annotation_type not in ["audio", "video"]:
+            return Response(
+                {
+                    "error": f"Cannot transcribe annotation of type '{annotation.annotation_type}'. Only 'audio' and 'video' types are supported."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not annotation.file:
+            return Response({"error": "No file attached to this annotation"}, status=status.HTTP_400_BAD_REQUEST)
+
+        annotation.transcribed = False
+        annotation.transcription = None
+        annotation.language = None
+        annotation.translation = None
+        annotation.save(update_fields=["transcribed", "transcription", "language", "translation"])
+
+        from ccm.serializers import queue_annotation_transcription
+
+        queue_annotation_transcription(annotation, auto_transcribe=True)
+
+        return Response(
+            {"message": "Transcription task queued successfully", "annotation_id": annotation.id},
+            status=status.HTTP_200_OK,
+        )
 
 
 class SessionAnnotationFolderViewSet(ModelViewSet):

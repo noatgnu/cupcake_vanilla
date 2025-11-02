@@ -1467,10 +1467,6 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
             response["X-Accel-Redirect"] = f"/internal/media/{annotation.file.name}"
             response["Content-Type"] = "application/octet-stream"
             response["Content-Disposition"] = f'attachment; filename="{os.path.basename(annotation.file.name)}"'
-            try:
-                response["Content-Length"] = annotation.file.size
-            except Exception:
-                pass
             response["Cache-Control"] = "private, max-age=300"
             response["X-Content-Type-Options"] = "nosniff"
             response["X-Download-Options"] = "noopen"

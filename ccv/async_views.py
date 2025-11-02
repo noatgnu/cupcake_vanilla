@@ -242,7 +242,6 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
             response["X-Accel-Redirect"] = f"/internal/media/{task_result.file.name}"
             response["Content-Type"] = task_result.content_type or "application/octet-stream"
             response["Content-Disposition"] = f'attachment; filename="{task_result.file_name}"'
-            response["Content-Length"] = task_result.file_size
             # Add cache headers (short cache since files are temporary)
             response["Cache-Control"] = "private, max-age=300"  # 5 minutes
             # Add security headers
