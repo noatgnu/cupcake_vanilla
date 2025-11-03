@@ -1645,7 +1645,7 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
     serializer_class = InstrumentJobAnnotationSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["instrument_job", "folder", "role"]
+    filterset_fields = ["instrument_job", "folder", "role", "annotation"]
     search_fields = ["instrument_job__job_name", "annotation__name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
@@ -1752,9 +1752,17 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
-        """Delete instrument job annotation with permission checks."""
+        """
+        Delete instrument job annotation with permission checks.
+
+        If the annotation is a booking annotation, also delete any linked InstrumentUsage bookings.
+        """
         if not instance.can_delete(self.request.user):
             raise PermissionDenied("You do not have permission to delete this annotation")
+
+        if instance.annotation and instance.annotation.annotation_type == "booking":
+            for usage_link in instance.instrument_usage_links.all():
+                usage_link.instrument_usage.delete()
 
         instance.delete()
 

@@ -7,7 +7,7 @@ import json
 import re
 
 from django.contrib.auth.models import User
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.http import HttpResponse
 
@@ -77,7 +77,14 @@ from .serializers import (
     UnimodSerializer,
 )
 from .tasks.import_utils import synchronize_pools_with_import_data
-from .utils import apply_ontology_mapping_to_column, detect_ontology_type, sort_metadata, validate_sdrf
+from .utils import (
+    AutofillSpecValidator,
+    SampleVariationGenerator,
+    apply_ontology_mapping_to_column,
+    detect_ontology_type,
+    sort_metadata,
+    validate_sdrf,
+)
 
 
 class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
@@ -976,6 +983,79 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 "staff_only": staff_only,
             }
         )
+
+    @action(detail=True, methods=["post"])
+    def advanced_autofill(self, request, pk=None):
+        """
+        Advanced autofill with template samples and column variations.
+
+        Generates new samples based on template samples with specified
+        column variations (ranges, lists, patterns, cartesian products).
+
+        Request body:
+        {
+            "templateSamples": [1, 2],  # Sample indices to use as templates
+            "targetSampleCount": 300,    # Total samples to generate
+            "variations": [
+                {
+                    "columnId": 123,
+                    "type": "range",     # range, list, pattern
+                    "start": 1,          # for range type
+                    "end": 30            # for range type
+                },
+                {
+                    "columnId": 124,
+                    "type": "list",
+                    "values": ["TMT126", "TMT127N", "TMT127C", ...]
+                }
+            ],
+            "fillStrategy": "cartesian_product"  # cartesian_product, sequential, interleaved
+        }
+        """
+        table = self.get_object()
+
+        if not table.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this metadata table"}, status=status.HTTP_403_FORBIDDEN
+            )
+
+        if table.is_locked:
+            return Response({"error": "Cannot autofill locked table"}, status=status.HTTP_400_BAD_REQUEST)
+
+        spec = request.data
+        template_samples = spec.get("templateSamples", [])
+        target_count = spec.get("targetSampleCount")
+        variations = spec.get("variations", [])
+        fill_strategy = spec.get("fillStrategy", "cartesian_product")
+
+        validator = AutofillSpecValidator(spec, table)
+        if not validator.is_valid():
+            return Response({"errors": validator.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                generator = SampleVariationGenerator(table, template_samples, variations, target_count)
+                variations_data = generator.generate_variations()
+
+                if fill_strategy == "cartesian_product":
+                    sample_variations = generator.cartesian_product(variations_data)
+                elif fill_strategy == "sequential":
+                    sample_variations = generator.sequential_fill(variations_data, target_count)
+                elif fill_strategy == "interleaved":
+                    sample_variations = generator.interleaved_fill(variations_data, target_count)
+                else:
+                    return Response(
+                        {"error": f"Unknown fill strategy: {fill_strategy}"}, status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                columns_to_update = generator.apply_variations_to_samples(sample_variations, target_count)
+                MetadataColumn.objects.bulk_update(columns_to_update, ["modifiers"], batch_size=100)
+
+            summary = generator.get_summary(sample_variations, fill_strategy)
+            return Response(summary)
+
+        except Exception as e:
+            return Response({"error": f"Autofill failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):

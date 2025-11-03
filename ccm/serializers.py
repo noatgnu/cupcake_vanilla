@@ -1073,6 +1073,45 @@ class InstrumentJobAnnotationSerializer(serializers.ModelSerializer):
             return obj.can_delete(request.user)
         return False
 
+    def update(self, instance, validated_data):
+        """
+        Update instrument job annotation and nested annotation fields.
+
+        Handles both annotation_data and dotted-source fields like:
+        - annotation__transcription
+        - annotation__language
+        - annotation__translation
+        """
+        annotation_data = validated_data.pop("annotation_data", None)
+        annotation_updates = {}
+
+        if "annotation" in validated_data and isinstance(validated_data["annotation"], dict):
+            annotation_updates = validated_data.pop("annotation")
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if instance.annotation:
+            if annotation_data:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+            elif annotation_updates:
+                for attr, value in annotation_updates.items():
+                    setattr(instance.annotation, attr, value)
+                instance.annotation.save()
+
+        return instance
+
 
 class InstrumentUsageJobAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for InstrumentUsageJobAnnotation model."""
@@ -1222,22 +1261,32 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """
         Update stored reagent annotation and nested annotation fields.
-        Use annotation_data: {"annotation_data": {"annotation": "updated text", "language": "en"}}
+
+        Handles both annotation_data and dotted-source fields.
         """
         annotation_data = validated_data.pop("annotation_data", None)
+        annotation_updates = {}
 
-        if annotation_data and instance.annotation:
-            if "annotation" in annotation_data:
-                instance.annotation.annotation = annotation_data["annotation"]
-            if "transcription" in annotation_data:
-                instance.annotation.transcription = annotation_data["transcription"]
-            if "language" in annotation_data:
-                instance.annotation.language = annotation_data["language"]
-            if "translation" in annotation_data:
-                instance.annotation.translation = annotation_data["translation"]
-            if "scratched" in annotation_data:
-                instance.annotation.scratched = annotation_data["scratched"]
-            instance.annotation.save()
+        if "annotation" in validated_data and isinstance(validated_data["annotation"], dict):
+            annotation_updates = validated_data.pop("annotation")
+
+        if instance.annotation:
+            if annotation_data:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+            elif annotation_updates:
+                for attr, value in annotation_updates.items():
+                    setattr(instance.annotation, attr, value)
+                instance.annotation.save()
 
         return super().update(instance, validated_data)
 
@@ -1370,22 +1419,32 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """
         Update maintenance log annotation and nested annotation fields.
-        Use annotation_data: {"annotation_data": {"annotation": "updated text", "language": "en"}}
+
+        Handles both annotation_data and dotted-source fields.
         """
         annotation_data = validated_data.pop("annotation_data", None)
+        annotation_updates = {}
 
-        if annotation_data and instance.annotation:
-            if "annotation" in annotation_data:
-                instance.annotation.annotation = annotation_data["annotation"]
-            if "transcription" in annotation_data:
-                instance.annotation.transcription = annotation_data["transcription"]
-            if "language" in annotation_data:
-                instance.annotation.language = annotation_data["language"]
-            if "translation" in annotation_data:
-                instance.annotation.translation = annotation_data["translation"]
-            if "scratched" in annotation_data:
-                instance.annotation.scratched = annotation_data["scratched"]
-            instance.annotation.save()
+        if "annotation" in validated_data and isinstance(validated_data["annotation"], dict):
+            annotation_updates = validated_data.pop("annotation")
+
+        if instance.annotation:
+            if annotation_data:
+                if "annotation" in annotation_data:
+                    instance.annotation.annotation = annotation_data["annotation"]
+                if "transcription" in annotation_data:
+                    instance.annotation.transcription = annotation_data["transcription"]
+                if "language" in annotation_data:
+                    instance.annotation.language = annotation_data["language"]
+                if "translation" in annotation_data:
+                    instance.annotation.translation = annotation_data["translation"]
+                if "scratched" in annotation_data:
+                    instance.annotation.scratched = annotation_data["scratched"]
+                instance.annotation.save()
+            elif annotation_updates:
+                for attr, value in annotation_updates.items():
+                    setattr(instance.annotation, attr, value)
+                instance.annotation.save()
 
         return super().update(instance, validated_data)
 

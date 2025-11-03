@@ -168,6 +168,7 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
 
     metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
     template_name = serializers.CharField(source="template.name", read_only=True)
+    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = MetadataColumn
@@ -178,6 +179,7 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
             "template",
             "template_name",
             "name",
+            "display_name",
             "type",
             "column_position",
             "value",
@@ -197,7 +199,18 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at", "suggested_values", "possible_default_values"]
+        read_only_fields = ["created_at", "updated_at", "suggested_values", "possible_default_values", "display_name"]
+
+    def get_display_name(self, obj):
+        """
+        Get display name from template.name if available, otherwise return column name.
+
+        Returns the template's name (friendly display name) if column has a template.
+        Otherwise returns the column's name field (technical SDRF name).
+        """
+        if obj.template and obj.template.name:
+            return obj.template.name
+        return obj.name
 
     def validate_modifiers(self, value):
         """Validate that modifiers is a valid JSON structure."""

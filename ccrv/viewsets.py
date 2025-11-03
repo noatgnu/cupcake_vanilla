@@ -1037,6 +1037,21 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
 
         return super().update(request, *args, **kwargs)
 
+    def perform_destroy(self, instance):
+        """
+        Delete session annotation with permission checks.
+
+        If the annotation is a booking annotation, also delete any linked InstrumentUsage bookings.
+        """
+        if not instance.can_delete(self.request.user):
+            raise PermissionDenied("You do not have permission to delete this annotation")
+
+        if instance.annotation and instance.annotation.annotation_type == "booking":
+            for usage_link in instance.instrument_usage_links.all():
+                usage_link.instrument_usage.delete()
+
+        instance.delete()
+
     @action(detail=True, methods=["post"])
     def create_metadata_table(self, request, pk=None):
         """Create a metadata table for this session annotation."""
@@ -1230,6 +1245,21 @@ class StepAnnotationViewSet(ModelViewSet):
             request._full_data = data
 
         return super().update(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        """
+        Delete step annotation with permission checks.
+
+        If the annotation is a booking annotation, also delete any linked InstrumentUsage bookings.
+        """
+        if not instance.can_delete(self.request.user):
+            raise PermissionDenied("You do not have permission to delete this annotation")
+
+        if instance.annotation and instance.annotation.annotation_type == "booking":
+            for usage_link in instance.instrument_usage_links.all():
+                usage_link.instrument_usage.delete()
+
+        instance.delete()
 
     @action(detail=True, methods=["post"])
     def retrigger_transcription(self, request, pk=None):

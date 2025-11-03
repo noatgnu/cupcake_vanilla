@@ -6,14 +6,54 @@ for handling SDRF files, Excel templates, and metadata operations.
 """
 
 import io
+import itertools
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 import pandas as pd
 from sdrf_pipelines.sdrf.schemas import SchemaRegistry
 from sdrf_pipelines.sdrf.sdrf import SDRFDataFrame, read_sdrf
 
-from .models import FavouriteMetadataOption, MetadataColumn, SamplePool, Schema
+from .models import FavouriteMetadataOption, MetadataColumn, MetadataTable, SamplePool, Schema
+
+
+class VariationSpecRange(TypedDict, total=False):
+    """Specification for range-based variation."""
+
+    columnId: int
+    type: Literal["range"]
+    start: int
+    end: int
+    step: int
+
+
+class VariationSpecList(TypedDict):
+    """Specification for list-based variation."""
+
+    columnId: int
+    type: Literal["list"]
+    values: List[Any]
+
+
+class VariationSpecPattern(TypedDict, total=False):
+    """Specification for pattern-based variation."""
+
+    columnId: int
+    type: Literal["pattern"]
+    pattern: str
+    count: int
+
+
+VariationSpec = VariationSpecRange | VariationSpecList | VariationSpecPattern
+
+
+class AutofillSpec(TypedDict):
+    """Complete autofill specification structure."""
+
+    templateSamples: List[int]
+    targetSampleCount: int
+    variations: List[VariationSpec]
+    fillStrategy: Literal["cartesian_product", "sequential", "interleaved"]
 
 
 def sort_metadata(
@@ -993,3 +1033,229 @@ def update_pooled_sample_column_for_table(metadata_table):
             sn_value = f"SN={pool.pool_name}"
             pool_pooled_column.value = sn_value
             pool_pooled_column.save()
+
+
+class AutofillSpecValidator:
+    """Validates autofill specification before execution."""
+
+    def __init__(self, spec: AutofillSpec, table: MetadataTable):
+        """
+        Initialize validator with specification and metadata table.
+
+        Args:
+            spec: Autofill specification dictionary with typed structure
+            table: MetadataTable instance
+        """
+        self.spec: AutofillSpec = spec
+        self.table: MetadataTable = table
+        self.errors: List[str] = []
+
+    def is_valid(self) -> bool:
+        """
+        Validate the autofill specification.
+
+        Returns:
+            True if specification is valid, False otherwise.
+        """
+        self.errors = []
+
+        template_samples = self.spec.get("templateSamples", [])
+        if not template_samples:
+            self.errors.append("templateSamples is required")
+
+        target_count = self.spec.get("targetSampleCount")
+        if not target_count or target_count < 1:
+            self.errors.append("targetSampleCount must be a positive integer")
+
+        if target_count and target_count > self.table.sample_count:
+            self.errors.append(
+                f"targetSampleCount ({target_count}) cannot exceed table sample_count ({self.table.sample_count})"
+            )
+
+        variations = self.spec.get("variations", [])
+        if not variations:
+            self.errors.append("variations is required and must not be empty")
+
+        for var in variations:
+            if "columnId" not in var:
+                self.errors.append("Each variation must have columnId")
+            if "type" not in var:
+                self.errors.append("Each variation must have type")
+
+            column_id = var.get("columnId")
+            if column_id and not self.table.columns.filter(id=column_id).exists():
+                self.errors.append(f"Column {column_id} not found in table")
+
+        return len(self.errors) == 0
+
+
+class SampleVariationGenerator:
+    """Generates sample variations based on specification."""
+
+    def __init__(
+        self, table: MetadataTable, template_samples: List[int], variations: List[VariationSpec], target_count: int
+    ):
+        """
+        Initialize variation generator.
+
+        Args:
+            table: MetadataTable instance
+            template_samples: List of sample indices to use as templates
+            variations: List of variation specifications with typed structure
+            target_count: Target number of samples to generate
+        """
+        self.table: MetadataTable = table
+        self.template_samples: List[int] = template_samples
+        self.variations: List[VariationSpec] = variations
+        self.target_count: int = target_count
+        self.variations_data: Dict[int, List[Any]] = {}
+
+    def generate_variations(self) -> Dict[int, List[Any]]:
+        """
+        Generate variation values based on specification.
+
+        Returns:
+            Dictionary mapping column_id to list of values.
+        """
+        result = {}
+
+        for var in self.variations:
+            column_id = var["columnId"]
+            var_type = var["type"]
+
+            if var_type == "range":
+                start = var.get("start", 1)
+                end = var.get("end", 10)
+                step = var.get("step", 1)
+                result[column_id] = list(range(start, end + 1, step))
+
+            elif var_type == "list":
+                values = var.get("values", [])
+                result[column_id] = values
+
+            elif var_type == "pattern":
+                pattern = var.get("pattern", "{i}")
+                count = var.get("count", 10)
+                result[column_id] = [pattern.replace("{i}", str(i)) for i in range(1, count + 1)]
+
+        return result
+
+    def cartesian_product(self, variations_data: Dict[int, List[Any]]) -> List[Dict[int, Any]]:
+        """
+        Generate cartesian product of all variations.
+
+        Args:
+            variations_data: Dictionary mapping column_id to list of values
+
+        Returns:
+            List of variation dictionaries, each mapping column_id to value.
+        """
+        column_ids = list(variations_data.keys())
+        value_lists = [variations_data[col_id] for col_id in column_ids]
+
+        products = list(itertools.product(*value_lists))
+
+        result = []
+        for product in products:
+            variation = {}
+            for i, column_id in enumerate(column_ids):
+                variation[column_id] = product[i]
+            result.append(variation)
+
+        return result
+
+    def sequential_fill(self, variations_data: Dict[int, List[Any]], target_count: int) -> List[Dict[int, Any]]:
+        """
+        Fill variations sequentially, cycling through each variation independently.
+
+        Args:
+            variations_data: Dictionary mapping column_id to list of values
+            target_count: Number of variations to generate
+
+        Returns:
+            List of variation dictionaries.
+        """
+        result = []
+
+        for i in range(target_count):
+            variation = {}
+            for column_id, values in variations_data.items():
+                variation[column_id] = values[i % len(values)]
+            result.append(variation)
+
+        return result
+
+    def interleaved_fill(self, variations_data: Dict[int, List[Any]], target_count: int) -> List[Dict[int, Any]]:
+        """
+        Fill variations in interleaved pattern.
+
+        Args:
+            variations_data: Dictionary mapping column_id to list of values
+            target_count: Number of variations to generate
+
+        Returns:
+            List of variation dictionaries.
+        """
+        max_length = max(len(values) for values in variations_data.values())
+        result = []
+
+        for i in range(max_length):
+            variation = {}
+            for column_id, values in variations_data.items():
+                variation[column_id] = values[i % len(values)]
+            result.append(variation)
+
+        while len(result) < target_count:
+            result.extend(result[: min(len(result), target_count - len(result))])
+
+        return result[:target_count]
+
+    def apply_variations_to_samples(
+        self, sample_variations: List[Dict[int, Any]], target_count: int
+    ) -> List[MetadataColumn]:
+        """
+        Apply variations to sample columns using modifiers.
+
+        Args:
+            sample_variations: List of variation dictionaries
+            target_count: Number of samples to modify
+
+        Returns:
+            List of MetadataColumn instances to be bulk updated.
+        """
+        columns_to_update = []
+
+        for sample_idx in range(1, target_count + 1):
+            variation_idx = (sample_idx - 1) % len(sample_variations)
+            variation = sample_variations[variation_idx]
+
+            for column_id, value in variation.items():
+                column = self.table.columns.get(id=column_id)
+
+                existing_modifiers = column.modifiers if isinstance(column.modifiers, list) else []
+                new_modifiers = [m for m in existing_modifiers if str(sample_idx) not in m.get("samples", "")]
+                new_modifiers.append({"samples": str(sample_idx), "value": str(value)})
+
+                column.modifiers = new_modifiers
+                columns_to_update.append(column)
+
+        return columns_to_update
+
+    def get_summary(self, sample_variations: List[Dict[int, Any]], fill_strategy: str) -> Dict[str, Any]:
+        """
+        Get summary of the generation operation.
+
+        Args:
+            sample_variations: List of variation dictionaries that were generated
+            fill_strategy: The fill strategy that was used
+
+        Returns:
+            Dictionary with summary information.
+        """
+        return {
+            "status": "success",
+            "samplesModified": self.target_count,
+            "columnsModified": len(self.variations),
+            "variationsCombinations": len(sample_variations),
+            "strategy": fill_strategy,
+        }
