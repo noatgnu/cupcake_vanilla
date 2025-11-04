@@ -70,28 +70,50 @@ def queue_annotation_transcription(annotation, auto_transcribe=True):
 
     try:
         from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+        from ccv.task_models import AsyncTaskStatus
 
         file_path = annotation.file.path
         model_path = settings.WHISPERCPP_DEFAULT_MODEL
 
+        task_type = "TRANSCRIBE_AUDIO" if annotation_type == "audio" else "TRANSCRIBE_VIDEO"
+
+        task_status = AsyncTaskStatus.objects.create(
+            task_type=task_type,
+            status="QUEUED",
+            user=annotation.owner,
+            parameters={
+                "annotation_id": annotation.id,
+                "file_path": file_path,
+                "language": "auto",
+                "translate": True,
+            },
+            queue_name="transcribe",
+        )
+
         if annotation_type == "audio":
-            transcribe_audio.delay(
+            job = transcribe_audio.delay(
                 audio_path=file_path,
                 model_path=model_path,
                 annotation_id=annotation.id,
                 language="auto",
                 translate=True,
+                task_id=str(task_status.id),
             )
-            logger.info(f"Queued audio transcription for annotation {annotation.id}")
+            task_status.rq_job_id = job.id
+            task_status.save(update_fields=["rq_job_id"])
+            logger.info(f"Queued audio transcription for annotation {annotation.id} with task {task_status.id}")
         elif annotation_type == "video":
-            transcribe_audio_from_video.delay(
+            job = transcribe_audio_from_video.delay(
                 video_path=file_path,
                 model_path=model_path,
                 annotation_id=annotation.id,
                 language="auto",
                 translate=True,
+                task_id=str(task_status.id),
             )
-            logger.info(f"Queued video transcription for annotation {annotation.id}")
+            task_status.rq_job_id = job.id
+            task_status.save(update_fields=["rq_job_id"])
+            logger.info(f"Queued video transcription for annotation {annotation.id} with task {task_status.id}")
 
     except Exception as e:
         logger.error(f"Failed to queue transcription for annotation {annotation.id}: {str(e)}")

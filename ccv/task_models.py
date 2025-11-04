@@ -39,6 +39,8 @@ class AsyncTaskStatus(models.Model):
         ("VALIDATE_TABLE", "Validate Metadata Table"),
         ("REORDER_TABLE_COLUMNS", "Reorder Table Columns"),
         ("REORDER_TEMPLATE_COLUMNS", "Reorder Template Columns"),
+        ("TRANSCRIBE_AUDIO", "Transcribe Audio"),
+        ("TRANSCRIBE_VIDEO", "Transcribe Video"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

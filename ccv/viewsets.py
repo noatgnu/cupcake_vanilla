@@ -1561,6 +1561,110 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["get"])
+    def history(self, request, pk=None):
+        """
+        Get change history for a metadata column.
+
+        Returns structured history with:
+        - What changed (field names and values)
+        - Who made the change (user)
+        - When it happened (timestamp)
+        - Change type (created, updated, deleted)
+
+        Query Parameters:
+        - limit: Maximum number of history records to return (default: 50, max: 200)
+        - offset: Number of records to skip for pagination (default: 0)
+        """
+        column = self.get_object()
+
+        limit = min(int(request.query_params.get("limit", 50)), 200)
+        offset = int(request.query_params.get("offset", 0))
+
+        history_records = list(column.history.all().order_by("-history_date")[offset : offset + limit])
+        total_count = column.history.count()
+
+        history_data = []
+
+        for i, record in enumerate(history_records):
+            next_record = history_records[i + 1] if i + 1 < len(history_records) else None
+            changes = self._get_field_changes(record, next_record)
+
+            history_entry = {
+                "history_id": record.history_id,
+                "history_date": record.history_date,
+                "history_type": record.get_history_type_display(),
+                "history_user": record.history_user.username if record.history_user else None,
+                "history_user_id": record.history_user.id if record.history_user else None,
+                "changes": changes,
+                "snapshot": {
+                    "name": record.name,
+                    "type": record.type,
+                    "value": record.value,
+                    "column_position": record.column_position,
+                    "mandatory": record.mandatory,
+                    "hidden": record.hidden,
+                    "readonly": record.readonly,
+                    "modifiers": record.modifiers,
+                    "ontology_type": record.ontology_type,
+                    "not_applicable": record.not_applicable,
+                    "not_available": record.not_available,
+                },
+            }
+
+            history_data.append(history_entry)
+
+        return Response(
+            {
+                "count": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": (offset + limit) < total_count,
+                "history": history_data,
+            }
+        )
+
+    def _get_field_changes(self, current_record, previous_record):
+        """
+        Compare two historical records and return changed fields.
+
+        Returns a list of changes with field name, old value, and new value.
+        """
+        if not previous_record:
+            return []
+
+        changes = []
+        tracked_fields = [
+            "name",
+            "type",
+            "value",
+            "column_position",
+            "mandatory",
+            "hidden",
+            "readonly",
+            "modifiers",
+            "ontology_type",
+            "not_applicable",
+            "not_available",
+            "enable_typeahead",
+            "staff_only",
+        ]
+
+        for field in tracked_fields:
+            old_value = getattr(previous_record, field, None)
+            new_value = getattr(current_record, field, None)
+
+            if old_value != new_value:
+                changes.append(
+                    {
+                        "field": field,
+                        "old_value": old_value,
+                        "new_value": new_value,
+                    }
+                )
+
+        return changes
+
     def perform_update(self, serializer):
         """Update metadata column and sync hidden property to pool columns."""
         # Get the old instance to check what changed

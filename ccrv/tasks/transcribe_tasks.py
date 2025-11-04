@@ -5,13 +5,16 @@ Transcription and translation tasks using whisper.cpp for CCRV.
 import logging
 import os
 import subprocess
+from typing import Optional
 
 from django.conf import settings
+from django.utils import timezone
 
 from django_rq import job
 
 from ccc.models import Annotation
 from ccrv.notification_service import ccrv_notification_service
+from ccv.task_models import AsyncTaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,7 @@ def transcribe_audio(
     language: str = "auto",
     translate: bool = False,
     custom_id: str = None,
+    task_id: Optional[str] = None,
 ):
     """
     Transcribe audio file using whisper.cpp.
@@ -35,10 +39,22 @@ def transcribe_audio(
         language: Language code (e.g., "en", "es", "auto")
         translate: If True, translate to English
         custom_id: Custom task identifier
+        task_id: AsyncTaskStatus UUID for tracking
     """
     logger.info(f"Starting transcription for {audio_path}")
 
     annotation = Annotation.objects.get(id=annotation_id)
+
+    task_status = None
+    if task_id:
+        try:
+            task_status = AsyncTaskStatus.objects.get(id=task_id)
+            task_status.status = "STARTED"
+            task_status.started_at = timezone.now()
+            task_status.progress_description = "Starting audio transcription"
+            task_status.save()
+        except AsyncTaskStatus.DoesNotExist:
+            logger.warning(f"Task status {task_id} not found")
 
     ccrv_notification_service.transcription_started(user_id=annotation.owner.id, annotation_id=annotation_id)
 
@@ -106,6 +122,20 @@ def transcribe_audio(
         os.remove(temporary_vtt_path)
         logger.info(f"Transcription completed for {audio_path}")
 
+        if task_status:
+            task_status.status = "SUCCESS"
+            task_status.completed_at = timezone.now()
+            task_status.progress_current = 100
+            task_status.progress_total = 100
+            task_status.progress_description = "Transcription completed"
+            task_status.result = {
+                "annotation_id": annotation_id,
+                "language": detected_language,
+                "has_translation": translate,
+                "transcription_length": len(vtt_content),
+            }
+            task_status.save()
+
         ccrv_notification_service.transcription_completed(
             user_id=annotation.owner.id,
             annotation_id=annotation_id,
@@ -122,6 +152,14 @@ def transcribe_audio(
 
     except Exception as e:
         logger.error(f"Transcription failed for {audio_path}: {str(e)}")
+
+        if task_status:
+            task_status.status = "FAILURE"
+            task_status.completed_at = timezone.now()
+            task_status.error_message = str(e)
+            task_status.progress_description = "Transcription failed"
+            task_status.save()
+
         ccrv_notification_service.transcription_failed(
             user_id=annotation.owner.id, annotation_id=annotation_id, error=str(e)
         )
@@ -136,6 +174,7 @@ def transcribe_audio_from_video(
     language: str = "auto",
     translate: bool = False,
     custom_id: str = None,
+    task_id: Optional[str] = None,
 ):
     """
     Extract and transcribe audio from video file using whisper.cpp.
@@ -147,10 +186,22 @@ def transcribe_audio_from_video(
         language: Language code (e.g., "en", "es", "auto")
         translate: If True, translate to English
         custom_id: Custom task identifier
+        task_id: AsyncTaskStatus UUID for tracking
     """
     logger.info(f"Starting video transcription for {video_path}")
 
     annotation = Annotation.objects.get(id=annotation_id)
+
+    task_status = None
+    if task_id:
+        try:
+            task_status = AsyncTaskStatus.objects.get(id=task_id)
+            task_status.status = "STARTED"
+            task_status.started_at = timezone.now()
+            task_status.progress_description = "Starting video transcription"
+            task_status.save()
+        except AsyncTaskStatus.DoesNotExist:
+            logger.warning(f"Task status {task_id} not found")
 
     ccrv_notification_service.transcription_started(user_id=annotation.owner.id, annotation_id=annotation_id)
 
@@ -218,6 +269,20 @@ def transcribe_audio_from_video(
         os.remove(temporary_vtt_path)
         logger.info(f"Video transcription completed for {video_path}")
 
+        if task_status:
+            task_status.status = "SUCCESS"
+            task_status.completed_at = timezone.now()
+            task_status.progress_current = 100
+            task_status.progress_total = 100
+            task_status.progress_description = "Video transcription completed"
+            task_status.result = {
+                "annotation_id": annotation_id,
+                "language": detected_language,
+                "has_translation": translate,
+                "transcription_length": len(vtt_content),
+            }
+            task_status.save()
+
         ccrv_notification_service.transcription_completed(
             user_id=annotation.owner.id,
             annotation_id=annotation_id,
@@ -234,6 +299,14 @@ def transcribe_audio_from_video(
 
     except Exception as e:
         logger.error(f"Video transcription failed for {video_path}: {str(e)}")
+
+        if task_status:
+            task_status.status = "FAILURE"
+            task_status.completed_at = timezone.now()
+            task_status.error_message = str(e)
+            task_status.progress_description = "Video transcription failed"
+            task_status.save()
+
         ccrv_notification_service.transcription_failed(
             user_id=annotation.owner.id, annotation_id=annotation_id, error=str(e)
         )

@@ -989,7 +989,7 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
                 )
 
             from ccc.models import Annotation
-            from ccm.serializers import queue_annotation_transcription
+            from ccrv.serializers import queue_annotation_transcription
 
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
@@ -1198,7 +1198,7 @@ class StepAnnotationViewSet(ModelViewSet):
                 )
 
             from ccc.models import Annotation
-            from ccm.serializers import queue_annotation_transcription
+            from ccrv.serializers import queue_annotation_transcription
 
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
@@ -1295,7 +1295,7 @@ class StepAnnotationViewSet(ModelViewSet):
         annotation.translation = None
         annotation.save(update_fields=["transcribed", "transcription", "language", "translation"])
 
-        from ccm.serializers import queue_annotation_transcription
+        from ccrv.serializers import queue_annotation_transcription
 
         queue_annotation_transcription(annotation, auto_transcribe=True)
 
