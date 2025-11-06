@@ -7,9 +7,9 @@ from django.contrib.auth.models import User
 
 from django_rq import job
 
+from ccc.models import AsyncTaskStatus
 from ccv.models import MetadataTableTemplate
 from ccv.notification_service import NotificationService
-from ccv.task_models import AsyncTaskStatus
 
 from .base_task import task_with_tracking
 from .task_utils import create_success_result, get_user_and_table, mark_task_success

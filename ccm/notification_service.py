@@ -35,7 +35,7 @@ class CCMNotificationService:
             logger.error(f"Failed to send CCM notification to group {group_name}: {e}")
 
     def notify_user(self, user_id: int, notification_type: str, message: str, **kwargs):
-        """Send notification to a specific user via CCM WebSocket."""
+        """Send notification to a specific user via core WebSocket."""
         data = {
             "message": {
                 "type": notification_type,
@@ -45,7 +45,7 @@ class CCMNotificationService:
                 **kwargs,
             }
         }
-        self._send_to_group(f"ccm_user_{user_id}", "notification_message", data)
+        self._send_to_group(f"user_{user_id}", "notification_message", data)
 
     def transcription_completed(
         self, user_id: int, annotation_id: int, language: str = None, has_translation: bool = False, **kwargs

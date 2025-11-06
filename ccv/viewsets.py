@@ -302,7 +302,7 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def reorder_columns_by_schema_async(self, request, pk=None):
         """Start async reordering of table columns by schema."""
-        from ccv.task_models import AsyncTaskStatus
+        from ccc.models import AsyncTaskStatus
         from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_task
 
         table = self.get_object()
@@ -1965,7 +1965,7 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def reorder_columns_by_schema_async(self, request, pk=None):
         """Start async reordering of template columns by schema."""
-        from ccv.task_models import AsyncTaskStatus
+        from ccc.models import AsyncTaskStatus
         from ccv.tasks.reorder_tasks import reorder_metadata_table_template_columns_task
 
         template = self.get_object()

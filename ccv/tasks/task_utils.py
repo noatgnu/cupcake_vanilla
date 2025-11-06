@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from django.contrib.auth.models import User
 
-from ccv.task_models import AsyncTaskStatus
+from ccc.models import AsyncTaskStatus
 
 
 def mark_task_started(task_id: Optional[str]) -> Optional[AsyncTaskStatus]:

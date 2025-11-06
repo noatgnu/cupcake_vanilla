@@ -9,8 +9,8 @@ from django.db import migrations, models
 import drf_chunked_upload.models
 import simple_history.models
 
+import ccc.models
 import ccv.models
-import ccv.task_models
 
 
 class Migration(migrations.Migration):
@@ -2493,7 +2493,7 @@ class Migration(migrations.Migration):
                     models.FileField(
                         blank=True,
                         null=True,
-                        upload_to=ccv.task_models.task_result_upload_path,
+                        upload_to=ccc.models.task_result_upload_path,
                     ),
                 ),
                 ("file_name", models.CharField(blank=True, max_length=255)),

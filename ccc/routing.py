@@ -1,5 +1,7 @@
 """
-WebSocket URL routing for CUPCAKE Vanilla.
+WebSocket URL routing for CUPCAKE Core.
+
+Core notification routes available to all CUPCAKE modules.
 """
 
 from django.urls import path

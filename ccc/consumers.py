@@ -1,5 +1,8 @@
 """
-WebSocket consumers for real-time notifications in CUPCAKE Vanilla.
+WebSocket consumers for real-time notifications in CUPCAKE Core.
+
+These consumers handle notifications across all CUPCAKE modules including
+async task updates, lab group updates, and system-wide broadcasts.
 """
 
 import json
@@ -15,42 +18,36 @@ logger = logging.getLogger(__name__)
 
 class NotificationConsumer(AsyncWebsocketConsumer):
     """
-    WebSocket consumer for real-time notifications.
+    WebSocket consumer for real-time notifications across all CUPCAKE modules.
 
-    Handles user-specific notifications and system-wide broadcasts.
+    Handles user-specific notifications, lab group updates, async task updates,
+    and system-wide broadcasts.
     """
 
     async def connect(self):
         """Handle WebSocket connection."""
         self.user = self.scope["user"]
 
-        # Reject anonymous users
         if isinstance(self.user, AnonymousUser) or not self.user.is_authenticated:
             logger.warning("WebSocket connection rejected - user not authenticated")
-            await self.close(code=4001)  # Custom code for authentication error
+            await self.close(code=4001)
             return
 
-        # Create user-specific group name
         self.user_group_name = f"user_{self.user.id}"
         self.lab_groups = []
 
-        # Get user's lab groups for group notifications
         self.lab_groups = await self.get_user_lab_groups()
 
-        # Join user-specific group
         await self.channel_layer.group_add(self.user_group_name, self.channel_name)
 
-        # Join lab group channels
         for lab_group_id in self.lab_groups:
             lab_group_name = f"lab_group_{lab_group_id}"
             await self.channel_layer.group_add(lab_group_name, self.channel_name)
 
-        # Join global notifications group
         await self.channel_layer.group_add("global_notifications", self.channel_name)
 
         await self.accept()
 
-        # Send welcome message
         await self.send(
             text_data=json.dumps(
                 {
@@ -68,15 +65,12 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
         if hasattr(self, "user") and self.user.is_authenticated:
-            # Leave user-specific group
             await self.channel_layer.group_discard(self.user_group_name, self.channel_name)
 
-            # Leave lab group channels
             for lab_group_id in self.lab_groups:
                 lab_group_name = f"lab_group_{lab_group_id}"
                 await self.channel_layer.group_discard(lab_group_name, self.channel_name)
 
-            # Leave global notifications group
             await self.channel_layer.group_discard("global_notifications", self.channel_name)
 
             logger.info(f"WebSocket disconnected for user {self.user.username} (code: {close_code})")
@@ -88,8 +82,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             message_type = data.get("type", "unknown")
 
             if message_type == "subscribe":
-                # Handle subscription to specific notification types
                 await self.handle_subscription(data)
+            elif message_type == "ping":
+                await self.send(text_data=json.dumps({"type": "pong"}))
             else:
                 logger.warning(f"Unknown message type received: {message_type}")
 
@@ -113,14 +108,12 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                     )
                 )
         elif subscription_type == "async_task_updates":
-            # Subscribe to user's async task updates
             task_group_name = f"async_tasks_user_{self.user.id}"
             await self.channel_layer.group_add(task_group_name, self.channel_name)
             await self.send(
                 text_data=json.dumps({"type": "subscription.confirmed", "subscription_type": subscription_type})
             )
 
-    # Group message handlers
     async def notification_message(self, event):
         """Handle notification messages sent to groups."""
         await self.send(text_data=json.dumps(event["message"]))
@@ -175,6 +168,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 {
                     "type": "async_task.update",
                     "task_id": event["task_id"],
+                    "task_type": event.get("task_type"),
                     "status": event["status"],
                     "progress_percentage": event.get("progress_percentage"),
                     "progress_description": event.get("progress_description"),
@@ -192,7 +186,6 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         try:
             from ccc.models import LabGroup
 
-            # Get all accessible lab groups (includes parent groups via bubble-up)
             lab_group_ids = list(LabGroup.get_accessible_group_ids(self.user))
 
             return lab_group_ids
@@ -210,22 +203,19 @@ class AdminNotificationConsumer(AsyncWebsocketConsumer):
         """Handle WebSocket connection for admin users only."""
         self.user = self.scope["user"]
 
-        # Only allow authenticated admin users
         if (
             isinstance(self.user, AnonymousUser)
             or not self.user.is_authenticated
             or not (self.user.is_staff or self.user.is_superuser)
         ):
             logger.warning("Admin WebSocket connection rejected - insufficient permissions")
-            await self.close(code=4003)  # Custom code for permission error
+            await self.close(code=4003)
             return
 
-        # Join admin notifications group
         await self.channel_layer.group_add("admin_notifications", self.channel_name)
 
         await self.accept()
 
-        # Send admin welcome message
         await self.send(
             text_data=json.dumps(
                 {
@@ -255,7 +245,6 @@ class AdminNotificationConsumer(AsyncWebsocketConsumer):
             if message_type == "ping":
                 await self.send(text_data=json.dumps({"type": "pong"}))
             elif message_type == "broadcast_system_message":
-                # Allow admins to broadcast system messages
                 await self.broadcast_system_message(data)
 
         except json.JSONDecodeError:
@@ -276,10 +265,8 @@ class AdminNotificationConsumer(AsyncWebsocketConsumer):
             "timestamp": data.get("timestamp"),
         }
 
-        # Send to all users via global notifications group
         await self.channel_layer.group_send("global_notifications", {"type": "system_notification", **message})
 
-    # Group message handlers
     async def admin_notification(self, event):
         """Handle admin-specific notifications."""
         await self.send(

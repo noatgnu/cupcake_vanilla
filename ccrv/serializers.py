@@ -70,8 +70,8 @@ def queue_annotation_transcription(annotation, auto_transcribe=True):
         return
 
     try:
+        from ccc.models import AsyncTaskStatus
         from ccrv.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
-        from ccv.task_models import AsyncTaskStatus
 
         file_path = annotation.file.path
         model_path = settings.WHISPERCPP_DEFAULT_MODEL

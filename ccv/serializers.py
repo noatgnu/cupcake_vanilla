@@ -4,6 +4,8 @@ Django REST Framework serializers for CUPCAKE Vanilla metadata models.
 
 from rest_framework import serializers
 
+from ccc.models import AsyncTaskStatus
+
 from .models import (
     CellOntology,
     ChEBICompound,
@@ -26,7 +28,6 @@ from .models import (
     UberonAnatomy,
     Unimod,
 )
-from .task_models import AsyncTaskStatus
 
 
 class MetadataTableSerializer(serializers.ModelSerializer):

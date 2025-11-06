@@ -5,6 +5,9 @@ This module contains the core user management, lab group collaboration,
 and site administration functionality that can be reused across CUPCAKE applications.
 """
 
+import os
+import uuid
+
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.fields import GenericRelation
@@ -1637,3 +1640,317 @@ class Annotation(AbstractResource):
 
 # Import the AnnotationFileUpload model so Django can detect it for migrations
 from .annotation_chunked_upload import AnnotationFileUpload  # noqa: F401
+
+
+class AsyncTaskStatus(models.Model):
+    """
+    Track status and results of async tasks across all CUPCAKE modules.
+    """
+
+    TASK_STATUS_CHOICES = [
+        ("QUEUED", "Queued"),
+        ("STARTED", "Started"),
+        ("SUCCESS", "Success"),
+        ("FAILURE", "Failure"),
+        ("CANCELLED", "Cancelled"),
+    ]
+
+    TASK_TYPE_CHOICES = [
+        ("EXPORT_EXCEL", "Export Excel Template"),
+        ("EXPORT_SDRF", "Export SDRF File"),
+        ("IMPORT_SDRF", "Import SDRF File"),
+        ("IMPORT_EXCEL", "Import Excel File"),
+        ("EXPORT_MULTIPLE_SDRF", "Export Multiple SDRF Files"),
+        ("EXPORT_MULTIPLE_EXCEL", "Export Multiple Excel Templates"),
+        ("VALIDATE_TABLE", "Validate Metadata Table"),
+        ("REORDER_TABLE_COLUMNS", "Reorder Table Columns"),
+        ("REORDER_TEMPLATE_COLUMNS", "Reorder Template Columns"),
+        ("TRANSCRIBE_AUDIO", "Transcribe Audio"),
+        ("TRANSCRIBE_VIDEO", "Transcribe Video"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_type = models.CharField(max_length=25, choices=TASK_TYPE_CHOICES)
+    status = models.CharField(max_length=10, choices=TASK_STATUS_CHOICES, default="QUEUED")
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="async_tasks")
+    metadata_table = models.ForeignKey(
+        "ccv.MetadataTable", on_delete=models.CASCADE, related_name="async_tasks", null=True, blank=True
+    )
+
+    parameters = models.JSONField(default=dict, blank=True)
+
+    result = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    traceback = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    rq_job_id = models.CharField(max_length=100, blank=True)
+    queue_name = models.CharField(max_length=50, default="default")
+
+    progress_current = models.PositiveIntegerField(default=0)
+    progress_total = models.PositiveIntegerField(default=100)
+    progress_description = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["task_type", "-created_at"]),
+            models.Index(fields=["rq_job_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_task_type_display()} - {self.get_status_display()}"
+
+    def save(self, *args, **kwargs):
+        """Override save to send WebSocket updates on creation."""
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+
+        if is_new:
+            print(f"[DEBUG] New AsyncTaskStatus created: {self.id}, sending WebSocket update")
+            self.send_websocket_update()
+
+    @property
+    def duration(self):
+        """Return task duration in seconds if completed."""
+        if self.started_at and self.completed_at:
+            return (self.completed_at - self.started_at).total_seconds()
+        elif self.started_at:
+            return (timezone.now() - self.started_at).total_seconds()
+        return None
+
+    @property
+    def progress_percentage(self):
+        """Return progress as percentage."""
+        if self.progress_total == 0:
+            return 0
+        return min(100, (self.progress_current / self.progress_total) * 100)
+
+    def mark_started(self):
+        """Mark task as started."""
+        self.status = "STARTED"
+        self.started_at = timezone.now()
+        self.save(update_fields=["status", "started_at"])
+        self.send_websocket_update()
+
+    def mark_success(self, result_data=None):
+        """Mark task as successful."""
+        self.status = "SUCCESS"
+        self.completed_at = timezone.now()
+        self.progress_current = self.progress_total
+        if result_data:
+            self.result = result_data
+        self.save(update_fields=["status", "completed_at", "progress_current", "result"])
+        self.send_websocket_update()
+
+    def mark_failure(self, error_message, traceback_str=None):
+        """Mark task as failed."""
+        self.status = "FAILURE"
+        self.completed_at = timezone.now()
+        self.error_message = error_message
+        if traceback_str:
+            self.traceback = traceback_str
+        self.save(update_fields=["status", "completed_at", "error_message", "traceback"])
+        self.send_websocket_update()
+
+    def update_progress(self, current, total=None, description=None):
+        """Update task progress."""
+        self.progress_current = current
+        if total is not None:
+            self.progress_total = total
+        if description is not None:
+            self.progress_description = description
+        self.save(update_fields=["progress_current", "progress_total", "progress_description"])
+        self.send_websocket_update()
+
+    def cancel(self):
+        """Mark task as cancelled."""
+        self.status = "CANCELLED"
+        self.completed_at = timezone.now()
+        self.save(update_fields=["status", "completed_at"])
+        self.send_websocket_update()
+
+    def send_websocket_update(self):
+        """Send task status update via WebSocket."""
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                print(f"[DEBUG] No channel layer available for task {self.id}")
+                return
+
+            download_url = None
+            if self.status == "SUCCESS" and hasattr(self, "file_result") and self.file_result.file:
+                try:
+                    signed_token, _ = self.file_result.generate_download_url(expire_minutes=10)
+                    download_url = f"/api/v1/async-tasks/{self.id}/download/?token={signed_token}"
+                except Exception:
+                    pass
+
+            user_group_name = f"async_tasks_user_{self.user.id}"
+            message_data = {
+                "type": "async_task_update",
+                "task_id": str(self.id),
+                "task_type": self.task_type,
+                "status": self.status,
+                "progress_percentage": self.progress_percentage,
+                "progress_description": self.progress_description,
+                "error_message": self.error_message,
+                "result": self.result,
+                "download_url": download_url,
+                "timestamp": timezone.now().isoformat(),
+            }
+
+            print(f"[DEBUG] Sending WebSocket update for task {self.id} to group {user_group_name}")
+            print(f"[DEBUG] Message data: {message_data}")
+
+            async_to_sync(channel_layer.group_send)(
+                user_group_name,
+                message_data,
+            )
+
+            print(f"[DEBUG] WebSocket update sent successfully for task {self.id}")
+        except Exception as e:
+            print(f"[ERROR] Error sending WebSocket update for task {self.id}: {e}")
+            import traceback
+
+            traceback.print_exc()
+
+
+def task_result_upload_path(instance, filename):
+    """Generate upload path for task result files."""
+    return f"temp/task_results/{instance.task.user.id}/{instance.task.id}/{filename}"
+
+
+class TaskResult(models.Model):
+    """
+    Store large task results as temporary media files with secure access.
+    """
+
+    task = models.OneToOneField(AsyncTaskStatus, on_delete=models.CASCADE, related_name="file_result")
+
+    file = models.FileField(upload_to=task_result_upload_path, null=True, blank=True)
+    file_name = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(default=0)
+
+    expires_at = models.DateTimeField(help_text="When this file expires and should be cleaned up")
+    download_count = models.PositiveIntegerField(default=0)
+    last_downloaded_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["task", "-created_at"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"Result for {self.task} - {self.file_name}"
+
+    def save(self, *args, **kwargs):
+        """Set expiration date on save."""
+        if not self.expires_at:
+            expire_days = getattr(settings, "TASK_RESULT_EXPIRE_DAYS", 7)
+            self.expires_at = timezone.now() + timezone.timedelta(days=expire_days)
+
+        if self.file and not self.file_size:
+            self.file_size = self.file.size
+
+        super().save(*args, **kwargs)
+
+    def generate_download_url(self, expire_minutes=10):
+        """
+        Generate a signed download URL that expires after the specified minutes.
+
+        Args:
+            expire_minutes: Minutes until the signed URL expires
+
+        Returns:
+            Tuple of (signed_token, nginx_internal_path)
+        """
+        from django.core.signing import TimestampSigner
+
+        signer = TimestampSigner()
+
+        payload = f"{self.task.id}:{self.task.user.id}:{self.file.name}"
+        signed_token = signer.sign(payload)
+
+        nginx_internal_path = f"/internal/media/{self.file.name}"
+
+        return signed_token, nginx_internal_path
+
+    @classmethod
+    def verify_download_token(cls, signed_token):
+        """
+        Verify a signed download token and return the TaskResult if valid.
+
+        The token contains all necessary authentication information - no additional
+        user verification needed since the token generation already validated permissions.
+
+        Args:
+            signed_token: The signed token to verify
+
+        Returns:
+            TaskResult instance if valid, None otherwise
+        """
+        from django.core.signing import TimestampSigner
+
+        signer = TimestampSigner()
+
+        try:
+            max_age = getattr(settings, "TASK_DOWNLOAD_TOKEN_MAX_AGE", 600)
+            payload = signer.unsign(signed_token, max_age=max_age)
+
+            task_id, user_id, file_path = payload.split(":", 2)
+
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            user = User.objects.get(id=user_id)
+
+            task_result = cls.objects.select_related("task").get(task__id=task_id, task__user=user, file=file_path)
+
+            if task_result.expires_at < timezone.now():
+                return None
+
+            return task_result
+
+        except Exception:
+            return None
+
+    def record_download(self):
+        """Record a download attempt."""
+        self.download_count += 1
+        self.last_downloaded_at = timezone.now()
+        self.save(update_fields=["download_count", "last_downloaded_at"])
+
+    def is_expired(self):
+        """Check if the file has expired."""
+        return self.expires_at < timezone.now()
+
+    def get_file_path(self):
+        """Get the full file system path."""
+        if self.file:
+            return self.file.path
+        return None
+
+    def cleanup_expired(self):
+        """Clean up expired file."""
+        if self.is_expired() and self.file:
+            try:
+                if os.path.exists(self.file.path):
+                    os.remove(self.file.path)
+            except Exception:
+                pass
+            self.file = None
+            self.save(update_fields=["file"])

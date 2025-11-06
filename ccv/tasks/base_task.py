@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Optional
 
 from django.core.files.base import ContentFile
 
-from ccv.task_models import AsyncTaskStatus, TaskResult
+from ccc.models import AsyncTaskStatus, TaskResult
 
 from .task_utils import create_error_result, mark_task_failure, mark_task_started
 

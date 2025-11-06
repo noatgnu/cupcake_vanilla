@@ -83,7 +83,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                     file_ext = os.path.splitext(filename.lower())[1]
 
                     # Create async task status for tracking
-                    from ccv.task_models import AsyncTaskStatus
+                    from ccc.models import AsyncTaskStatus
                     from ccv.tasks.import_tasks import import_excel_task, import_sdrf_task
 
                     if file_ext in [".xlsx", ".xls"]:

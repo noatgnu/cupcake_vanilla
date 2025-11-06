@@ -12,6 +12,7 @@ from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from ccc.models import AsyncTaskStatus, TaskResult
 from ccv.models import MetadataTable
 from ccv.serializers import (
     AsyncTaskListSerializer,
@@ -22,7 +23,6 @@ from ccv.serializers import (
     MetadataImportSerializer,
     MetadataValidationSerializer,
 )
-from ccv.task_models import AsyncTaskStatus, TaskResult
 from ccv.tasks import (
     export_excel_template_task,
     export_multiple_excel_template_task,

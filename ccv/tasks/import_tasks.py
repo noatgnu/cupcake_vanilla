@@ -8,8 +8,8 @@ from django.contrib.auth.models import User
 
 from django_rq import job
 
+from ccc.models import AsyncTaskStatus
 from ccv.models import MetadataTable
-from ccv.task_models import AsyncTaskStatus
 
 from .import_utils import import_excel_data, import_sdrf_data
 

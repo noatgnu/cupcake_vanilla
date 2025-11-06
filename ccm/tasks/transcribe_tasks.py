@@ -12,9 +12,8 @@ from django.utils import timezone
 
 from django_rq import job
 
-from ccc.models import Annotation
+from ccc.models import Annotation, AsyncTaskStatus
 from ccm.notification_service import ccm_notification_service
-from ccv.task_models import AsyncTaskStatus
 
 logger = logging.getLogger(__name__)
 

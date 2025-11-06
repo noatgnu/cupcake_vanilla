@@ -4,7 +4,7 @@ Management command to clean up expired task result files.
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from ccv.task_models import TaskResult
+from ccc.models import TaskResult
 
 
 class Command(BaseCommand):

@@ -9,8 +9,8 @@ from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from ccc.models import AsyncTaskStatus, TaskResult
 from ccv.models import LabGroup, MetadataColumn, MetadataTable
-from ccv.task_models import AsyncTaskStatus, TaskResult
 
 
 class RQTaskTestCase(TestCase):

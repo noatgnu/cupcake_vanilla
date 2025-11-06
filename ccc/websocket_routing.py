@@ -105,10 +105,6 @@ class WebSocketUrlManager:
             URL prefix string (without 'ws/')
         """
         app_short_name = app_name.split(".")[-1]
-
-        if app_short_name in ["ccc", "core"]:
-            return ""
-
         return f"{app_short_name}/"
 
     def detect_conflicts(self) -> List[Tuple[str, str, str]]:

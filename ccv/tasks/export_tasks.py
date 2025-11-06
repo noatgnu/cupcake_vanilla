@@ -9,8 +9,8 @@ from django.core.files.base import ContentFile
 
 from django_rq import job
 
+from ccc.models import AsyncTaskStatus, TaskResult
 from ccv.models import MetadataTable
-from ccv.task_models import AsyncTaskStatus, TaskResult
 
 
 @job("default", timeout=3600)
