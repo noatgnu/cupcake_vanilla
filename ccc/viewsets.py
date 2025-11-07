@@ -726,15 +726,38 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
     def auth_config(self, request):
         """
         Get authentication configuration for the frontend.
-        Returns which authentication methods are enabled.
+        Returns which authentication methods are enabled and JWT token lifetimes.
         """
         try:
             site_config = SiteConfig.objects.first()
 
+            default_access_lifetime = settings.SIMPLE_JWT.get("ACCESS_TOKEN_LIFETIME")
+            default_refresh_lifetime = settings.SIMPLE_JWT.get("REFRESH_TOKEN_LIFETIME")
+            remember_me_access_lifetime = getattr(settings, "JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME", None)
+            remember_me_refresh_lifetime = getattr(settings, "JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME", None)
+
             config = {
                 "registration_enabled": site_config.allow_user_registration if site_config else False,
                 "orcid_login_enabled": site_config.enable_orcid_login if site_config else False,
-                "regular_login_enabled": True,  # Regular login is always enabled
+                "regular_login_enabled": True,
+                "jwt_token_lifetimes": {
+                    "default": {
+                        "access_token_minutes": int(default_access_lifetime.total_seconds() / 60)
+                        if default_access_lifetime
+                        else 60,
+                        "refresh_token_days": int(default_refresh_lifetime.total_seconds() / 86400)
+                        if default_refresh_lifetime
+                        else 7,
+                    },
+                    "remember_me": {
+                        "access_token_hours": int(remember_me_access_lifetime.total_seconds() / 3600)
+                        if remember_me_access_lifetime
+                        else 24,
+                        "refresh_token_days": int(remember_me_refresh_lifetime.total_seconds() / 86400)
+                        if remember_me_refresh_lifetime
+                        else 30,
+                    },
+                },
             }
 
             return Response(config)

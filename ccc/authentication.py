@@ -2,6 +2,7 @@
 Custom JWT authentication views and utilities for CUPCAKE Core.
 """
 
+from django.conf import settings
 from django.contrib.auth import authenticate
 
 from rest_framework import status
@@ -33,7 +34,22 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
 
-        # Add extra user data to the response
+        remember_me = self.context.get("request").data.get("remember_me", False)
+
+        if remember_me:
+            refresh = RefreshToken.for_user(self.user)
+            refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
+            access = refresh.access_token
+            access.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
+
+            access["username"] = self.user.username
+            access["email"] = self.user.email
+            access["is_staff"] = self.user.is_staff
+            access["is_superuser"] = self.user.is_superuser
+
+            data["access"] = str(access)
+            data["refresh"] = str(refresh)
+
         data.update(
             {
                 "user": {
@@ -70,11 +86,13 @@ def login_view(request):
     Expected payload:
     {
         "username": "your_username",
-        "password": "your_password"
+        "password": "your_password",
+        "remember_me": false  # Optional: extend token lifetime
     }
     """
     username = request.data.get("username")
     password = request.data.get("password")
+    remember_me = request.data.get("remember_me", False)
 
     if not username or not password:
         return Response(
@@ -88,7 +106,10 @@ def login_view(request):
         refresh = RefreshToken.for_user(user)
         access_token = refresh.access_token
 
-        # Add custom claims to access token
+        if remember_me:
+            refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
+            access_token.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
+
         access_token["username"] = user.username
         access_token["email"] = user.email
         access_token["is_staff"] = user.is_staff

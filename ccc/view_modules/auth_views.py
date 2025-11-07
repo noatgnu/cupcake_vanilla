@@ -4,6 +4,7 @@ Authentication views for ORCID OAuth2 integration.
 
 import logging
 
+from django.conf import settings
 from django.contrib.auth import authenticate
 
 from rest_framework import status
@@ -52,54 +53,51 @@ def orcid_callback(request):
     Handle ORCID OAuth2 callback.
 
     Exchange authorization code for access token and authenticate user.
+    Supports remember_me query parameter for extended token lifetime.
     """
     code = request.GET.get("code")
     state = request.GET.get("state")
     error = request.GET.get("error")
+    remember_me = request.GET.get("remember_me", "false").lower() == "true"
 
-    # Check for error from ORCID
     if error:
         logger.warning(f"ORCID authentication error: {error}")
         return Response({"error": f"ORCID authentication failed: {error}"}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Validate required parameters
     if not code or not state:
         return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Verify state for CSRF protection
     stored_state = request.session.get("orcid_state")
     if not stored_state or stored_state != state:
         logger.warning("ORCID state mismatch - possible CSRF attack")
         return Response({"error": "Invalid state parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        # Exchange code for token
         token_data = ORCIDOAuth2Helper.exchange_code_for_token(request, code, state)
         if not token_data:
             return Response({"error": "Failed to exchange code for token"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Extract ORCID ID and access token
         orcid_id = token_data.get("orcid")
         access_token = token_data.get("access_token")
 
         if not orcid_id or not access_token:
             return Response({"error": "Invalid token response from ORCID"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Authenticate user using our custom backend
         user = authenticate(request, orcid_token=access_token, orcid_id=orcid_id)
 
         if not user:
             return Response({"error": "Authentication failed"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Generate JWT tokens for the user
         refresh = RefreshToken.for_user(user)
         access_jwt = refresh.access_token
 
-        # Clean up session
+        if remember_me:
+            refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
+            access_jwt.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
+
         if "orcid_state" in request.session:
             del request.session["orcid_state"]
 
-        # Return user data and tokens
         return Response(
             {
                 "access_token": str(access_jwt),
@@ -132,24 +130,27 @@ def orcid_token_exchange(request):
     Alternative endpoint for token-based authentication.
 
     Useful for frontend applications that handle the OAuth flow client-side.
-    Expects: {"access_token": "...", "orcid_id": "..."}
+    Expects: {"access_token": "...", "orcid_id": "...", "remember_me": false}
     """
     access_token = request.data.get("access_token")
     orcid_id = request.data.get("orcid_id")
+    remember_me = request.data.get("remember_me", False)
 
     if not access_token or not orcid_id:
         return Response({"error": "access_token and orcid_id are required"}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        # Authenticate user using our custom backend
         user = authenticate(request, orcid_token=access_token, orcid_id=orcid_id)
 
         if not user:
             return Response({"error": "Authentication failed"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Generate JWT tokens for the user
         refresh = RefreshToken.for_user(user)
         access_jwt = refresh.access_token
+
+        if remember_me:
+            refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
+            access_jwt.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
 
         return Response(
             {
