@@ -34,7 +34,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
 
-        remember_me = self.context.get("request").data.get("remember_me", False)
+        request = self.context.get("request")
+        remember_me = False
+        if request and hasattr(request, "data"):
+            remember_me = request.data.get("remember_me", False)
 
         if remember_me:
             refresh = RefreshToken.for_user(self.user)
