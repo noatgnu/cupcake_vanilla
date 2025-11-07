@@ -200,6 +200,8 @@ RQ_QUEUES = {
 TASK_RESULT_EXPIRE_DAYS = int(os.environ.get("TASK_RESULT_EXPIRE_DAYS", "7"))  # Files expire after 7 days
 TASK_DOWNLOAD_TOKEN_MAX_AGE = int(os.environ.get("TASK_DOWNLOAD_TOKEN_MAX_AGE", "600"))  # 10 minutes
 
+PROTOCOLS_IO_ACCESS_TOKEN = os.environ.get("PROTOCOLS_IO_ACCESS_TOKEN", "")
+
 # Django Channels configuration
 CHANNEL_LAYERS = {
     "default": {

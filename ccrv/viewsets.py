@@ -198,13 +198,10 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
             return Response({"error": "URL is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Use the original static method
             protocol = ProtocolModel.create_protocol_from_url(url)
-            protocol.owner = request.user  # Set current user as owner
+            protocol.owner = request.user
             protocol.save()
 
-            # Update the order attribute for steps in the newly imported protocol
-            # Handle steps without sections first
             root_steps = ProtocolStep.objects.filter(
                 protocol=protocol, step_section__isnull=True, previous_step__isnull=True
             )
@@ -213,7 +210,6 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
             for root_step in root_steps:
                 order = ProtocolStep._traverse_and_order(root_step, order)
 
-            # Handle sections
             sections = protocol.sections.all().order_by("id")
             for section in sections:
                 section_root_steps = ProtocolStep.objects.filter(step_section=section, previous_step__isnull=True)
@@ -226,8 +222,20 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception:
-            return Response({"error": "Failed to import protocol"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except AttributeError as e:
+            if "PROTOCOLS_IO_ACCESS_TOKEN" in str(e):
+                return Response(
+                    {"error": "PROTOCOLS_IO_ACCESS_TOKEN not configured. Please set this environment variable."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            return Response({"error": f"Configuration error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            return Response(
+                {"error": f"Failed to import protocol: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class SessionViewSet(viewsets.ModelViewSet):
