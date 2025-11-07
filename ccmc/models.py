@@ -243,3 +243,181 @@ class Message(models.Model):
 
     def __str__(self):
         return f"Message from {self.sender.username} in {self.thread.title}"
+
+
+class WebRTCSessionType(models.TextChoices):
+    """
+    Types of WebRTC sessions.
+    """
+
+    VIDEO_CALL = "video_call", "Video Call"
+    AUDIO_CALL = "audio_call", "Audio Call"
+    SCREEN_SHARE = "screen_share", "Screen Share"
+    DATA_CHANNEL = "data_channel", "Data Channel Only"
+
+
+class WebRTCSessionStatus(models.TextChoices):
+    """
+    Status of WebRTC sessions.
+    """
+
+    WAITING = "waiting", "Waiting for Peers"
+    ACTIVE = "active", "Active"
+    ENDED = "ended", "Ended"
+
+
+class WebRTCSession(models.Model):
+    """
+    WebRTC communication session associated with a message thread.
+
+    Tracks active WebRTC sessions for voice/video calls and screen sharing
+    within CCMC threads.
+    """
+
+    history = HistoricalRecords()
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    thread = models.ForeignKey(
+        MessageThread, on_delete=models.CASCADE, related_name="webrtc_sessions", blank=True, null=True
+    )
+
+    session_type = models.CharField(
+        max_length=20, choices=WebRTCSessionType.choices, default=WebRTCSessionType.VIDEO_CALL
+    )
+    session_status = models.CharField(
+        max_length=20, choices=WebRTCSessionStatus.choices, default=WebRTCSessionStatus.WAITING
+    )
+
+    initiated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="initiated_webrtc_sessions"
+    )
+    participants = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, through="WebRTCPeer", related_name="webrtc_sessions", blank=True
+    )
+
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccmc"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.session_type} session {self.id} initiated by {self.initiated_by.username}"
+
+    def end_session(self):
+        """Mark session as ended."""
+        self.session_status = WebRTCSessionStatus.ENDED
+        self.ended_at = timezone.now()
+        self.save(update_fields=["session_status", "ended_at"])
+
+
+class PeerRole(models.TextChoices):
+    """
+    Role of a peer in a WebRTC session.
+    """
+
+    HOST = "host", "Host"
+    VIEWER = "viewer", "Viewer"
+    PARTICIPANT = "participant", "Participant"
+
+
+class PeerConnectionState(models.TextChoices):
+    """
+    Connection state of a WebRTC peer.
+    """
+
+    CONNECTING = "connecting", "Connecting"
+    CONNECTED = "connected", "Connected"
+    DISCONNECTED = "disconnected", "Disconnected"
+    FAILED = "failed", "Failed"
+
+
+class WebRTCPeer(models.Model):
+    """
+    Represents a peer in a WebRTC session with their connection details.
+    """
+
+    history = HistoricalRecords()
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(WebRTCSession, on_delete=models.CASCADE, related_name="peers")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="webrtc_peers")
+
+    channel_id = models.CharField(max_length=255, unique=True, help_text="Unique WebSocket channel ID for this peer")
+    peer_role = models.CharField(max_length=20, choices=PeerRole.choices, default=PeerRole.PARTICIPANT)
+    connection_state = models.CharField(
+        max_length=20, choices=PeerConnectionState.choices, default=PeerConnectionState.CONNECTING
+    )
+
+    has_video = models.BooleanField(default=False)
+    has_audio = models.BooleanField(default=False)
+    has_screen_share = models.BooleanField(default=False)
+
+    joined_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccmc"
+        ordering = ["joined_at"]
+        unique_together = [["session", "user"]]
+
+    def __str__(self):
+        return f"{self.user.username} as {self.peer_role} in session {self.session.id}"
+
+    def update_last_seen(self):
+        """Update last seen timestamp."""
+        self.last_seen_at = timezone.now()
+        self.save(update_fields=["last_seen_at"])
+
+    def update_connection_state(self, state: str):
+        """Update connection state."""
+        self.connection_state = state
+        self.save(update_fields=["connection_state"])
+
+
+class SignalType(models.TextChoices):
+    """
+    Types of WebRTC signalling messages.
+    """
+
+    OFFER = "offer", "Offer"
+    ANSWER = "answer", "Answer"
+    ICE_CANDIDATE = "ice_candidate", "ICE Candidate"
+    CHECK = "check", "Peer Check"
+
+
+class WebRTCSignal(models.Model):
+    """
+    Stores WebRTC signalling messages (offers, answers, ICE candidates).
+
+    Used for relaying signalling data between peers through the backend.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(WebRTCSession, on_delete=models.CASCADE, related_name="signals")
+
+    from_peer = models.ForeignKey(WebRTCPeer, on_delete=models.CASCADE, related_name="sent_signals")
+    to_peer = models.ForeignKey(
+        WebRTCPeer, on_delete=models.CASCADE, related_name="received_signals", blank=True, null=True
+    )
+
+    signal_type = models.CharField(max_length=20, choices=SignalType.choices)
+    signal_data = models.JSONField(help_text="SDP or ICE candidate data")
+
+    delivered = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "ccmc"
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.signal_type} from {self.from_peer.user.username} in session {self.session.id}"

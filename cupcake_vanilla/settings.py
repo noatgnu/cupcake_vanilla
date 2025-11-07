@@ -344,6 +344,15 @@ SIMPLE_JWT = {
 JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME = timedelta(hours=24)
 JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME = timedelta(days=30)
 
+COTURN_HOST = os.environ.get("COTURN_HOST", "coturn")
+COTURN_PORT = int(os.environ.get("COTURN_PORT", "3478"))
+COTURN_TLS_PORT = int(os.environ.get("COTURN_TLS_PORT", "5349"))
+COTURN_USERNAME = os.environ.get("COTURN_USERNAME", "cupcake")
+COTURN_PASSWORD = os.environ.get("COTURN_PASSWORD", "cupcake_turn_pass")
+COTURN_SECRET = os.environ.get("COTURN_SECRET", "cupcake_vanilla_turn_secret_key_change_in_production")
+COTURN_REALM = os.environ.get("COTURN_REALM", "cupcake-vanilla.local")
+COTURN_TTL = int(os.environ.get("COTURN_TTL", "86400"))
+
 # File upload settings
 FILE_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB

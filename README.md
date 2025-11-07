@@ -8,6 +8,8 @@ CUPCAKE offers flexible configuration options:
 
 - **Metadata Management Only**: Use CCC (Core) + CCV (Vanilla) for SDRF metadata management without instrument/inventory features
 - **Full Laboratory Management**: Add CCM (Macaron) for comprehensive instrument booking and inventory tracking
+- **Full-featured Electronic Lab Notebook**: Add CCRV (Red Velvet) Lab notebook and protocol management with direct protocol import from protocols.io with optional audio and video notes auto transcription and translation into English with whisper.cpp
+- **Facility Billing Management**: Add CCSC (Salted Caramel) for billing based on instrument usage, staff time, and reagent consumption
 
 See [CONFIGURATION_GUIDE.md](./CONFIGURATION_GUIDE.md) for detailed setup instructions.
 
@@ -93,8 +95,7 @@ urlpatterns = [
 ### 3. Run Migrations
 
 ```
-python manage.py migrate ccc
-python manage.py migrate ccv
+python manage.py migrate
 ```
 
 ### 4. Load Initial Data
@@ -113,9 +114,9 @@ python manage.py load_tissue
 
 # Load the rest of the ontologies please look under ccv/management/commands/
 
-# Load SDRF schemas
+# Load SDRF schemas based on internal built-in of sdrf-pipelines library
 python manage.py sync_schemas
 
-# Load default column
+# Load default column based on the templates setup from Schema loaded from sdrf-pipelines library
 python manage.py load_column_templates
 ```

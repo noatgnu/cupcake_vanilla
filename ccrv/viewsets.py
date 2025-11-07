@@ -118,6 +118,7 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
     ViewSet for managing experimental protocols.
 
     Preserves all original functionality including protocols.io integration.
+    Supports filtering by access type: public, owned, or shared.
     """
 
     queryset = ProtocolModel.objects.all()
@@ -129,17 +130,43 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
         return ProtocolModelSerializer
 
     def get_queryset(self):
-        """Filter protocols based on user permissions (includes bubble-up from sub-groups)."""
+        """
+        Filter protocols based on user permissions and optional access_type parameter.
+
+        Query parameters:
+        - access_type: Filter by access type ('public', 'owned', 'shared')
+          - 'public': Protocols with public visibility
+          - 'owned': Protocols owned by the current user
+          - 'shared': Protocols shared with the user (editor/viewer or via lab group)
+        """
         user = self.request.user
+        base_queryset = self.queryset
+
         if user.is_superuser:
-            return self.queryset
+            queryset = base_queryset
+        else:
+            accessible_groups = LabGroup.get_accessible_group_ids(user)
+            queryset = base_queryset.filter(
+                Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups)
+            ).distinct()
 
-        # Get all accessible lab groups (includes parent groups via bubble-up)
-        accessible_groups = LabGroup.get_accessible_group_ids(user)
+        access_type = self.request.query_params.get("access_type", None)
 
-        return self.queryset.filter(
-            Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups)
-        ).distinct()
+        if access_type == "public":
+            from ccc.models import ResourceVisibility
+
+            queryset = queryset.filter(visibility=ResourceVisibility.PUBLIC)
+        elif access_type == "owned":
+            queryset = queryset.filter(owner=user)
+        elif access_type == "shared":
+            accessible_groups = LabGroup.get_accessible_group_ids(user)
+            queryset = (
+                queryset.filter(Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups))
+                .exclude(owner=user)
+                .distinct()
+            )
+
+        return queryset
 
     @action(detail=True, methods=["post"])
     def toggle_enabled(self, request, pk=None):
@@ -187,6 +214,38 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
     def vaulted_protocols(self, request):
         """Get vaulted/imported protocols."""
         protocols = self.get_queryset().filter(is_vaulted=True)
+        serializer = self.get_serializer(protocols, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
+    def public_protocols(self, request):
+        """Get all publicly accessible protocols."""
+        from ccc.models import ResourceVisibility
+
+        protocols = self.get_queryset().filter(visibility=ResourceVisibility.PUBLIC)
+        serializer = self.get_serializer(protocols, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
+    def my_protocols(self, request):
+        """Get protocols owned by the current user."""
+        protocols = self.get_queryset().filter(owner=request.user)
+        serializer = self.get_serializer(protocols, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
+    def shared_with_me(self, request):
+        """Get protocols shared with the current user (not owned by them)."""
+        user = request.user
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
+
+        protocols = (
+            self.get_queryset()
+            .filter(Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups))
+            .exclude(owner=user)
+            .distinct()
+        )
+
         serializer = self.get_serializer(protocols, many=True)
         return Response(serializer.data)
 
