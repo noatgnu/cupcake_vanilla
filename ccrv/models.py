@@ -243,6 +243,9 @@ class Session(AbstractResource):
         "ccc.RemoteHost", on_delete=models.CASCADE, related_name="sessions", blank=True, null=True
     )
 
+    # WebRTC collaboration
+    webrtc_sessions = models.ManyToManyField("ccmc.WebRTCSession", related_name="ccrv_sessions", blank=True)
+
     class Meta:
         app_label = "ccrv"
         ordering = ["-created_at"]  # Updated to use AbstractResource ordering

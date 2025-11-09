@@ -8,7 +8,13 @@ from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
 
-from .viewsets import MessageThreadViewSet, MessageViewSet, NotificationViewSet, ThreadParticipantViewSet
+from .viewsets import (
+    MessageThreadViewSet,
+    MessageViewSet,
+    NotificationViewSet,
+    ThreadParticipantViewSet,
+    WebRTCSessionViewSet,
+)
 
 app_name = "ccmc"
 
@@ -18,6 +24,7 @@ router.register(r"notifications", NotificationViewSet, basename="notification")
 router.register(r"threads", MessageThreadViewSet, basename="messagethread")
 router.register(r"messages", MessageViewSet, basename="message")
 router.register(r"participants", ThreadParticipantViewSet, basename="threadparticipant")
+router.register(r"webrtc-sessions", WebRTCSessionViewSet, basename="webrtcsession")
 
 urlpatterns = [
     path("", include(router.urls)),

@@ -6,6 +6,7 @@ import json
 import logging
 
 from django.contrib.auth.models import AnonymousUser
+from django.utils import timezone
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -250,7 +251,11 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
             await self.close(code=4003)
             return
 
-        self.peer = await self.get_or_create_peer(self.session_id, self.user)
+        query_string = self.scope.get("query_string", b"").decode()
+        query_params = dict(param.split("=") for param in query_string.split("&") if "=" in param)
+        client_peer_id = query_params.get("client_peer_id")
+
+        self.peer = await self.get_or_create_peer(self.session_id, self.user, client_peer_id=client_peer_id)
         self.peer_id = str(self.peer.id)
         self.channel_id = f"webrtc_{self.peer_id}"
 
@@ -269,12 +274,24 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                     "type": "connection.established",
                     "message": "WebRTC signalling connection established",
                     "peer_id": self.peer_id,
-                    "session_id": self.session_id,
+                    "client_peer_id": self.peer.client_peer_id,
+                    "session_id": str(self.session_id),
                     "user_id": self.user.id,
                     "username": self.user.username,
                     "ice_servers": ice_servers,
+                    "is_reconnection": client_peer_id is not None and self.peer.client_peer_id == client_peer_id,
                 }
             )
+        )
+
+        await self.channel_layer.group_send(
+            self.session_group,
+            {
+                "type": "peer.joined",
+                "peer_id": self.peer_id,
+                "user_id": self.user.id,
+                "username": self.user.username,
+            },
         )
 
         logger.info(f"User {self.user.username} connected to WebRTC session {self.session_id}")
@@ -282,6 +299,15 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
         if hasattr(self, "session_group"):
+            await self.channel_layer.group_send(
+                self.session_group,
+                {
+                    "type": "peer.left",
+                    "peer_id": self.peer_id,
+                    "user_id": self.user.id,
+                    "username": self.user.username,
+                },
+            )
             await self.channel_layer.group_discard(self.session_group, self.channel_name)
 
         if hasattr(self, "channel_id"):
@@ -308,6 +334,7 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                 "answer": self.handle_answer,
                 "ice_candidate": self.handle_ice_candidate,
                 "peer_state": self.handle_peer_state,
+                "heartbeat": self.handle_heartbeat,
             }
 
             handler = handler_map.get(message_type)
@@ -474,6 +501,23 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
             },
         )
 
+    async def handle_heartbeat(self, data):
+        """
+        Handle heartbeat/ping from client.
+
+        Updates last_seen_at to track active connections.
+        """
+        await self.update_peer_last_seen(self.peer.id)
+
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "heartbeat.response",
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+        )
+
     async def peer_check(self, event):
         """Handle incoming peer check."""
         await self.send(
@@ -548,6 +592,34 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                 )
             )
 
+    async def peer_joined(self, event):
+        """Handle peer joined notification."""
+        if event["peer_id"] != self.peer_id:
+            await self.send(
+                text_data=json.dumps(
+                    {
+                        "type": "peer.joined",
+                        "peer_id": event["peer_id"],
+                        "user_id": event["user_id"],
+                        "username": event["username"],
+                    }
+                )
+            )
+
+    async def peer_left(self, event):
+        """Handle peer left notification."""
+        if event["peer_id"] != self.peer_id:
+            await self.send(
+                text_data=json.dumps(
+                    {
+                        "type": "peer.left",
+                        "peer_id": event["peer_id"],
+                        "user_id": event["user_id"],
+                        "username": event["username"],
+                    }
+                )
+            )
+
     async def send_error(self, message):
         """Send error message to client."""
         await self.send(text_data=json.dumps({"type": "error", "message": message}))
@@ -565,47 +637,76 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
         from .models import WebRTCSession
 
         try:
-            session = WebRTCSession.objects.select_related("thread").get(id=session_id)
+            session = WebRTCSession.objects.prefetch_related("ccrv_sessions").get(id=session_id)
 
-            if not session.thread:
-                return True
+            ccrv_sessions = session.ccrv_sessions.all()
+            if not ccrv_sessions.exists():
+                return session.initiated_by == user
 
-            thread = session.thread
-            return thread.participants.filter(id=user.id).exists()
+            for ccrv_session in ccrv_sessions:
+                if ccrv_session.can_view(user):
+                    return True
+
+            return False
 
         except WebRTCSession.DoesNotExist:
             return False
 
     @database_sync_to_async
-    def get_or_create_peer(self, session_id, user):
-        """Get or create WebRTCPeer for this connection."""
+    def get_or_create_peer(self, session_id, user, client_peer_id=None):
+        """
+        Get existing or create new WebRTCPeer for this connection.
+
+        If client_peer_id is provided, attempts to reuse existing disconnected peer
+        for reconnection. Otherwise creates a new peer with a generated client_peer_id.
+        """
         import uuid
 
         from .models import WebRTCPeer, WebRTCSession
 
         session = WebRTCSession.objects.get(id=session_id)
 
-        peer, created = WebRTCPeer.objects.get_or_create(
+        if client_peer_id:
+            existing_peer = WebRTCPeer.objects.filter(
+                session=session, user=user, client_peer_id=client_peer_id, connection_state="disconnected"
+            ).first()
+
+            if existing_peer:
+                existing_peer.channel_id = f"webrtc_{uuid.uuid4()}"
+                existing_peer.connection_state = "connecting"
+                existing_peer.last_seen_at = timezone.now()
+                existing_peer.save(update_fields=["channel_id", "connection_state", "last_seen_at"])
+                return existing_peer
+
+        if not client_peer_id:
+            client_peer_id = str(uuid.uuid4())
+
+        peer = WebRTCPeer.objects.create(
             session=session,
             user=user,
-            defaults={
-                "channel_id": f"webrtc_{uuid.uuid4()}",
-                "connection_state": "connecting",
-            },
+            client_peer_id=client_peer_id,
+            channel_id=f"webrtc_{uuid.uuid4()}",
+            connection_state="connecting",
         )
-
-        if not created:
-            peer.connection_state = "connecting"
-            peer.save(update_fields=["connection_state"])
 
         return peer
 
     @database_sync_to_async
-    def get_session_peers(self, session_id, exclude_peer_id=None):
-        """Get all peers in the session."""
+    def get_session_peers(self, session_id, exclude_peer_id=None, include_disconnected=False):
+        """
+        Get all peers in the session.
+
+        Args:
+            session_id: WebRTC session ID
+            exclude_peer_id: Peer ID to exclude from results
+            include_disconnected: If False, only returns connecting/connected peers
+        """
         from .models import WebRTCPeer
 
         peers = WebRTCPeer.objects.filter(session_id=session_id).select_related("user")
+
+        if not include_disconnected:
+            peers = peers.filter(connection_state__in=["connecting", "connected"])
 
         if exclude_peer_id:
             peers = peers.exclude(id=exclude_peer_id)
@@ -653,6 +754,13 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
 
         if update_fields:
             WebRTCPeer.objects.filter(id=peer_id).update(**update_fields)
+
+    @database_sync_to_async
+    def update_peer_last_seen(self, peer_id):
+        """Update peer last_seen_at timestamp."""
+        from .models import WebRTCPeer
+
+        WebRTCPeer.objects.filter(id=peer_id).update(last_seen_at=timezone.now())
 
     @database_sync_to_async
     def get_ice_servers_for_user(self, username):

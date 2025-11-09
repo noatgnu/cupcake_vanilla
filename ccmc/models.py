@@ -268,18 +268,17 @@ class WebRTCSessionStatus(models.TextChoices):
 
 class WebRTCSession(models.Model):
     """
-    WebRTC communication session associated with a message thread.
+    WebRTC communication session for real-time collaboration.
 
     Tracks active WebRTC sessions for voice/video calls and screen sharing
-    within CCMC threads.
+    during experimental sessions (CCRV) or other collaborative work.
     """
 
     history = HistoricalRecords()
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    thread = models.ForeignKey(
-        MessageThread, on_delete=models.CASCADE, related_name="webrtc_sessions", blank=True, null=True
-    )
+    name = models.CharField(max_length=255, blank=True, null=True)
+    is_default = models.BooleanField(default=False)
 
     session_type = models.CharField(
         max_length=20, choices=WebRTCSessionType.choices, default=WebRTCSessionType.VIDEO_CALL
@@ -347,6 +346,12 @@ class WebRTCPeer(models.Model):
     session = models.ForeignKey(WebRTCSession, on_delete=models.CASCADE, related_name="peers")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="webrtc_peers")
 
+    client_peer_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Client-generated persistent ID for reconnection tracking",
+    )
     channel_id = models.CharField(max_length=255, unique=True, help_text="Unique WebSocket channel ID for this peer")
     peer_role = models.CharField(max_length=20, choices=PeerRole.choices, default=PeerRole.PARTICIPANT)
     connection_state = models.CharField(
@@ -366,7 +371,6 @@ class WebRTCPeer(models.Model):
     class Meta:
         app_label = "ccmc"
         ordering = ["joined_at"]
-        unique_together = [["session", "user"]]
 
     def __str__(self):
         return f"{self.user.username} as {self.peer_role} in session {self.session.id}"

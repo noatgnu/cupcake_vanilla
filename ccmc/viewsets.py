@@ -21,6 +21,7 @@ from .models import (
     NotificationPriority,
     NotificationType,
     ThreadParticipant,
+    WebRTCSession,
 )
 from .serializers import (
     MessageDetailSerializer,
@@ -31,6 +32,7 @@ from .serializers import (
     NotificationCreateSerializer,
     NotificationSerializer,
     ThreadParticipantSerializer,
+    WebRTCSessionSerializer,
 )
 
 
@@ -424,3 +426,71 @@ class ThreadParticipantViewSet(viewsets.ReadOnlyModelViewSet):
         participant.save(update_fields=["last_read_at"])
 
         return Response({"message": "Thread marked as read", "last_read_at": participant.last_read_at})
+
+
+class WebRTCSessionViewSet(viewsets.ModelViewSet):
+    queryset = WebRTCSession.objects.all()
+    serializer_class = WebRTCSessionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return (
+                WebRTCSession.objects.all()
+                .select_related("initiated_by")
+                .prefetch_related("webrtcpeer_set__user", "ccrv_sessions")
+            )
+
+        return (
+            WebRTCSession.objects.filter(Q(initiated_by=user) | Q(webrtcpeer__user=user) | Q(ccrv_sessions__owner=user))
+            .distinct()
+            .select_related("initiated_by")
+            .prefetch_related("webrtcpeer_set__user", "ccrv_sessions")
+        )
+
+    def check_edit_permission(self, webrtc_session):
+        """Check if user can edit this WebRTC session based on CCRV session permissions."""
+        user = self.request.user
+
+        if user.is_superuser or webrtc_session.initiated_by == user:
+            return True
+
+        ccrv_sessions = webrtc_session.ccrv_sessions.all()
+        if not ccrv_sessions.exists():
+            return webrtc_session.initiated_by == user
+
+        for ccrv_session in ccrv_sessions:
+            if ccrv_session.can_edit(user):
+                return True
+
+        return False
+
+    def perform_update(self, serializer):
+        if not self.check_edit_permission(serializer.instance):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("You don't have permission to edit this WebRTC session")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.check_edit_permission(instance):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("You don't have permission to delete this WebRTC session")
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def end_session(self, request, pk=None):
+        session = self.get_object()
+
+        if not self.check_edit_permission(session):
+            return Response(
+                {"error": "You don't have permission to end this session"}, status=status.HTTP_403_FORBIDDEN
+            )
+
+        session.session_status = "ended"
+        session.ended_at = timezone.now()
+        session.save(update_fields=["session_status", "ended_at"])
+
+        return Response({"message": "Session ended", "session_id": session.id})

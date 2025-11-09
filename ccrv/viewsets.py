@@ -367,6 +367,48 @@ class SessionViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(session)
         return Response({"message": "Session ended successfully", "session": serializer.data})
 
+    @action(detail=True, methods=["get"])
+    def webrtc_sessions(self, request, pk=None):
+        """Get all WebRTC sessions associated with this experimental session."""
+        session = self.get_object()
+
+        from ccmc.serializers import WebRTCSessionSerializer
+
+        webrtc_sessions = (
+            session.webrtc_sessions.all().select_related("initiated_by").prefetch_related("webrtcpeer_set__user")
+        )
+
+        serializer = WebRTCSessionSerializer(webrtc_sessions, many=True, context={"request": request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def join_default_webrtc(self, request, pk=None):
+        """
+        Get or create the default WebRTC session for this experimental session.
+
+        By default, all users joining an experimental session join the same WebRTC call
+        unless they explicitly create/join a different one.
+        """
+        session = self.get_object()
+
+        from ccmc.models import WebRTCSession
+        from ccmc.serializers import WebRTCSessionSerializer
+
+        default_session = (
+            session.webrtc_sessions.filter(session_status__in=["waiting", "active"], is_default=True)
+            .order_by("-created_at")
+            .first()
+        )
+
+        if not default_session:
+            default_session = WebRTCSession.objects.create(
+                session_type="video_call", initiated_by=request.user, is_default=True
+            )
+            session.webrtc_sessions.add(default_session)
+
+        serializer = WebRTCSessionSerializer(default_session, context={"request": request})
+        return Response(serializer.data)
+
     @action(detail=True, methods=["post"])
     def add_protocol(self, request, pk=None):
         """Add a protocol to this session."""

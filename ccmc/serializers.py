@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 
 from rest_framework import serializers
 
-from .models import Message, MessageThread, Notification, ThreadParticipant
+from .models import Message, MessageThread, Notification, ThreadParticipant, WebRTCPeer, WebRTCSession
 
 User = get_user_model()
 
@@ -328,3 +328,121 @@ class MessageThreadCreateSerializer(serializers.ModelSerializer):
                 continue  # Skip invalid usernames
 
         return thread
+
+
+class WebRTCPeerSerializer(serializers.ModelSerializer):
+    user_details = UserBasicSerializer(source="user", read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = WebRTCPeer
+        fields = [
+            "id",
+            "session",
+            "user",
+            "username",
+            "user_details",
+            "channel_id",
+            "peer_role",
+            "connection_state",
+            "has_video",
+            "has_audio",
+            "has_screen_share",
+            "joined_at",
+            "last_seen_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "username",
+            "user_details",
+            "channel_id",
+            "joined_at",
+            "last_seen_at",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class WebRTCSessionSerializer(serializers.ModelSerializer):
+    initiated_by_username = serializers.CharField(source="initiated_by.username", read_only=True)
+    initiated_by_details = UserBasicSerializer(source="initiated_by", read_only=True)
+    participants_list = WebRTCPeerSerializer(source="webrtcpeer_set", many=True, read_only=True)
+    participants_count = serializers.IntegerField(source="webrtcpeer_set.count", read_only=True)
+    ccrv_session_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WebRTCSession
+        fields = [
+            "id",
+            "name",
+            "is_default",
+            "session_type",
+            "session_status",
+            "initiated_by",
+            "initiated_by_username",
+            "initiated_by_details",
+            "participants_list",
+            "participants_count",
+            "ccrv_session_ids",
+            "can_edit",
+            "can_delete",
+            "started_at",
+            "ended_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "is_default",
+            "initiated_by",
+            "initiated_by_username",
+            "initiated_by_details",
+            "participants_list",
+            "participants_count",
+            "can_edit",
+            "can_delete",
+            "started_at",
+            "ended_at",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_can_edit(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+
+        user = request.user
+        if user.is_superuser or obj.initiated_by == user:
+            return True
+
+        ccrv_sessions = obj.ccrv_sessions.all()
+        if not ccrv_sessions.exists():
+            return obj.initiated_by == user
+
+        for ccrv_session in ccrv_sessions:
+            if ccrv_session.can_edit(user):
+                return True
+
+        return False
+
+    def get_can_delete(self, obj):
+        return self.get_can_edit(obj)
+
+    def create(self, validated_data):
+        ccrv_session_ids = validated_data.pop("ccrv_session_ids", [])
+        validated_data["initiated_by"] = self.context["request"].user
+
+        webrtc_session = super().create(validated_data)
+
+        if ccrv_session_ids:
+            from ccrv.models import Session
+
+            ccrv_sessions = Session.objects.filter(id__in=ccrv_session_ids)
+            webrtc_session.ccrv_sessions.set(ccrv_sessions)
+
+        return webrtc_session
