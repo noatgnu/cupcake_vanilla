@@ -934,7 +934,28 @@ class TimeKeeperViewSet(ModelViewSet):
         return queryset.select_related("session", "step", "user", "remote_host")
 
     def perform_create(self, serializer):
-        """Automatically assign current user to time keeper."""
+        """
+        Get or create timekeeper for session+step combination.
+
+        Only one timekeeper should exist per session+step.
+        """
+        validated_data = serializer.validated_data
+        session = validated_data.get("session")
+        step = validated_data.get("step")
+
+        if session and step:
+            existing = TimeKeeper.objects.filter(session=session, step=step).first()
+            if existing:
+                for key, value in validated_data.items():
+                    if key not in ["session", "step"]:
+                        setattr(existing, key, value)
+                existing.save()
+                serializer.instance = existing
+                return
+
+        if "original_duration" not in validated_data and "current_duration" in validated_data:
+            validated_data["original_duration"] = validated_data["current_duration"]
+
         serializer.save(user=self.request.user)
 
     @action(detail=True, methods=["post"])
@@ -945,9 +966,12 @@ class TimeKeeperViewSet(ModelViewSet):
         if time_keeper.started:
             return Response({"error": "Timer is already started"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not time_keeper.original_duration and time_keeper.current_duration:
+            time_keeper.original_duration = time_keeper.current_duration
+
         time_keeper.started = True
         time_keeper.start_time = timezone.now()
-        time_keeper.save()
+        time_keeper.save(update_fields=["started", "start_time", "original_duration"])
 
         serializer = self.get_serializer(time_keeper)
         return Response({"message": "Timer started", "time_keeper": serializer.data})
@@ -960,13 +984,19 @@ class TimeKeeperViewSet(ModelViewSet):
         if not time_keeper.started:
             return Response({"error": "Timer is not started"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not time_keeper.start_time:
+            return Response(
+                {"error": "Timer is marked as started but has no start time"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
         elapsed_seconds = int((timezone.now() - time_keeper.start_time).total_seconds())
         previous_duration = time_keeper.current_duration or 0
         new_duration = max(0, previous_duration - elapsed_seconds)
 
         time_keeper.started = False
         time_keeper.current_duration = new_duration
-        time_keeper.save()
+        time_keeper.start_time = None
+        time_keeper.save(update_fields=["started", "current_duration", "start_time"])
 
         serializer = self.get_serializer(time_keeper)
         return Response(
@@ -988,16 +1018,20 @@ class TimeKeeperViewSet(ModelViewSet):
         time_keeper = self.get_object()
 
         if not time_keeper.original_duration:
-            return Response(
-                {"error": "Cannot reset: no original duration set for this timekeeper"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            if time_keeper.current_duration:
+                time_keeper.original_duration = time_keeper.current_duration
+            else:
+                return Response(
+                    {"error": "Cannot reset: no duration set for this timekeeper"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if time_keeper.started:
             time_keeper.started = False
+            time_keeper.start_time = None
 
         time_keeper.current_duration = time_keeper.original_duration
-        time_keeper.save()
+        time_keeper.save(update_fields=["started", "start_time", "current_duration", "original_duration"])
 
         TimeKeeperEvent.objects.create(
             time_keeper=time_keeper,
