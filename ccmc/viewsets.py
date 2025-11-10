@@ -439,14 +439,14 @@ class WebRTCSessionViewSet(viewsets.ModelViewSet):
             return (
                 WebRTCSession.objects.all()
                 .select_related("initiated_by")
-                .prefetch_related("webrtcpeer_set__user", "ccrv_sessions")
+                .prefetch_related("peers__user", "ccrv_sessions")
             )
 
         return (
-            WebRTCSession.objects.filter(Q(initiated_by=user) | Q(webrtcpeer__user=user) | Q(ccrv_sessions__owner=user))
+            WebRTCSession.objects.filter(Q(initiated_by=user) | Q(peers__user=user) | Q(ccrv_sessions__owner=user))
             .distinct()
             .select_related("initiated_by")
-            .prefetch_related("webrtcpeer_set__user", "ccrv_sessions")
+            .prefetch_related("peers__user", "ccrv_sessions")
         )
 
     def check_edit_permission(self, webrtc_session):

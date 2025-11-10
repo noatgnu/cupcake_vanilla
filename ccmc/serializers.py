@@ -368,8 +368,8 @@ class WebRTCPeerSerializer(serializers.ModelSerializer):
 class WebRTCSessionSerializer(serializers.ModelSerializer):
     initiated_by_username = serializers.CharField(source="initiated_by.username", read_only=True)
     initiated_by_details = UserBasicSerializer(source="initiated_by", read_only=True)
-    participants_list = WebRTCPeerSerializer(source="webrtcpeer_set", many=True, read_only=True)
-    participants_count = serializers.IntegerField(source="webrtcpeer_set.count", read_only=True)
+    participants_list = WebRTCPeerSerializer(source="peers", many=True, read_only=True)
+    participants_count = serializers.IntegerField(source="peers.count", read_only=True)
     ccrv_session_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
     can_edit = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()

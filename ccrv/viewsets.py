@@ -374,9 +374,7 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         from ccmc.serializers import WebRTCSessionSerializer
 
-        webrtc_sessions = (
-            session.webrtc_sessions.all().select_related("initiated_by").prefetch_related("webrtcpeer_set__user")
-        )
+        webrtc_sessions = session.webrtc_sessions.all().select_related("initiated_by").prefetch_related("peers__user")
 
         serializer = WebRTCSessionSerializer(webrtc_sessions, many=True, context={"request": request})
         return Response(serializer.data)
@@ -534,6 +532,9 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
     queryset = ProtocolSection.objects.all()
     serializer_class = ProtocolSectionSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ["protocol"]
+    ordering_fields = ["order"]
 
     def get_queryset(self):
         """Filter sections based on protocol permissions (includes bubble-up from sub-groups)."""
