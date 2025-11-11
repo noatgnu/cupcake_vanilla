@@ -193,6 +193,7 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
             "modifiers",
             "ontology_type",
             "ontology_options",
+            "custom_ontology_filters",
             "suggested_values",
             "enable_typeahead",
             "possible_default_values",
