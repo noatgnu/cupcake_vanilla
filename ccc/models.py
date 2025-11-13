@@ -631,6 +631,19 @@ class SiteConfig(models.Model):
         "Staff and instrument managers can always delete bookings.",
     )
 
+    # UI Feature Visibility
+    ui_features = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "UI feature visibility configuration. Controls which features are shown in the frontend. "
+            "Example: {'show_metadata_tables': true, 'show_protocols': false, 'show_instruments': true}. "
+            "Default features: show_metadata_tables, show_instruments, show_sessions, show_protocols, "
+            "show_messages, show_notifications, show_sample_management, show_webrtc. "
+            "Admins can add custom feature flags as needed."
+        ),
+    )
+
     # Audit trail
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -645,6 +658,64 @@ class SiteConfig(models.Model):
 
     def __str__(self):
         return f"Site Config: {self.site_name}"
+
+    def get_ui_feature(self, feature_name, default=True):
+        """
+        Get UI feature visibility flag with default fallback.
+
+        Args:
+            feature_name: Name of the feature flag (e.g., 'show_protocols')
+            default: Default value if feature not configured (default: True)
+
+        Returns:
+            bool: Whether the feature should be shown
+
+        Example:
+            >>> config = SiteConfig.objects.first()
+            >>> if config.get_ui_feature('show_protocols', default=True):
+            ...     # Show protocols in UI
+        """
+        if not self.ui_features:
+            return default
+        return self.ui_features.get(feature_name, default)
+
+    def set_ui_feature(self, feature_name, enabled):
+        """
+        Set UI feature visibility flag.
+
+        Args:
+            feature_name: Name of the feature flag
+            enabled: Whether the feature should be shown
+
+        Example:
+            >>> config = SiteConfig.objects.first()
+            >>> config.set_ui_feature('show_protocols', False)
+            >>> config.save()
+        """
+        if self.ui_features is None:
+            self.ui_features = {}
+        self.ui_features[feature_name] = enabled
+
+    def get_all_ui_features(self):
+        """
+        Get all UI features with defaults applied.
+
+        Returns:
+            dict: All UI feature flags with defaults
+        """
+        defaults = {
+            "show_metadata_tables": True,
+            "show_instruments": True,
+            "show_sessions": True,
+            "show_protocols": True,
+            "show_messages": True,
+            "show_notifications": True,
+            "show_sample_management": True,
+            "show_webrtc": True,
+        }
+        if not self.ui_features:
+            return defaults
+        return {**defaults, **self.ui_features}
 
 
 class LabGroup(models.Model):

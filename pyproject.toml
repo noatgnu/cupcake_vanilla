@@ -154,6 +154,7 @@ rq = "^2.5.0"
 django-rq = "^3.1"
 beautifulsoup4="^4.13.5"
 webvtt-py = "^0.5.1"
+django-dbbackup = "^5.0.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.12.0"

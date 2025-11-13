@@ -34,6 +34,7 @@ class SiteConfigSerializer(serializers.ModelSerializer):
     """Serializer for site configuration settings."""
 
     installed_apps = serializers.SerializerMethodField()
+    ui_features_with_defaults = serializers.SerializerMethodField()
 
     class Meta:
         model = SiteConfig
@@ -46,12 +47,14 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "allow_user_registration",
             "enable_orcid_login",
             "booking_deletion_window_minutes",
+            "ui_features",
+            "ui_features_with_defaults",
             "installed_apps",
             "created_at",
             "updated_at",
             "updated_by",
         ]
-        read_only_fields = ["created_at", "updated_at", "updated_by", "installed_apps"]
+        read_only_fields = ["created_at", "updated_at", "updated_by", "installed_apps", "ui_features_with_defaults"]
 
     def get_installed_apps(self, obj):
         """Return information about which CUPCAKE apps are installed."""
@@ -110,6 +113,10 @@ class SiteConfigSerializer(serializers.ModelSerializer):
         }
 
         return cupcake_apps
+
+    def get_ui_features_with_defaults(self, obj):
+        """Return UI features with default values applied."""
+        return obj.get_all_ui_features()
 
 
 class LabGroupSerializer(serializers.ModelSerializer):

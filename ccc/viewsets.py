@@ -74,7 +74,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
     serializer_class = SiteConfigSerializer
     permission_classes = [IsAdminUser]
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    search_fields = ["site_name", "site_description"]
+    search_fields = ["site_name"]
     filterset_fields = ["allow_user_registration", "enable_orcid_login", "show_powered_by"]
 
     def get_queryset(self):
@@ -103,9 +103,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
         try:
             site_config = SiteConfig.objects.first()
             if site_config:
-                # Use the serializer to get all fields including installed_apps
                 serializer = self.get_serializer(site_config)
-                # Return only public fields plus installed_apps
                 data = {
                     "site_name": serializer.data["site_name"],
                     "logo_url": serializer.data["logo_url"],
@@ -114,13 +112,12 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                     "allow_user_registration": serializer.data["allow_user_registration"],
                     "enable_orcid_login": serializer.data["enable_orcid_login"],
                     "booking_deletion_window_minutes": serializer.data["booking_deletion_window_minutes"],
+                    "ui_features": serializer.data["ui_features_with_defaults"],
                     "installed_apps": serializer.data["installed_apps"],
                 }
                 return Response(data)
             else:
-                # Default response when no config exists - include installed_apps
-                serializer = self.get_serializer()
-                default_config = SiteConfig()  # Temporary instance for serializer
+                default_config = SiteConfig()
                 temp_serializer = self.get_serializer(default_config)
                 return Response(
                     {
@@ -130,6 +127,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                         "allow_user_registration": False,
                         "enable_orcid_login": False,
                         "booking_deletion_window_minutes": 30,
+                        "ui_features": temp_serializer.data["ui_features_with_defaults"],
                         "installed_apps": temp_serializer.data["installed_apps"],
                     }
                 )

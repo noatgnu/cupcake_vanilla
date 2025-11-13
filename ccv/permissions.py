@@ -150,40 +150,47 @@ class MetadataColumnAccessPermission(BasePermission):
         user = request.user
         is_read_only = request.method in ["GET", "HEAD", "OPTIONS"]
 
-        # First check table-level permissions
+        if metadata_table is None:
+            if hasattr(obj, "ccv_metadatatabletemplate_templates") and obj.ccv_metadatatabletemplate_templates.exists():
+                template = obj.ccv_metadatatabletemplate_templates.first()
+                return template.can_view(user) if is_read_only else template.can_edit(user)
+
+            if obj.staff_only:
+                return user.is_staff or user.is_superuser
+            return user.is_authenticated
+
         table_permission = MetadataTableAccessPermission()
         if not table_permission.has_object_permission(request, view, metadata_table):
             return False
 
-        # For read operations, staff_only columns require special handling
         if is_read_only and obj.staff_only:
             return self._can_view_staff_only_column(user, metadata_table)
 
-        # For write operations, staff_only columns require staff assignment
         if not is_read_only and obj.staff_only:
             return self._can_edit_staff_only_column(user, metadata_table)
 
-        # Non-staff-only columns follow table permissions
         return True
 
     def _can_view_staff_only_column(self, user, metadata_table):
         """Check if user can view staff_only columns."""
+        if metadata_table is None:
+            return user.is_staff or user.is_superuser
+
         if metadata_table.source_app == "ccm":
-            # For CCM tables, check job staff assignment
             if hasattr(metadata_table, "instrument_jobs") and metadata_table.instrument_jobs.exists():
                 job = metadata_table.instrument_jobs.first()
                 return user.is_staff or user.is_superuser or (hasattr(job, "staff") and user in job.staff.all())
 
-        # Default to staff/admin only
         return user.is_staff or user.is_superuser
 
     def _can_edit_staff_only_column(self, user, metadata_table):
         """Check if user can edit staff_only columns."""
+        if metadata_table is None:
+            return user.is_staff or user.is_superuser
+
         if metadata_table.source_app == "ccm":
-            # For CCM tables, only assigned job staff can edit staff_only columns
             if hasattr(metadata_table, "instrument_jobs") and metadata_table.instrument_jobs.exists():
                 job = metadata_table.instrument_jobs.first()
                 return hasattr(job, "staff") and user in job.staff.all()
 
-        # Default to staff/admin only
         return user.is_staff or user.is_superuser

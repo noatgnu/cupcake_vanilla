@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "social_django",
     "channels",
     "django_rq",
+    "dbbackup",
     "ccc.apps.CccConfig",
     "ccv.apps.CcvConfig",
 ]
@@ -416,3 +417,18 @@ WHISPERCPP_THREAD_COUNT = os.environ.get("WHISPERCPP_THREAD_COUNT", "6")
 
 # Feature flags
 USE_WHISPER = os.environ.get("USE_WHISPER", "False") == "True"
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+    "dbbackup": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": BASE_DIR / "backups",
+        },
+    },
+}
