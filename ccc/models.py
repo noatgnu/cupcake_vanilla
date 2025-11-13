@@ -639,7 +639,7 @@ class SiteConfig(models.Model):
             "UI feature visibility configuration. Controls which features are shown in the frontend. "
             "Example: {'show_metadata_tables': true, 'show_protocols': false, 'show_instruments': true}. "
             "Default features: show_metadata_tables, show_instruments, show_sessions, show_protocols, "
-            "show_messages, show_notifications, show_sample_management, show_webrtc. "
+            "show_messages, show_notifications, show_storage, show_webrtc, show_billing. "
             "Admins can add custom feature flags as needed."
         ),
     )
@@ -710,8 +710,9 @@ class SiteConfig(models.Model):
             "show_protocols": True,
             "show_messages": True,
             "show_notifications": True,
-            "show_sample_management": True,
+            "show_storage": True,
             "show_webrtc": True,
+            "show_billing": True,
         }
         if not self.ui_features:
             return defaults

@@ -62,6 +62,23 @@ class SiteConfigAdmin(admin.ModelAdmin):
             {"fields": ("allow_user_registration", "enable_orcid_login")},
         ),
         (
+            "Booking Configuration",
+            {"fields": ("booking_deletion_window_minutes",)},
+        ),
+        (
+            "UI Feature Visibility",
+            {
+                "fields": ("ui_features",),
+                "description": (
+                    "Configure which UI features are visible to users. "
+                    'Example: {"show_protocols": false, "show_instruments": true}. '
+                    "Available features: show_metadata_tables, show_instruments, show_sessions, "
+                    "show_protocols, show_messages, show_notifications, show_storage, show_webrtc, show_billing. "
+                    "You can add custom feature flags as needed."
+                ),
+            },
+        ),
+        (
             "Audit Information",
             {
                 "fields": ("created_at", "updated_at", "updated_by"),
