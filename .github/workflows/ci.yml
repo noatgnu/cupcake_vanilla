@@ -86,6 +86,7 @@ jobs:
         ENABLE_CUPCAKE_SALTED_CARAMEL: true
       run: |
         poetry run python manage.py migrate
+        poetry run python manage.py collectstatic --noinput
         poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
 
 
@@ -151,4 +152,5 @@ jobs:
       run: |
         poetry run python manage.py check --settings=cupcake_vanilla.settings_electron
         poetry run python manage.py migrate
+        poetry run python manage.py collectstatic --noinput
         poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
