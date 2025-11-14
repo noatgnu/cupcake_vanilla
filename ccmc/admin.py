@@ -22,7 +22,7 @@ class NotificationAdmin(admin.ModelAdmin):
         "created_at",
     ]
     search_fields = ["title", "message", "recipient__username", "sender__username"]
-    readonly_fields = ["created_at", "updated_at", "read_at", "delivered_at"]
+    readonly_fields = ["created_at", "updated_at", "read_at"]
     date_hierarchy = "created_at"
     list_per_page = 50
 
@@ -53,7 +53,6 @@ class NotificationAdmin(admin.ModelAdmin):
                 "fields": (
                     "delivery_status",
                     "read_at",
-                    "delivered_at",
                 )
             },
         ),
@@ -100,7 +99,6 @@ class MessageThreadAdmin(admin.ModelAdmin):
     search_fields = ["title", "description", "creator__username"]
     readonly_fields = ["created_at", "updated_at", "last_message_at"]
     date_hierarchy = "created_at"
-    filter_horizontal = ["participants"]
 
     fieldsets = (
         (
@@ -121,10 +119,6 @@ class MessageThreadAdmin(admin.ModelAdmin):
                     "is_archived",
                 )
             },
-        ),
-        (
-            "Participants",
-            {"fields": ("participants",)},
         ),
         (
             "Related Object",
@@ -331,16 +325,15 @@ class WebRTCPeerAdmin(admin.ModelAdmin):
         "id",
         "session",
         "user",
-        "peer_status",
+        "connection_state",
         "joined_at",
-        "left_at",
     ]
     list_filter = [
-        "peer_status",
+        "connection_state",
         "joined_at",
     ]
     search_fields = ["user__username", "session__session_name"]
-    readonly_fields = ["joined_at", "left_at"]
+    readonly_fields = ["joined_at"]
     date_hierarchy = "joined_at"
 
     fieldsets = (
@@ -350,17 +343,14 @@ class WebRTCPeerAdmin(admin.ModelAdmin):
                 "fields": (
                     "session",
                     "user",
-                    "peer_status",
+                    "connection_state",
                 )
             },
         ),
         (
             "Connection",
             {
-                "fields": (
-                    "joined_at",
-                    "left_at",
-                ),
+                "fields": ("joined_at",),
                 "classes": ("collapse",),
             },
         ),
@@ -372,8 +362,8 @@ class WebRTCSignalAdmin(admin.ModelAdmin):
     list_display = [
         "id",
         "session",
-        "from_user",
-        "to_user",
+        "from_peer",
+        "to_peer",
         "signal_type",
         "created_at",
     ]
@@ -381,7 +371,7 @@ class WebRTCSignalAdmin(admin.ModelAdmin):
         "signal_type",
         "created_at",
     ]
-    search_fields = ["from_user__username", "to_user__username", "session__session_name"]
+    search_fields = ["from_peer__user__username", "to_peer__user__username", "session__session_name"]
     readonly_fields = ["created_at"]
     date_hierarchy = "created_at"
     list_per_page = 100
@@ -392,8 +382,8 @@ class WebRTCSignalAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "session",
-                    "from_user",
-                    "to_user",
+                    "from_peer",
+                    "to_peer",
                     "signal_type",
                 )
             },
