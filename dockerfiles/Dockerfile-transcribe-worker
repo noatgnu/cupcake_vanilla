@@ -3,6 +3,9 @@ FROM python:3.11-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+ARG TARGETARCH
+ARG TARGETPLATFORM
+
 RUN curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg > /dev/null
 RUN sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
 RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 7FCC7D46ACCC4CF8
@@ -21,7 +24,20 @@ RUN /app/whisper.cpp/models/download-ggml-model.sh small
 RUN /app/whisper.cpp/models/download-ggml-model.sh medium.en
 RUN /app/whisper.cpp/models/download-ggml-model.sh medium
 
-RUN cmake -B build
+RUN echo "Building for platform: ${TARGETPLATFORM} (arch: ${TARGETARCH})"
+
+RUN case "${TARGETARCH}" in \
+    "amd64") \
+        echo "Building with x86_64 optimizations" && \
+        cmake -B build -DCMAKE_BUILD_TYPE=Release ;; \
+    "arm64") \
+        echo "Building with ARM64 optimizations" && \
+        cmake -B build -DCMAKE_BUILD_TYPE=Release ;; \
+    *) \
+        echo "Building for unknown architecture: ${TARGETARCH}" && \
+        cmake -B build -DCMAKE_BUILD_TYPE=Release ;; \
+    esac
+
 RUN cmake --build build --config Release -j $(nproc)
 
 WORKDIR /app

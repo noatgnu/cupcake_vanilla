@@ -631,6 +631,23 @@ class SiteConfig(models.Model):
         "Staff and instrument managers can always delete bookings.",
     )
 
+    whisper_cpp_model = models.CharField(
+        max_length=512,
+        default="/app/whisper.cpp/models/ggml-medium.bin",
+        help_text="Path to the default Whisper.cpp model file used for audio/video transcription. "
+        "Common models: ggml-tiny.bin (75 MB), ggml-base.bin (142 MB), ggml-small.bin (466 MB), "
+        "ggml-medium.bin (1.5 GB), ggml-large-v3.bin (3.1 GB). Larger models provide better accuracy "
+        "but require more resources and take longer to process.",
+    )
+
+    cached_available_models = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Cached list of available Whisper.cpp models reported by the transcribe worker. "
+        "This is automatically updated by the transcribe worker on startup. "
+        "Each model includes: path, name, size, size_bytes, and description.",
+    )
+
     # UI Feature Visibility
     ui_features = models.JSONField(
         default=dict,
@@ -717,6 +734,56 @@ class SiteConfig(models.Model):
         if not self.ui_features:
             return defaults
         return {**defaults, **self.ui_features}
+
+    @staticmethod
+    def scan_available_whisper_models():
+        """
+        Scan for available Whisper.cpp models in the models directory.
+        This should only be called by the transcribe worker.
+
+        Returns:
+            list: List of dictionaries with model information
+        """
+        import glob
+        import os
+
+        from django.conf import settings
+
+        models_dir = os.path.dirname(settings.WHISPERCPP_DEFAULT_MODEL)
+        if not os.path.exists(models_dir):
+            return []
+
+        model_files = glob.glob(os.path.join(models_dir, "ggml-*.bin"))
+
+        models = []
+        for model_path in sorted(model_files):
+            model_name = os.path.basename(model_path)
+            file_size = os.path.getsize(model_path)
+
+            size_mb = file_size / (1024 * 1024)
+            if size_mb < 1024:
+                size_str = f"{size_mb:.0f} MB"
+            else:
+                size_str = f"{size_mb / 1024:.1f} GB"
+
+            model_info = {"path": model_path, "name": model_name, "size": size_str, "size_bytes": file_size}
+
+            if "tiny" in model_name:
+                model_info["description"] = "Fastest, least accurate"
+            elif "base" in model_name:
+                model_info["description"] = "Fast, basic accuracy"
+            elif "small" in model_name:
+                model_info["description"] = "Balanced speed and accuracy"
+            elif "medium" in model_name:
+                model_info["description"] = "Good accuracy, moderate speed"
+            elif "large" in model_name:
+                model_info["description"] = "Best accuracy, slowest"
+            else:
+                model_info["description"] = "Whisper.cpp model"
+
+            models.append(model_info)
+
+        return models
 
 
 class LabGroup(models.Model):

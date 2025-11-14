@@ -66,6 +66,17 @@ class SiteConfigAdmin(admin.ModelAdmin):
             {"fields": ("booking_deletion_window_minutes",)},
         ),
         (
+            "Transcription Configuration",
+            {
+                "fields": ("whisper_cpp_model",),
+                "description": (
+                    "Configure default Whisper.cpp model for audio/video transcription. "
+                    "Available models: ggml-tiny.bin (fastest, least accurate), ggml-base.bin, "
+                    "ggml-small.bin, ggml-medium.bin (balanced), ggml-large-v3.bin (slowest, most accurate)."
+                ),
+            },
+        ),
+        (
             "UI Feature Visibility",
             {
                 "fields": ("ui_features",),

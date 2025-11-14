@@ -69,11 +69,13 @@ def queue_annotation_transcription(annotation, auto_transcribe=True):
         return
 
     try:
-        from ccc.models import AsyncTaskStatus
+        from ccc.models import AsyncTaskStatus, SiteConfig
         from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
 
         file_path = annotation.file.path
-        model_path = settings.WHISPERCPP_DEFAULT_MODEL
+
+        site_config = SiteConfig.objects.first()
+        model_path = site_config.whisper_cpp_model if site_config else settings.WHISPERCPP_DEFAULT_MODEL
 
         task_type = "TRANSCRIBE_AUDIO" if annotation_type == "audio" else "TRANSCRIBE_VIDEO"
 

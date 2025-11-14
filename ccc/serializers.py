@@ -35,6 +35,7 @@ class SiteConfigSerializer(serializers.ModelSerializer):
 
     installed_apps = serializers.SerializerMethodField()
     ui_features_with_defaults = serializers.SerializerMethodField()
+    available_whisper_models = serializers.SerializerMethodField()
 
     class Meta:
         model = SiteConfig
@@ -47,6 +48,8 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "allow_user_registration",
             "enable_orcid_login",
             "booking_deletion_window_minutes",
+            "whisper_cpp_model",
+            "available_whisper_models",
             "ui_features",
             "ui_features_with_defaults",
             "installed_apps",
@@ -54,7 +57,14 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "updated_at",
             "updated_by",
         ]
-        read_only_fields = ["created_at", "updated_at", "updated_by", "installed_apps", "ui_features_with_defaults"]
+        read_only_fields = [
+            "created_at",
+            "updated_at",
+            "updated_by",
+            "installed_apps",
+            "ui_features_with_defaults",
+            "available_whisper_models",
+        ]
 
     def get_installed_apps(self, obj):
         """Return information about which CUPCAKE apps are installed."""
@@ -117,6 +127,14 @@ class SiteConfigSerializer(serializers.ModelSerializer):
     def get_ui_features_with_defaults(self, obj):
         """Return UI features with default values applied."""
         return obj.get_all_ui_features()
+
+    def get_available_whisper_models(self, obj):
+        """
+        Return cached available Whisper.cpp models reported by transcribe worker.
+
+        The transcribe worker scans its filesystem and updates this cache.
+        """
+        return obj.cached_available_models or []
 
 
 class LabGroupSerializer(serializers.ModelSerializer):
@@ -972,7 +990,9 @@ class AnnotationSerializer(serializers.ModelSerializer):
                         from ccc.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
 
                         file_path = annotation.file.path
-                        model_path = settings.WHISPERCPP_DEFAULT_MODEL
+
+                        site_config = SiteConfig.objects.first()
+                        model_path = site_config.whisper_cpp_model if site_config else settings.WHISPERCPP_DEFAULT_MODEL
 
                         if annotation_type == "audio":
                             transcribe_audio.delay(

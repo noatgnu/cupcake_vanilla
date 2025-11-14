@@ -168,6 +168,51 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to get site config: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=False, methods=["get"], permission_classes=[IsAdminUser])
+    def available_whisper_models(self, request):
+        """
+        Get cached list of available Whisper.cpp models reported by transcribe worker.
+
+        The transcribe worker scans its filesystem on startup and caches the results.
+        Use the refresh_whisper_models endpoint to trigger a new scan.
+        """
+        try:
+            site_config = SiteConfig.objects.first()
+            if not site_config:
+                return Response({"models": [], "count": 0, "message": "No site config found. Models not yet scanned."})
+
+            models = site_config.cached_available_models or []
+            return Response({"models": models, "count": len(models)})
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to get available models: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=["post"], permission_classes=[IsAdminUser])
+    def refresh_whisper_models(self, request):
+        """
+        Trigger transcribe worker to scan and update available Whisper.cpp models.
+
+        This queues a job on the transcribe worker to scan its filesystem
+        and update the cached list of available models.
+        """
+        try:
+            from ccc.tasks import refresh_available_whisper_models
+
+            job = refresh_available_whisper_models.delay()
+
+            return Response(
+                {
+                    "status": "queued",
+                    "message": "Model scan queued on transcribe worker",
+                    "job_id": job.id,
+                }
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to queue model scan: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class LabGroupViewSet(viewsets.ModelViewSet, FilterMixin):
     """ViewSet for lab group management."""
