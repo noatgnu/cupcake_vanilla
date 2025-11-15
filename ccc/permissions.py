@@ -1,6 +1,11 @@
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 
+class IsSuperUser(BasePermission):
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated and request.user.is_superuser
+
+
 class IsOwnerOrReadOnly(BasePermission):
     """
     Custom permission to only allow owners of an object to edit it.

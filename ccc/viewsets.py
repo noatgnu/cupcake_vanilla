@@ -28,6 +28,8 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
+from ccc.permissions import IsSuperUser
+
 from .models import (
     Annotation,
     AnnotationFolder,
@@ -211,6 +213,86 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
         except Exception as e:
             return Response(
                 {"error": f"Failed to queue model scan: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=["get"], permission_classes=[IsSuperUser])
+    def worker_status(self, request):
+        """
+        Get status of all RQ workers across all queues.
+
+        Returns information about each worker including:
+        - Worker name
+        - Queue names
+        - Current job
+        - State (idle/busy)
+        - Birth time
+        - Job statistics
+
+        Only accessible to superusers.
+        """
+        try:
+            import django_rq
+            from rq.worker import Worker
+
+            queue_names = ["default", "high", "low", "transcribe"]
+
+            queue = django_rq.get_queue("default")
+            workers = Worker.all(connection=queue.connection)
+
+            workers_info = []
+            for worker in workers:
+                state = worker.get_state()
+                queues = [q.name for q in worker.queues]
+                current_job = worker.get_current_job()
+
+                worker_info = {
+                    "name": worker.name,
+                    "hostname": worker.hostname,
+                    "pid": worker.pid,
+                    "state": state,
+                    "queues": queues,
+                    "birth": worker.birth_date.isoformat() if worker.birth_date else None,
+                    "successful_job_count": worker.successful_job_count,
+                    "failed_job_count": worker.failed_job_count,
+                    "total_working_time": worker.total_working_time,
+                    "current_job": None,
+                }
+
+                if current_job:
+                    worker_info["current_job"] = {
+                        "id": current_job.id,
+                        "func_name": current_job.func_name,
+                        "created_at": current_job.created_at.isoformat() if current_job.created_at else None,
+                        "started_at": current_job.started_at.isoformat() if current_job.started_at else None,
+                        "description": current_job.description,
+                    }
+
+                workers_info.append(worker_info)
+
+            queue_stats = {}
+            for queue_name in queue_names:
+                try:
+                    q = django_rq.get_queue(queue_name)
+                    queue_stats[queue_name] = {
+                        "count": len(q),
+                        "failed_count": q.failed_job_registry.count,
+                        "scheduled_count": q.scheduled_job_registry.count,
+                        "started_count": q.started_job_registry.count,
+                        "finished_count": q.finished_job_registry.count,
+                    }
+                except Exception as e:
+                    queue_stats[queue_name] = {"error": str(e)}
+
+            return Response(
+                {
+                    "workers": workers_info,
+                    "worker_count": len(workers_info),
+                    "queues": queue_stats,
+                }
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to get worker status: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 

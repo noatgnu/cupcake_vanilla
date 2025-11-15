@@ -1,0 +1,89 @@
+services:
+  test-db:
+    container_name: ${TEST_DB_CONTAINER_NAME:-cupcake-vanilla-test-db}
+    image: postgres:15
+    restart: always
+    volumes:
+      - test-postgres-data:/var/lib/postgresql/data
+      - ./${BACKUP_DIR:-backups}:/backups:ro
+      - ./scripts/init-test-db.sh:/docker-entrypoint-initdb.d/init-test-db.sh:ro
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-cupcake_vanilla_test_pass}
+      POSTGRES_USER: ${DB_USER:-cupcake_vanilla_test}
+      POSTGRES_DB: ${DB_NAME:-cupcake_vanilla_test_db}
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    networks:
+      - cupcake-test-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-cupcake_vanilla_test}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  test-app:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile
+    container_name: ${TEST_APP_CONTAINER_NAME:-cupcake-vanilla-test-app}
+    restart: always
+    ports:
+      - "${API_PORT:-8002}:8000"
+    volumes:
+      - ./${BACKUP_DIR:-backups}:/backups:ro
+      - test-media:/app/media/
+    environment:
+      - POSTGRES_NAME=${DB_NAME:-cupcake_vanilla_test_db}
+      - POSTGRES_DB=${DB_NAME:-cupcake_vanilla_test_db}
+      - POSTGRES_USER=${DB_USER:-cupcake_vanilla_test}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-cupcake_vanilla_test_pass}
+      - POSTGRES_HOST=${DB_CONTAINER:-test-db}
+      - POSTGRES_PORT=5432
+      - SECRET_KEY=${SECRET_KEY:-test-secret-key-for-cupcake-vanilla-testing}
+      - DEBUG=True
+      - ALLOWED_HOSTS=*
+      - CORS_ORIGIN_WHITELIST=http://localhost:4200,http://localhost:3000,http://localhost:8080
+      - REDIS_URL=redis://${REDIS_CONTAINER:-test-redis}:6379/0
+      - REDIS_HOST=${REDIS_CONTAINER:-test-redis}
+      - REDIS_PORT=6379
+      - REDIS_DB_RQ=3
+      - ENABLE_RQ_TASKS=False
+      - ENABLE_CUPCAKE_MACARON=True
+      - ENABLE_CUPCAKE_MINT_CHOCOLATE=True
+      - ENABLE_CUPCAKE_SALTED_CARAMEL=True
+      - ENABLE_CUPCAKE_RED_VELVET=True
+      - USE_WHISPER=False
+    depends_on:
+      test-db:
+        condition: service_healthy
+    networks:
+      - cupcake-test-net
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        python manage.py migrate --noinput &&
+        echo 'Extracting media files...' &&
+        tar -xf /backups/${MEDIA_BACKUP_FILE:-cupcake_vanilla_test_media.tar} -C /app/media/ 2>/dev/null || echo 'Media extraction completed or no files found' &&
+        echo 'Starting Django server...' &&
+        python manage.py runserver 0.0.0.0:8000
+      "
+
+  test-redis:
+    container_name: ${TEST_REDIS_CONTAINER_NAME:-cupcake-vanilla-test-redis}
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - test-redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - cupcake-test-net
+
+volumes:
+  test-postgres-data:
+  test-redis-data:
+  test-media:
+
+networks:
+  cupcake-test-net:

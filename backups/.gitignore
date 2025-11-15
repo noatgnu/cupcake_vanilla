@@ -1,0 +1,6 @@
+*.psql.bin
+*.tar
+*.sql
+*.dump
+
+!README.md

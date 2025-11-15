@@ -17,13 +17,6 @@ WORKDIR /app
 RUN git clone https://github.com/ggerganov/whisper.cpp.git
 WORKDIR /app/whisper.cpp
 
-RUN /app/whisper.cpp/models/download-ggml-model.sh base.en
-RUN /app/whisper.cpp/models/download-ggml-model.sh base
-RUN /app/whisper.cpp/models/download-ggml-model.sh small.en
-RUN /app/whisper.cpp/models/download-ggml-model.sh small
-RUN /app/whisper.cpp/models/download-ggml-model.sh medium.en
-RUN /app/whisper.cpp/models/download-ggml-model.sh medium
-
 RUN echo "Building for platform: ${TARGETPLATFORM} (arch: ${TARGETARCH})"
 
 RUN case "${TARGETARCH}" in \
@@ -48,6 +41,10 @@ RUN pip install --upgrade pip && pip install poetry
 RUN poetry config virtualenvs.create false
 
 COPY . /app/
+
+RUN mkdir -p /app/scripts
+COPY dockerfiles/download-whisper-models.sh /app/scripts/
+RUN chmod +x /app/scripts/download-whisper-models.sh
 
 RUN poetry lock
 RUN poetry install --only=main

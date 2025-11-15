@@ -1,3 +1,9 @@
 /media/
 /htmlcov/
 /staticfiles/
+
+# Environment files
+.env.test
+.env.build
+.env.local
+.env.*.local
