@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-DUMP_FILE="/app/demo-db-prepopulated.sql"
+DUMP_FILE="/demo-db-prepopulated.sql"
 
 if [ -f "$DUMP_FILE" ]; then
     echo "Found prepopulated database dump - restoring..."
@@ -58,8 +58,5 @@ fi
 echo "Collecting static files..."
 python manage.py collectstatic --noinput
 
-echo "Starting Daphne (handles both HTTP and WebSocket)..."
-daphne -b 127.0.0.1 -p 8001 cupcake_vanilla.asgi:application &
-
-echo "Starting nginx..."
-nginx -g 'daemon off;'
+echo "Starting application..."
+exec "$@"

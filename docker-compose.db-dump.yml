@@ -30,9 +30,7 @@ services:
   web-temp:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile-demo
-      args:
-        - TUNNEL_DOMAIN=
+      dockerfile: dockerfiles/Dockerfile-db-dump
     container_name: cupcake_dump_web_temp
     environment:
       - DEMO_MODE=True

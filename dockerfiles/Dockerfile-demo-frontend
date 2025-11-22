@@ -1,0 +1,39 @@
+FROM node:20-alpine AS frontend-builder
+
+ARG TUNNEL_DOMAIN=""
+
+RUN apk add --no-cache git
+
+WORKDIR /frontend
+
+RUN git clone https://github.com/noatgnu/cupcake-webgui.git .
+
+RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
+      sed -i "s|apiUrl: 'https://localhost/api/v1'|apiUrl: 'https://${TUNNEL_DOMAIN}/api/v1'|g" src/environments/environment.ts && \
+      sed -i "s|websocketUrl: 'wss://localhost/ws'|websocketUrl: 'wss://${TUNNEL_DOMAIN}/ws'|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
+    else \
+      sed -i "s|apiUrl: 'https://localhost/api/v1'|apiUrl: 'http://localhost:8000/api/v1'|g" src/environments/environment.ts && \
+      sed -i "s|websocketUrl: 'wss://localhost/ws'|websocketUrl: 'ws://localhost:8000/ws'|g" src/environments/environment.ts; \
+    fi
+
+RUN cat src/environments/environment.ts
+
+RUN npm ci
+
+RUN npm run build -- --configuration production
+
+FROM nginx:alpine
+
+COPY --from=frontend-builder /frontend/dist/cupcake-webgui /usr/share/nginx/html
+
+COPY dockerfiles/nginx-demo-frontend.conf /etc/nginx/templates/default.conf.template
+
+RUN ln -sf /dev/stdout /var/log/nginx/access.log \
+    && ln -sf /dev/stderr /var/log/nginx/error.log
+
+EXPOSE 80
+
+ENV NGINX_SERVER_NAME="_"
+
+CMD ["sh", "-c", "envsubst '$$NGINX_SERVER_NAME' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
