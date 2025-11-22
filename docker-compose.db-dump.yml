@@ -30,7 +30,7 @@ services:
   web-temp:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile-db-dump
+      dockerfile: dockerfiles/Dockerfile
     container_name: cupcake_dump_web_temp
     environment:
       - DEMO_MODE=True
