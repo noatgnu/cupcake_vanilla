@@ -32,9 +32,8 @@ services:
       - POSTGRES_PORT=5432
       - SECRET_KEY=demo-secret-key-change-in-production
       - DEBUG=False
-      - ALLOWED_HOSTS=localhost,127.0.0.1,nginx-demo,${TUNNEL_DOMAIN:-}
+      - ALLOWED_HOSTS=localhost,127.0.0.1,nginx-demo,app-demo,${TUNNEL_DOMAIN:-}
       - CORS_ORIGIN_WHITELIST=http://localhost:4200,http://localhost:8000,https://${TUNNEL_DOMAIN:-localhost}
-      - CSRF_TRUSTED_ORIGINS=http://localhost:4200,http://localhost:8000,https://${TUNNEL_DOMAIN:-localhost}
       - REDIS_URL=redis://redis-demo:6379/1
       - REDIS_HOST=redis-demo
       - REDIS_PORT=6379
