@@ -25,7 +25,7 @@ RUN npm run build -- --configuration production
 
 FROM nginx:alpine
 
-COPY --from=frontend-builder /frontend/dist/cupcake-webgui /usr/share/nginx/html
+COPY --from=frontend-builder /frontend/dist/cupcake /usr/share/nginx/html
 
 COPY dockerfiles/nginx-demo-frontend.conf /etc/nginx/templates/default.conf.template
 
