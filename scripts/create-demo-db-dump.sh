@@ -19,9 +19,18 @@ cleanup() {
 
 trap cleanup EXIT
 
+if command -v poetry &> /dev/null; then
+    PYTHON_CMD="poetry run python"
+    echo "Using poetry to run commands..."
+else
+    PYTHON_CMD="python"
+    echo "Poetry not found, using system python..."
+fi
+
 echo "Starting temporary PostgreSQL container..."
 docker run -d \
     --name "$TEMP_CONTAINER" \
+    -p 5432 \
     -e POSTGRES_DB="$TEMP_DB" \
     -e POSTGRES_USER="$TEMP_USER" \
     -e POSTGRES_PASSWORD="$TEMP_PASSWORD" \
@@ -63,32 +72,32 @@ export USE_WHISPER="False"
 cd "$PROJECT_ROOT"
 
 echo "Running migrations..."
-poetry run python manage.py migrate --noinput
+$PYTHON_CMD manage.py migrate --noinput
 
 echo "Loading reference data..."
 echo "  - Syncing schemas..."
-poetry run python manage.py sync_schemas
+$PYTHON_CMD manage.py sync_schemas
 
 echo "  - Loading column templates..."
-poetry run python manage.py load_column_templates
+$PYTHON_CMD manage.py load_column_templates
 
 echo "  - Loading human disease ontology..."
-poetry run python manage.py load_human_disease
+$PYTHON_CMD manage.py load_human_disease
 
 echo "  - Loading MS modification ontology..."
-poetry run python manage.py load_ms_mod
+$PYTHON_CMD manage.py load_ms_mod
 
 echo "  - Loading MS term ontology..."
-poetry run python manage.py load_ms_term
+$PYTHON_CMD manage.py load_ms_term
 
 echo "  - Loading species ontology..."
-poetry run python manage.py load_species
+$PYTHON_CMD manage.py load_species
 
 echo "  - Loading subcellular location ontology..."
-poetry run python manage.py load_subcellular_location
+$PYTHON_CMD manage.py load_subcellular_location
 
 echo "  - Loading tissue ontology..."
-poetry run python manage.py load_tissue
+$PYTHON_CMD manage.py load_tissue
 
 echo "Reference data loaded successfully!"
 
