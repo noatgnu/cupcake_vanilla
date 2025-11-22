@@ -64,7 +64,7 @@ export REDIS_URL="redis://localhost:6379/1"
 export REDIS_DB_RQ="3"
 
 export ENABLE_CUPCAKE_MACARON="True"
-export ENABLE_CUPCAKE_MINT_CHOCOLATE="False"
+export ENABLE_CUPCAKE_MINT_CHOCOLATE="True"
 export ENABLE_CUPCAKE_RED_VELVET="True"
 export ENABLE_CUPCAKE_SALTED_CARAMEL="True"
 export USE_WHISPER="False"
