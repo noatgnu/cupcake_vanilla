@@ -1,0 +1,12 @@
+FROM nginx:alpine
+
+RUN apk add --no-cache moreutils
+
+ARG NGINX_SERVER_NAME="_"
+ENV NGINX_SERVER_NAME=${NGINX_SERVER_NAME}
+
+COPY ./dockerfiles/nginx-demo-frontend.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["sh", "-c", "envsubst '$$NGINX_SERVER_NAME' < /etc/nginx/conf.d/default.conf | sponge /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

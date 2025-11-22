@@ -1,4 +1,14 @@
 services:
+  frontend-demo:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile-demo-frontend-only
+      args:
+        - TUNNEL_DOMAIN=${TUNNEL_DOMAIN:-}
+    container_name: cupcake-vanilla-frontend-demo
+    networks:
+      - cupcake-demo-network
+
   app-demo:
     build:
       context: .
@@ -24,6 +34,7 @@ services:
       - DEBUG=False
       - ALLOWED_HOSTS=localhost,127.0.0.1,nginx-demo,${TUNNEL_DOMAIN:-}
       - CORS_ORIGIN_WHITELIST=http://localhost:4200,http://localhost:8000,https://${TUNNEL_DOMAIN:-localhost}
+      - CSRF_TRUSTED_ORIGINS=http://localhost:4200,http://localhost:8000,https://${TUNNEL_DOMAIN:-localhost}
       - REDIS_URL=redis://redis-demo:6379/1
       - REDIS_HOST=redis-demo
       - REDIS_PORT=6379
@@ -87,9 +98,7 @@ services:
   nginx-demo:
     build:
       context: .
-      dockerfile: ./dockerfiles/Dockerfile-demo-frontend
-      args:
-        - TUNNEL_DOMAIN=${TUNNEL_DOMAIN:-}
+      dockerfile: ./dockerfiles/Dockerfile-demo-nginx
     container_name: cupcake-vanilla-nginx-demo
     environment:
       - NGINX_SERVER_NAME=${TUNNEL_DOMAIN:-_}
@@ -99,6 +108,7 @@ services:
       - "8000:80"
     depends_on:
       - app-demo
+      - frontend-demo
     networks:
       - cupcake-demo-network
 
