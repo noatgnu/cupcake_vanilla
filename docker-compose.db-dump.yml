@@ -59,7 +59,7 @@ services:
         condition: service_healthy
     networks:
       - cupcake-dump-network
-    command: "true"
+    command: ["tail", "-f", "/dev/null"]
 
 networks:
   cupcake-dump-network:
