@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres-temp:
+    image: postgres:16
+    container_name: cupcake_dump_postgres_temp
+    environment:
+      POSTGRES_DB: cupcake_dump_temp
+      POSTGRES_USER: cupcake_dump
+      POSTGRES_PASSWORD: cupcake_dump_pass
+    networks:
+      - cupcake-dump-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cupcake_dump"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis-temp:
+    image: redis:7-alpine
+    container_name: cupcake_dump_redis_temp
+    networks:
+      - cupcake-dump-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web-temp:
+    build:
+      context: .
+      dockerfile: dockerfiles/Dockerfile-demo
+      args:
+        - TUNNEL_DOMAIN=
+    container_name: cupcake_dump_web_temp
+    environment:
+      - DEMO_MODE=True
+      - SECRET_KEY=temp-secret-key-for-db-generation
+      - DEBUG=False
+      - POSTGRES_DB=cupcake_dump_temp
+      - POSTGRES_USER=cupcake_dump
+      - POSTGRES_PASSWORD=cupcake_dump_pass
+      - POSTGRES_HOST=postgres-temp
+      - POSTGRES_PORT=5432
+      - REDIS_URL=redis://redis-temp:6379/1
+      - REDIS_HOST=redis-temp
+      - REDIS_PORT=6379
+      - REDIS_DB_RQ=3
+      - ALLOWED_HOSTS=localhost,127.0.0.1
+      - CORS_ORIGIN_WHITELIST=http://localhost:4200,http://localhost:8000
+      - ENABLE_CUPCAKE_MACARON=True
+      - ENABLE_CUPCAKE_MINT_CHOCOLATE=True
+      - ENABLE_CUPCAKE_RED_VELVET=True
+      - ENABLE_CUPCAKE_SALTED_CARAMEL=True
+      - USE_WHISPER=False
+    depends_on:
+      postgres-temp:
+        condition: service_healthy
+      redis-temp:
+        condition: service_healthy
+    networks:
+      - cupcake-dump-network
+    command: "true"
+
+networks:
+  cupcake-dump-network:
+    driver: bridge
