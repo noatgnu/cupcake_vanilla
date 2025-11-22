@@ -39,7 +39,7 @@ services:
       - COTURN_TLS_PORT=
       - COTURN_SECRET=
       - COTURN_TTL=
-    entrypoint: ["/entrypoint-demo.sh"]
+    entrypoint: ["sh", "/entrypoint-demo.sh"]
     command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "cupcake_vanilla.asgi:application"]
     depends_on:
       db-demo:
