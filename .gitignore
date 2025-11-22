@@ -7,3 +7,7 @@
 .env.build
 .env.local
 .env.*.local
+.env.demo
+
+# Demo database dump
+dockerfiles/demo-db-prepopulated.sql

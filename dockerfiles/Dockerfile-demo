@@ -68,6 +68,13 @@ COPY . .
 
 COPY --from=frontend-builder /frontend/dist/cupcake-webgui /app/frontend
 
+RUN if [ -f dockerfiles/demo-db-prepopulated.sql ]; then \
+      echo "Prepopulated database dump found - will be used for faster startup"; \
+      cp dockerfiles/demo-db-prepopulated.sql /app/demo-db-prepopulated.sql; \
+    else \
+      echo "No prepopulated database dump found - will load data from commands"; \
+    fi
+
 RUN mkdir -p /app/staticfiles /app/media
 
 COPY dockerfiles/nginx-demo.conf /etc/nginx/sites-available/default
