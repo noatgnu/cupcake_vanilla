@@ -5,6 +5,8 @@ Django REST Framework viewsets for project and protocol management API endpoints
 faithfully representing the migrated functionality.
 """
 
+from pathlib import Path
+
 from django.db.models import Q
 from django.utils import timezone
 
@@ -296,6 +298,97 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
                 {"error": f"Failed to import protocol: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=["get"])
+    def get_export_url(self, request, pk=None):
+        """
+        Generate a signed download URL for protocol HTML export.
+
+        Query parameters:
+            session: Optional session ID to include session-specific annotations
+
+        Returns:
+            {"download_url": "URL with signed token"}
+        """
+        protocol = self.get_object()
+        session_id = request.query_params.get("session")
+
+        token = protocol.generate_export_token(request.user, session_id=session_id)
+        download_path = f"/api/v1/protocols/{protocol.id}/export_html/"
+        download_url = request.build_absolute_uri(f"{download_path}?token={token}")
+
+        return Response({"download_url": download_url})
+
+    @action(detail=True, methods=["get"], permission_classes=[])
+    def export_html(self, request, pk=None):
+        """
+        Export protocol as HTML document using signed token.
+
+        Query parameters:
+            token: Required signed token for download
+
+        Generates temporary HTML file and serves via X-Accel-Redirect.
+        """
+        from django.conf import settings
+        from django.http import HttpResponse
+
+        from ccrv.export_utils import save_protocol_export_to_temp
+        from ccrv.models import ProtocolModel, Session
+
+        signed_token = request.query_params.get("token")
+        if not signed_token:
+            return HttpResponse("Missing token", status=400)
+
+        protocol, user, session_id = ProtocolModel.verify_export_token(signed_token)
+
+        if not protocol:
+            return HttpResponse("Invalid or expired token", status=403)
+
+        if protocol.id != int(pk):
+            return HttpResponse("Token does not match protocol", status=403)
+
+        if not protocol.can_view(user):
+            return HttpResponse("Permission denied", status=403)
+
+        session = None
+        if session_id:
+            try:
+                session = Session.objects.get(id=session_id, protocols=protocol)
+                if not session.can_view(user):
+                    return HttpResponse("Permission denied for session", status=403)
+            except Session.DoesNotExist:
+                return HttpResponse("Session not found", status=404)
+
+        temp_path, filename = save_protocol_export_to_temp(protocol, session=session)
+
+        is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
+
+        if is_electron:
+            media_root = Path(settings.MEDIA_ROOT)
+            full_path = media_root / temp_path
+
+            with open(full_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+
+            response = HttpResponse(html_content, content_type="text/html")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        else:
+            response = HttpResponse()
+            response["X-Accel-Redirect"] = f"/internal/media/{temp_path}"
+            response["Content-Type"] = "text/html"
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+        origin = request.META.get("HTTP_ORIGIN")
+        cors_allowed_origins = getattr(settings, "CORS_ORIGIN_WHITELIST", [])
+
+        if origin and origin in cors_allowed_origins:
+            response["X-Accel-CORS-Origin"] = origin
+            response["Access-Control-Allow-Origin"] = origin
+            response["Access-Control-Allow-Credentials"] = "true"
+            response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response["Access-Control-Allow-Headers"] = ", ".join(getattr(settings, "CORS_ALLOW_HEADERS", []))
+
+        return response
+
 
 class SessionViewSet(viewsets.ModelViewSet):
     """
@@ -447,6 +540,86 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         serializer = AnnotationFolderSerializer(folders, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["get"])
+    def get_export_url(self, request, pk=None):
+        """
+        Generate a signed download URL for session HTML export.
+
+        Returns:
+            {"download_url": "URL with signed token"}
+        """
+        session = self.get_object()
+
+        token = session.generate_export_token(request.user)
+        download_path = f"/api/v1/sessions/{session.id}/export_html/"
+        download_url = request.build_absolute_uri(f"{download_path}?token={token}")
+
+        return Response({"download_url": download_url})
+
+    @action(detail=True, methods=["get"], permission_classes=[])
+    def export_html(self, request, pk=None):
+        """
+        Export session protocols with annotations as a self-contained HTML document using signed token.
+
+        Query parameters:
+            token: Required signed token for download
+
+        Generates temporary HTML file and serves via X-Accel-Redirect.
+        Returns an HTML file that can be archived and shared offline.
+        Includes all protocol steps, annotations, and embedded media files.
+        """
+        from django.conf import settings
+        from django.http import HttpResponse
+
+        from ccrv.export_utils import save_session_export_to_temp
+        from ccrv.models import Session
+
+        signed_token = request.query_params.get("token")
+        if not signed_token:
+            return HttpResponse("Missing token", status=400)
+
+        session, user = Session.verify_export_token(signed_token)
+
+        if not session:
+            return HttpResponse("Invalid or expired token", status=403)
+
+        if session.id != int(pk):
+            return HttpResponse("Token does not match session", status=403)
+
+        if not session.can_view(user):
+            return HttpResponse("Permission denied", status=403)
+
+        temp_path, filename = save_session_export_to_temp(session)
+
+        is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
+
+        if is_electron:
+            media_root = Path(settings.MEDIA_ROOT)
+            full_path = media_root / temp_path
+
+            with open(full_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+
+            response = HttpResponse(html_content, content_type="text/html")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        else:
+            response = HttpResponse()
+            response["X-Accel-Redirect"] = f"/internal/media/{temp_path}"
+            response["Content-Type"] = "text/html"
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+        origin = request.META.get("HTTP_ORIGIN")
+        cors_allowed_origins = getattr(settings, "CORS_ORIGIN_WHITELIST", [])
+
+        if origin and origin in cors_allowed_origins:
+            response["X-Accel-CORS-Origin"] = origin
+            response["Access-Control-Allow-Origin"] = origin
+            response["Access-Control-Allow-Credentials"] = "true"
+            response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response["Access-Control-Allow-Headers"] = ", ".join(getattr(settings, "CORS_ALLOW_HEADERS", []))
+
+        return response
 
 
 class ProtocolRatingViewSet(viewsets.ModelViewSet):

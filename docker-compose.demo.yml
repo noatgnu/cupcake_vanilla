@@ -1,0 +1,137 @@
+version: '3.8'
+
+services:
+  postgres-demo:
+    image: postgres:16
+    container_name: cupcake_vanilla_postgres_demo
+    environment:
+      POSTGRES_DB: cupcake_vanilla_demo
+      POSTGRES_USER: cupcake_demo
+      POSTGRES_PASSWORD: cupcake_demo_pass
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks:
+      - cupcake-demo-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cupcake_demo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-demo:
+    image: redis:7-alpine
+    container_name: cupcake_vanilla_redis_demo
+    tmpfs:
+      - /data
+    networks:
+      - cupcake-demo-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web-demo:
+    build:
+      context: .
+      dockerfile: dockerfiles/Dockerfile-demo
+      args:
+        - TUNNEL_DOMAIN=${TUNNEL_DOMAIN:-}
+    container_name: cupcake_vanilla_web_demo
+    environment:
+      - DEMO_MODE=True
+      - DEMO_USER_USERNAME=demo
+      - DEMO_USER_PASSWORD=demo123
+      - DEMO_USER_EMAIL=demo@example.com
+      - DEMO_CLEANUP_INTERVAL_MINUTES=15
+      - SECRET_KEY=demo-secret-key-change-in-production
+      - DEBUG=False
+      - POSTGRES_DB=cupcake_vanilla_demo
+      - POSTGRES_USER=cupcake_demo
+      - POSTGRES_PASSWORD=cupcake_demo_pass
+      - POSTGRES_HOST=postgres-demo
+      - POSTGRES_PORT=5432
+      - REDIS_URL=redis://redis-demo:6379/1
+      - REDIS_HOST=redis-demo
+      - REDIS_PORT=6379
+      - REDIS_DB_RQ=3
+      - TUNNEL_DOMAIN=${TUNNEL_DOMAIN:-}
+      - ALLOWED_HOSTS=localhost,127.0.0.1,${TUNNEL_DOMAIN:-}
+      - CORS_ORIGIN_WHITELIST=http://localhost:4200,http://localhost:8000,https://${TUNNEL_DOMAIN:-localhost}
+      - ENABLE_CUPCAKE_MACARON=True
+      - ENABLE_CUPCAKE_MINT_CHOCOLATE=False
+      - ENABLE_CUPCAKE_RED_VELVET=True
+      - ENABLE_CUPCAKE_SALTED_CARAMEL=True
+      - USE_WHISPER=False
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres-demo:
+        condition: service_healthy
+      redis-demo:
+        condition: service_healthy
+    networks:
+      - cupcake-demo-network
+    volumes:
+      - demo-media:/app/media
+
+  worker-demo:
+    build:
+      context: .
+      dockerfile: dockerfiles/Dockerfile-demo
+      args:
+        - TUNNEL_DOMAIN=${TUNNEL_DOMAIN:-}
+    container_name: cupcake_vanilla_worker_demo
+    environment:
+      - DEMO_MODE=True
+      - SECRET_KEY=demo-secret-key-change-in-production
+      - DEBUG=False
+      - POSTGRES_DB=cupcake_vanilla_demo
+      - POSTGRES_USER=cupcake_demo
+      - POSTGRES_PASSWORD=cupcake_demo_pass
+      - POSTGRES_HOST=postgres-demo
+      - POSTGRES_PORT=5432
+      - REDIS_URL=redis://redis-demo:6379/1
+      - REDIS_HOST=redis-demo
+      - REDIS_PORT=6379
+      - REDIS_DB_RQ=3
+      - ENABLE_CUPCAKE_MACARON=True
+      - ENABLE_CUPCAKE_MINT_CHOCOLATE=False
+      - ENABLE_CUPCAKE_RED_VELVET=True
+      - ENABLE_CUPCAKE_SALTED_CARAMEL=True
+      - USE_WHISPER=False
+    depends_on:
+      postgres-demo:
+        condition: service_healthy
+      redis-demo:
+        condition: service_healthy
+    networks:
+      - cupcake-demo-network
+    volumes:
+      - demo-media:/app/media
+    command: python manage.py rqworker default high low
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cupcake_vanilla_cloudflared
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - cupcake-demo-network
+    depends_on:
+      - web-demo
+    restart: unless-stopped
+    profiles:
+      - cloudflare
+
+networks:
+  cupcake-demo-network:
+    driver: bridge
+
+volumes:
+  demo-media:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

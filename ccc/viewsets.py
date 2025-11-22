@@ -116,6 +116,10 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                     "booking_deletion_window_minutes": serializer.data["booking_deletion_window_minutes"],
                     "ui_features": serializer.data["ui_features_with_defaults"],
                     "installed_apps": serializer.data["installed_apps"],
+                    "demo_mode": settings.DEMO_MODE,
+                    "demo_cleanup_interval_minutes": settings.DEMO_CLEANUP_INTERVAL_MINUTES
+                    if settings.DEMO_MODE
+                    else None,
                 }
                 return Response(data)
             else:
@@ -131,6 +135,10 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                         "booking_deletion_window_minutes": 30,
                         "ui_features": temp_serializer.data["ui_features_with_defaults"],
                         "installed_apps": temp_serializer.data["installed_apps"],
+                        "demo_mode": settings.DEMO_MODE,
+                        "demo_cleanup_interval_minutes": settings.DEMO_CLEANUP_INTERVAL_MINUTES
+                        if settings.DEMO_MODE
+                        else None,
                     }
                 )
         except Exception as e:
@@ -1569,7 +1577,7 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         serializer = self.get_serializer(paginated_annotations, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    @action(detail=True, methods=["get"], permission_classes=[])
+    @action(detail=True, methods=["get", "options"], permission_classes=[])
     def download(self, request, pk=None):
         """
         Download annotation file with signed token verification.
@@ -1618,6 +1626,16 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
             response["Cache-Control"] = "private, max-age=300"
             response["X-Content-Type-Options"] = "nosniff"
             response["X-Download-Options"] = "noopen"
+
+        origin = request.META.get("HTTP_ORIGIN")
+        cors_allowed_origins = getattr(settings, "CORS_ORIGIN_WHITELIST", [])
+
+        if origin and origin in cors_allowed_origins:
+            response["X-Accel-CORS-Origin"] = origin
+            response["Access-Control-Allow-Origin"] = origin
+            response["Access-Control-Allow-Credentials"] = "true"
+            response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response["Access-Control-Allow-Headers"] = ", ".join(getattr(settings, "CORS_ALLOW_HEADERS", []))
 
         return response
 

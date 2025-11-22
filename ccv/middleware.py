@@ -84,3 +84,55 @@ def JWTAuthMiddlewareStack(inner):
     Convenience function to create the full middleware stack with JWT auth.
     """
     return JWTAuthMiddleware(AuthMiddlewareStack(inner))
+
+
+class DemoModeMiddleware:
+    """
+    Middleware to enforce demo mode restrictions:
+    1. Only allow the demo user to authenticate
+    2. Block transcription-related endpoints
+    3. Reject requests from non-demo users
+    """
+
+    def __init__(self, get_response):
+        """Initialize the middleware with the get_response callable."""
+        self.get_response = get_response
+
+    def __call__(self, request):
+        from django.conf import settings
+        from django.http import JsonResponse
+
+        if not settings.DEMO_MODE:
+            return self.get_response(request)
+
+        if (
+            request.path.startswith("/admin/")
+            or request.path.startswith("/static/")
+            or request.path.startswith("/media/")
+        ):
+            return self.get_response(request)
+
+        if request.path.startswith("/api/v1/auth/"):
+            return self.get_response(request)
+
+        if request.user.is_authenticated:
+            if request.user.username != settings.DEMO_USER_USERNAME:
+                return JsonResponse(
+                    {
+                        "detail": "Demo mode is active. Only the demo user can access this application.",
+                        "demo_mode": True,
+                    },
+                    status=403,
+                )
+
+        transcription_paths = ["/api/v1/transcribe", "transcribe_tasks", "transcription", "whisper"]
+
+        for path_fragment in transcription_paths:
+            if path_fragment in request.path.lower():
+                return JsonResponse(
+                    {"detail": "Transcription features are disabled in demo mode.", "demo_mode": True}, status=403
+                )
+
+        response = self.get_response(request)
+        response["X-Demo-Mode"] = "true"
+        return response

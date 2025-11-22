@@ -1,0 +1,11 @@
+[Unit]
+Description=Restart Cupcake Vanilla Demo Mode Every 15 Minutes
+Requires=cupcake-demo-restart.service
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=15min
+Unit=cupcake-demo-restart.service
+
+[Install]
+WantedBy=timers.target

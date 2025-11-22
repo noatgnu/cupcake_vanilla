@@ -20,8 +20,7 @@ from ccc.models import AbstractResource, LabGroup, ResourceType
 
 
 class BaseMetadataTable(AbstractResource):
-    """
-    Abstract base model for metadata tables.
+    """Abstract base model for metadata tables.
 
     This model provides the core functionality for metadata tables and can be
     extended by other applications to create custom metadata table implementations.
@@ -56,50 +55,38 @@ class BaseMetadataTable(AbstractResource):
         ordering = ["-created_at", "name"]
 
     def get_custom_fields(self):
-        """
-        Override this method in subclasses to provide custom field definitions.
+        """Gets custom field definitions.
+
+        This method should be overridden in subclasses to provide custom field
+        definitions.
 
         Returns:
-            dict: Dictionary of field definitions for custom fields
-
-        Example:
-            return {
-                'project_code': {
-                    'type': 'CharField',
-                    'max_length': 50,
-                    'required': True,
-                    'help_text': 'Project identification code'
-                }
-            }
+            dict: A dictionary of field definitions for custom fields.
         """
+
         return {}
 
     def get_custom_validators(self):
-        """
-        Override this method in subclasses to provide custom validation rules.
+        """Gets custom validation rules.
+
+        This method should be overridden in subclasses to provide custom
+        validation rules.
 
         Returns:
-            list: List of validator functions
+            list: A list of validator functions.
         """
         return []
 
     def get_export_formats(self):
-        """
-        Override this method in subclasses to support additional export formats.
+        """Gets supported export formats.
+
+        This method can be overridden in subclasses to support additional
+        export formats.
 
         Returns:
-            dict: Dictionary of export format configurations
-
-        Example:
-            return {
-                'custom_xml': {
-                    'name': 'Custom XML Format',
-                    'extension': '.xml',
-                    'mime_type': 'application/xml',
-                    'handler': self.export_custom_xml
-                }
-            }
+            dict: A dictionary of export format configurations.
         """
+
         return {
             "sdrf": {
                 "name": "SDRF Format",
@@ -116,31 +103,35 @@ class BaseMetadataTable(AbstractResource):
         }
 
     def validate_custom_data(self, cleaned_data=None):
-        """
-        Override this method in subclasses to perform custom validation.
+        """Performs custom validation.
+
+        This method can be overridden in subclasses to perform custom
+        validation.
 
         Args:
-            cleaned_data: Dictionary of cleaned data from forms/serializers
+            cleaned_data (dict, optional): A dictionary of cleaned data from
+                forms or serializers. Defaults to None.
 
         Raises:
-            ValidationError: If validation fails
+            ValidationError: If validation fails.
         """
         for validator in self.get_custom_validators():
             validator(self, cleaned_data)
 
     def get_additional_context(self):
-        """
-        Override this method in subclasses to provide additional context for templates/exports.
+        """Gets additional context for templates/exports.
+
+        This method can be overridden in subclasses to provide additional
+        context for templates or exports.
 
         Returns:
-            dict: Additional context data
+            dict: A dictionary of additional context data.
         """
         return {}
 
 
 class MetadataTable(BaseMetadataTable):
-    """
-    Concrete implementation of metadata table.
+    """A concrete implementation of a metadata table.
 
     This is the default implementation provided by CUPCAKE Vanilla.
     Applications can either use this directly or create their own
@@ -164,27 +155,44 @@ class MetadataTable(BaseMetadataTable):
         super().save(*args, **kwargs)
 
     def get_column_count(self):
-        """Get the number of metadata columns in this table."""
+        """Gets the number of metadata columns in this table.
+
+        Returns:
+            int: The number of columns.
+        """
         return self.columns.count()
 
     def get_sample_range(self):
-        """Get the sample number range for this table."""
+        """Gets the sample number range for this table.
+
+        Returns:
+            str: A string representing the sample range (e.g., "1-10").
+        """
         if self.sample_count > 0:
             return f"1-{self.sample_count}"
         return "0"
 
     def validate_sample_count_change(self, new_sample_count: int):
-        """
-        Validate changing sample count and return information about affected data.
+        """Validates a change in the sample count.
+
+        This method checks for potential data loss when decreasing the sample
+        count.
+
+        Args:
+            new_sample_count (int): The new sample count.
 
         Returns:
-            dict: {
-                'valid': bool,
-                'warnings': list,
-                'affected_modifiers': list,
-                'affected_pools': list,
-                'samples_to_remove': list
-            }
+            dict: A dictionary containing information about the validity of the
+                change and any potential data loss. The dictionary has the
+                following keys:
+
+                *   'valid' (bool): Whether the change is valid.
+                *   'warnings' (list): A list of warnings.
+                *   'affected_modifiers' (list): A list of affected column
+                    modifiers.
+                *   'affected_pools' (list): A list of affected sample pools.
+                *   'samples_to_remove' (list): A list of samples that will be
+                    removed.
         """
         result = {
             "valid": True,
@@ -254,11 +262,14 @@ class MetadataTable(BaseMetadataTable):
         return result
 
     def apply_sample_count_change(self, new_sample_count: int):
-        """
-        Apply sample count change and clean up affected modifiers and pools.
+        """Applies a change in the sample count.
 
-        This should only be called after validate_sample_count_change() confirms
-        the change is acceptable to the user.
+        This method should only be called after
+        `validate_sample_count_change()` has confirmed that the change is
+        acceptable to the user.
+
+        Args:
+            new_sample_count (int): The new sample count.
         """
         old_sample_count = self.sample_count
         self.sample_count = new_sample_count
@@ -308,22 +319,22 @@ class MetadataTable(BaseMetadataTable):
         self.save(update_fields=["sample_count"])
 
     def change_sample_index(self, old_index: int, new_index: int):
-        """
-        Change a sample's row index number and update all associated data.
+        """Changes a sample's row index number.
 
-        This method updates:
-        - All column modifiers that reference the old sample index
-        - All sample pools that contain the old sample index
+        This method updates all associated data, including all column
+        modifiers that reference the old sample index and all sample pools
+        that contain the old sample index.
 
         Args:
-            old_index: Current 1-based sample index to change
-            new_index: New 1-based sample index to assign
+            old_index (int): The current 1-based sample index to change.
+            new_index (int): The new 1-based sample index to assign.
 
         Returns:
-            dict: Summary of changes made
+            dict: A summary of the changes made.
 
         Raises:
-            ValueError: If indices are invalid or new_index conflicts with existing data
+            ValueError: If the indices are invalid or the new index conflicts
+                with existing data.
         """
         # Validate inputs
         if old_index < 1 or new_index < 1:
@@ -419,16 +430,16 @@ class MetadataTable(BaseMetadataTable):
         return changes_summary
 
     def _update_sample_indices_in_range(self, sample_range_str: str, old_index: int, new_index: int) -> str:
-        """
-        Update sample indices within a range string (e.g., "1,2,3" or "1-3,5").
+        """Updates sample indices within a range string.
 
         Args:
-            sample_range_str: String containing sample indices like "1,2,3" or "1-3,5"
-            old_index: Sample index to replace
-            new_index: New sample index
+            sample_range_str (str): A string containing sample indices (e.g.,
+                "1,2,3" or "1-3,5").
+            old_index (int): The sample index to replace.
+            new_index (int): The new sample index.
 
         Returns:
-            Updated range string with indices changed
+            str: The updated range string.
         """
         if not sample_range_str:
             return sample_range_str
@@ -459,14 +470,13 @@ class MetadataTable(BaseMetadataTable):
         return sample_range_str
 
     def _compress_sample_indices_to_string(self, indices: list[int]) -> str:
-        """
-        Convert a list of sample indices to a compressed string format.
+        """Converts a list of sample indices to a compressed string format.
 
         Args:
-            indices: Sorted list of sample indices
+            indices (list[int]): A sorted list of sample indices.
 
         Returns:
-            Compressed string like "1-3,5,7-9"
+            str: A compressed string (e.g., "1-3,5,7-9").
         """
         if not indices:
             return ""
@@ -496,18 +506,14 @@ class MetadataTable(BaseMetadataTable):
         return ",".join(ranges)
 
     def batch_change_sample_indices(self, index_mappings: dict):
-        """
-        Change multiple sample indices in a single operation.
+        """Changes multiple sample indices in a single operation.
 
         Args:
-            index_mappings: Dictionary mapping old_index -> new_index
+            index_mappings (dict): A dictionary mapping old indices to new
+                indices.
 
         Returns:
-            dict: Summary of all changes made
-
-        Example:
-            # Swap samples 1 and 3: {1: 3, 3: 1}
-            # Reorder samples: {1: 2, 2: 3, 3: 1}
+            dict: A summary of all changes made.
         """
         if not index_mappings:
             return {"changed": False, "message": "No mappings provided"}
@@ -582,16 +588,18 @@ class MetadataTable(BaseMetadataTable):
     def reorder_columns_by_schema(
         self, schema_names: list[str] = None, schema_ids: list[int] = None, schema_dir: str = None
     ):
-        """
-        Reorder columns in this metadata table based on SDRF schema definitions.
+        """Reorders columns based on SDRF schema definitions.
 
         Args:
-            schema_names: List of schema names to use for column ordering
-            schema_ids: List of schema IDs to use for column ordering
-            schema_dir: Optional directory containing custom schemas
+            schema_names (list[str], optional): A list of schema names to use
+                for column ordering. Defaults to None.
+            schema_ids (list[int], optional): A list of schema IDs to use for
+                column ordering. Defaults to None.
+            schema_dir (str, optional): A directory containing custom schemas.
+                Defaults to None.
 
         Returns:
-            bool: True if reordering was successful, False otherwise
+            bool: True if reordering was successful, False otherwise.
         """
         from .utils import compile_sdrf_columns_from_schemas
 
@@ -663,16 +671,17 @@ class MetadataTable(BaseMetadataTable):
         return True
 
     def add_column(self, column_data: dict, position: int = None):
-        """
-        Add a new column to this metadata table at the specified position.
-        Also adds the column to all associated pools.
+        """Adds a new column to the metadata table.
+
+        This method also adds the column to all associated pools.
 
         Args:
-            column_data: Dictionary containing column data
-            position: Position to insert the column (None for end)
+            column_data (dict): A dictionary containing the column data.
+            position (int, optional): The position to insert the column at.
+                If None, the column is added at the end. Defaults to None.
 
         Returns:
-            MetadataColumn: The created column
+            MetadataColumn: The created column.
         """
         if position is not None:
             # Shift existing columns to make room
@@ -692,25 +701,28 @@ class MetadataTable(BaseMetadataTable):
         return column
 
     def add_column_with_auto_reorder(self, column_data: dict, position: int = None, auto_reorder: bool = True):
-        """
-        Add a new column to this metadata table and automatically reorder columns.
+        """Adds a new column and automatically reorders columns.
 
-        This convenience method combines adding a column with automatic schema-based
-        reordering using the same patterns established throughout the codebase.
+        This convenience method combines adding a column with automatic
+        schema-based reordering.
 
         Args:
-            column_data: Dictionary containing column data
-            position: Position to insert the column (None for end, ignored if auto_reorder=True)
-            auto_reorder: Whether to automatically reorder columns after adding (default: True)
+            column_data (dict): A dictionary containing the column data.
+            position (int, optional): The position to insert the column at.
+                If None, the column is added at the end. This is ignored if
+                `auto_reorder` is True. Defaults to None.
+            auto_reorder (bool, optional): Whether to automatically reorder
+                columns after adding. Defaults to True.
 
         Returns:
-            dict: Result containing the created column and reordering status
-                {
-                    'column': MetadataColumn,
-                    'reordered': bool,
-                    'schema_ids_used': list[int],
-                    'message': str
-                }
+            dict: A dictionary containing the created column and reordering
+                status. The dictionary has the following keys:
+
+                *   'column' (MetadataColumn): The created column.
+                *   'reordered' (bool): Whether the columns were reordered.
+                *   'schema_ids_used' (list[int]): A list of schema IDs used for
+                    reordering.
+                *   'message' (str): A message about the operation.
         """
         # Add the column first (will be repositioned during reordering if enabled)
         column = self.add_column(column_data, position=position)
@@ -749,15 +761,15 @@ class MetadataTable(BaseMetadataTable):
         return result
 
     def remove_column(self, column_id: int):
-        """
-        Remove a column and adjust positions of remaining columns.
-        Also removes the column from all associated pools.
+        """Removes a column from the metadata table.
+
+        This method also removes the column from all associated pools.
 
         Args:
-            column_id: ID of the column to remove
+            column_id (int): The ID of the column to remove.
 
         Returns:
-            bool: True if column was removed, False if not found
+            bool: True if the column was removed, False if it was not found.
         """
         try:
             column = self.columns.get(id=column_id)
@@ -779,12 +791,12 @@ class MetadataTable(BaseMetadataTable):
             return False
 
     def _sync_column_to_pools(self, column, action="add"):
-        """
-        Synchronize a column operation with all pools belonging to this metadata table.
+        """Synchronizes a column operation with all sample pools.
 
         Args:
-            column: MetadataColumn instance to synchronize
-            action: 'add' or 'remove'
+            column (MetadataColumn): The column to synchronize.
+            action (str, optional): The action to perform ('add' or 'remove').
+                Defaults to "add".
         """
         for pool in self.sample_pools.all():
             if action == "add":
@@ -825,15 +837,17 @@ class MetadataTable(BaseMetadataTable):
                     pool_column.delete()
 
     def reorder_column(self, column_id: int, new_position: int):
-        """
-        Move a column to a new position, adjusting other columns as needed.
+        """Moves a column to a new position.
+
+        This method adjusts the positions of other columns as needed.
 
         Args:
-            column_id: ID of the column to move
-            new_position: New position for the column
+            column_id (int): The ID of the column to move.
+            new_position (int): The new position for the column.
 
         Returns:
-            bool: True if reordering was successful, False if column not found
+            bool: True if reordering was successful, False if the column was
+                not found.
         """
         try:
             column = self.columns.get(id=column_id)
@@ -866,8 +880,10 @@ class MetadataTable(BaseMetadataTable):
             return False
 
     def normalize_column_positions(self):
-        """
-        Ensure column positions are sequential starting from 0 with no gaps.
+        """Ensures that column positions are sequential.
+
+        This method ensures that column positions start from 0 and have no
+        gaps.
         """
         columns = self.columns.all().order_by("column_position", "id")
         for index, column in enumerate(columns):
@@ -884,24 +900,29 @@ class MetadataTable(BaseMetadataTable):
         user=None,
         apply_schema_reordering: bool = True,
     ) -> "MetadataTable":
-        """
-        Combine multiple metadata tables column-wise (side by side).
+        """Combines multiple metadata tables column-wise.
 
-        This creates a new table with all columns from source tables combined,
-        and the sample count set to the maximum sample count among source tables.
+        This creates a new table with all columns from the source tables
+        combined side by side. The sample count of the new table is set to
+        the maximum sample count among the source tables.
 
         Args:
-            source_tables: List of MetadataTable objects to combine
-            target_name: Name for the new combined table
-            description: Optional description for the new table
-            user: User creating the combined table
-            apply_schema_reordering: Whether to apply schema-based column reordering
+            source_tables (list[MetadataTable]): A list of MetadataTable
+                objects to combine.
+            target_name (str): The name for the new combined table.
+            description (str, optional): A description for the new table.
+                Defaults to None.
+            user (User, optional): The user creating the combined table.
+                Defaults to None.
+            apply_schema_reordering (bool, optional): Whether to apply
+                schema-based column reordering. Defaults to True.
 
         Returns:
-            MetadataTable: New combined metadata table
+            MetadataTable: The new combined metadata table.
 
         Raises:
-            ValueError: If no source tables provided or other validation errors
+            ValueError: If no source tables are provided or other validation
+                errors occur.
         """
         if not source_tables:
             raise ValueError("At least one source table is required")
@@ -1040,25 +1061,31 @@ class MetadataTable(BaseMetadataTable):
         apply_schema_reordering: bool = True,
         merge_strategy: str = "union",
     ) -> "MetadataTable":
-        """
-        Combine multiple metadata tables row-wise (stacked vertically).
+        """Combines multiple metadata tables row-wise.
 
-        This creates a new table with rows from all source tables stacked,
-        using either union (all unique columns) or intersection (only common columns).
+        This creates a new table with rows from all source tables stacked
+        vertically.
 
         Args:
-            source_tables: List of MetadataTable objects to combine
-            target_name: Name for the new combined table
-            description: Optional description for the new table
-            user: User creating the combined table
-            apply_schema_reordering: Whether to apply schema-based column reordering
-            merge_strategy: "union" (all columns) or "intersection" (common columns only)
+            source_tables (list[MetadataTable]): A list of MetadataTable
+                objects to combine.
+            target_name (str): The name for the new combined table.
+            description (str, optional): A description for the new table.
+                Defaults to None.
+            user (User, optional): The user creating the combined table.
+                Defaults to None.
+            apply_schema_reordering (bool, optional): Whether to apply
+                schema-based column reordering. Defaults to True.
+            merge_strategy (str, optional): The merge strategy to use.
+                Can be "union" (all columns) or "intersection" (common
+                columns only). Defaults to "union".
 
         Returns:
-            MetadataTable: New combined metadata table
+            MetadataTable: The new combined metadata table.
 
         Raises:
-            ValueError: If no source tables provided or other validation errors
+            ValueError: If no source tables are provided or other validation
+                errors occur.
         """
         if not source_tables:
             raise ValueError("At least one source table is required")
@@ -1259,9 +1286,11 @@ class MetadataTable(BaseMetadataTable):
 
 
 class MetadataColumn(models.Model):
-    """
-    Represents a metadata column with type, value, and configuration options.
-    Core model for managing experimental metadata in SDRF-compliant format.
+    """Represents a metadata column.
+
+    This model is the core for managing experimental metadata in a
+    SDRF-compliant format. It represents a column in a metadata table with
+    its type, value, and configuration options.
     """
 
     # Parent table relationship
@@ -1359,7 +1388,7 @@ class MetadataColumn(models.Model):
         return f"{self.name} ({self.type})"
 
     def clean(self):
-        """Custom validation for metadata columns."""
+        """Performs custom validation for the metadata column."""
         super().clean()
         if self.name:
             self.name = self.name.strip()
@@ -1367,7 +1396,12 @@ class MetadataColumn(models.Model):
             self.type = self.type.strip()
 
     def get_ontology_model(self):
-        """Get the associated ontology model class based on ontology_type."""
+        """Gets the associated ontology model class.
+
+        Returns:
+            Model: The ontology model class based on the `ontology_type`, or
+                None if no `ontology_type` is set.
+        """
         if not self.ontology_type:
             return None
 
@@ -1388,13 +1422,19 @@ class MetadataColumn(models.Model):
         return ontology_mapping.get(self.ontology_type)
 
     def get_ontology_suggestions(self, search_term: str = "", limit: int = 20, search_type: str = "icontains"):
-        """
-        Get ontology suggestions based on the column's ontology type with enhanced search capabilities.
+        """Gets ontology suggestions with enhanced search capabilities.
 
         Args:
-            search_term: Term to search for
-            limit: Maximum number of results to return
-            search_type: Type of search - 'icontains', 'istartswith', or 'exact'
+            search_term (str, optional): The term to search for. Defaults to
+                "".
+            limit (int, optional): The maximum number of results to return.
+                Defaults to 20.
+            search_type (str, optional): The type of search to perform. Can be
+                'icontains', 'istartswith', or 'exact'. Defaults to
+                "icontains".
+
+        Returns:
+            list: A list of ontology suggestions.
         """
         model_class = self.get_ontology_model()
         if not model_class:
@@ -1560,12 +1600,17 @@ class MetadataColumn(models.Model):
         return list(queryset[:limit].values())
 
     def convert_sdrf_to_metadata(self, value: str) -> str | None:
-        """
-        Convert a value from SDRF format to the internal metadata format based on assigned ontology.
-        :param value:
-            The value to convert, typically from SDRF format.
-        :return:
-            The converted value suitable for storage in this metadata column.
+        """Converts a value from SDRF format to the internal metadata format.
+
+        This conversion is based on the assigned ontology.
+
+        Args:
+            value (str): The value to convert, typically from SDRF format.
+
+        Returns:
+            str | None: The converted value suitable for storage in this
+                metadata column, or the original value if no specific
+                ontology handling is available.
         """
         value = value.strip()
         has_key_value = False
@@ -1638,7 +1683,15 @@ class MetadataColumn(models.Model):
         return value
 
     def validate_value_against_ontology(self, value: str) -> bool:
-        """Validate if a value exists in the associated ontology."""
+        """Validates if a value exists in the associated ontology.
+
+        Args:
+            value (str): The value to validate.
+
+        Returns:
+            bool: True if the value is valid or if no ontology validation is
+                required, False otherwise.
+        """
         model_class = self.get_ontology_model()
         if not model_class:
             return True  # No ontology validation required
@@ -1663,14 +1716,14 @@ class MetadataColumn(models.Model):
         return True
 
     def _format_sample_indices_to_string(self, indices: list[int]) -> str:
-        """
-        Format a list of 1-based sample indices into a compressed string format.
+        """Formats a list of 1-based sample indices to a compressed string.
 
         Args:
-            indices: List of 1-based sample indices (e.g., [1, 2, 3, 5, 6])
+            indices (list[int]): A list of 1-based sample indices (e.g.,
+                [1, 2, 3, 5, 6]).
 
         Returns:
-            Compressed string format (e.g., "1-3,5-6")
+            str: A compressed string format (e.g., "1-3,5-6").
         """
         if not indices:
             return ""
@@ -1703,14 +1756,14 @@ class MetadataColumn(models.Model):
         return ",".join(ranges)
 
     def _parse_sample_indices_from_modifier_string(self, samples_str):
-        """
-        Parse sample indices from modifier string like '1,2,3' or '1-3,5'.
+        """Parses sample indices from a modifier string.
 
         Args:
-            samples_str: String representing sample indices (e.g., "1,2,3" or "1-3,5")
+            samples_str (str): A string representing sample indices (e.g.,
+                "1,2,3" or "1-3,5").
 
         Returns:
-            list[int]: List of parsed sample indices
+            list[int]: A list of parsed sample indices.
         """
         indices = []
         if not samples_str:
@@ -1736,16 +1789,18 @@ class MetadataColumn(models.Model):
         return indices
 
     def update_column_value_smart(self, value: str, sample_indices: list[int] = None, value_type: str = "default"):
-        """
-        Update column value with automatic modifier calculation.
+        """Updates the column value with automatic modifier calculation.
 
         Args:
-            value: New value to set
-            sample_indices: List of 1-based sample indices for sample-specific updates (None for default)
-            value_type: "default", "sample_specific", or "replace_all"
+            value (str): The new value to set.
+            sample_indices (list[int], optional): A list of 1-based sample
+                indices for sample-specific updates. Defaults to None.
+            value_type (str, optional): The type of update to perform. Can be
+                "default", "sample_specific", or "replace_all". Defaults to
+                "default".
 
         Returns:
-            dict: Summary of changes made
+            dict: A summary of the changes made.
         """
         changes = {
             "old_default": self.value,
@@ -1804,9 +1859,10 @@ class MetadataColumn(models.Model):
 
 
 class SamplePool(models.Model):
-    """
-    Represents a pool of samples for SDRF compliance and experiment organization.
-    Matches original CUPCAKE's sophisticated pooling system with metadata support.
+    """Represents a pool of samples for SDRF compliance.
+
+    This model matches the original CUPCAKE's sophisticated pooling system
+    with metadata support.
     """
 
     # Parent table relationship
@@ -1867,7 +1923,7 @@ class SamplePool(models.Model):
         return f"{self.pool_name} - Table {self.metadata_table.id}"
 
     def clean(self):
-        """Validate that no sample appears in both lists and indices are valid."""
+        """Validates the sample pool."""
         pooled_only_set = set(self.pooled_only_samples)
         pooled_and_independent_set = set(self.pooled_and_independent_samples)
 
@@ -1891,12 +1947,22 @@ class SamplePool(models.Model):
 
     @property
     def all_pooled_samples(self):
-        """Get all samples in this pool (both pooled-only and pooled+independent)."""
+        """Gets all samples in this pool.
+
+        This includes both pooled-only and pooled-and-independent samples.
+
+        Returns:
+            list: A sorted list of all sample indices in this pool.
+        """
         return sorted(set(self.pooled_only_samples + self.pooled_and_independent_samples))
 
     @property
     def sdrf_value(self):
-        """Generate SDRF-compliant value for this pool using source names."""
+        """Gets the SDRF-compliant value for this pool.
+
+        Returns:
+            str: The SDRF-compliant value.
+        """
         all_samples = self.all_pooled_samples
         if not all_samples:
             return "not pooled"
@@ -1913,11 +1979,23 @@ class SamplePool(models.Model):
 
     @property
     def total_samples_count(self):
-        """Get total number of samples in this pool."""
+        """Gets the total number of samples in this pool.
+
+        Returns:
+            int: The total number of samples.
+        """
         return len(self.all_pooled_samples)
 
     def get_sample_status(self, sample_index):
-        """Get the status of a specific sample in this pool."""
+        """Gets the status of a specific sample in this pool.
+
+        Args:
+            sample_index (int): The index of the sample to get the status of.
+
+        Returns:
+            str: The status of the sample, which can be "pooled_only",
+                "pooled_and_independent", or "not_in_pool".
+        """
         if sample_index in self.pooled_only_samples:
             return "pooled_only"
         elif sample_index in self.pooled_and_independent_samples:
@@ -1926,7 +2004,14 @@ class SamplePool(models.Model):
             return "not_in_pool"
 
     def add_sample(self, sample_index, status="pooled_only"):
-        """Add a sample to the pool with specified status."""
+        """Adds a sample to the pool.
+
+        Args:
+            sample_index (int): The index of the sample to add.
+            status (str, optional): The status of the sample. Can be
+                "pooled_only" or "pooled_and_independent". Defaults to
+                "pooled_only".
+        """
         self.remove_sample(sample_index)  # Remove from any existing list first
 
         if status == "pooled_only":
@@ -1937,14 +2022,22 @@ class SamplePool(models.Model):
             self.pooled_and_independent_samples.sort()
 
     def remove_sample(self, sample_index):
-        """Remove a sample from the pool."""
+        """Removes a sample from the pool.
+
+        Args:
+            sample_index (int): The index of the sample to remove.
+        """
         if sample_index in self.pooled_only_samples:
             self.pooled_only_samples.remove(sample_index)
         if sample_index in self.pooled_and_independent_samples:
             self.pooled_and_independent_samples.remove(sample_index)
 
     def _get_source_names_for_samples(self):
-        """Get source names for all samples from metadata."""
+        """Gets the source names for all samples from the metadata.
+
+        Returns:
+            dict: A dictionary mapping sample indices to source names.
+        """
         import json
 
         # Get the Source name metadata column from unified metadata system
@@ -1984,7 +2077,15 @@ class SamplePool(models.Model):
         return source_names
 
     def _parse_sample_indices_from_modifier_string(self, samples_str):
-        """Parse sample indices from modifier string like '1,2,3' or '1-3,5'."""
+        """Parses sample indices from a modifier string.
+
+        Args:
+            samples_str (str): A string representing sample indices (e.g.,
+                "1,2,3" or "1-3,5").
+
+        Returns:
+            list[int]: A list of parsed sample indices.
+        """
         indices = []
         if not samples_str:
             return indices
@@ -2424,21 +2525,13 @@ class BaseMetadataTableTemplate(AbstractResource):
         ordering = ["-is_default", "name"]
 
     def get_custom_column_types(self):
-        """
-        Override this method in subclasses to provide custom column types.
+        """Gets custom column types.
+
+        This method should be overridden in subclasses to provide custom
+        column types.
 
         Returns:
-            dict: Dictionary of custom column type configurations
-
-        Example:
-            return {
-                'protein_identifier': {
-                    'name': 'Protein Identifier',
-                    'validation_pattern': r'^[A-Z0-9_]+$',
-                    'description': 'UniProt protein identifier',
-                    'ontology_source': 'uniprot'
-                }
-            }
+            dict: A dictionary of custom column type configurations.
         """
         return {}
 

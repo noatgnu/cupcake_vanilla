@@ -790,38 +790,27 @@ class LabGroup(models.Model):
     """
     Represents a laboratory group for organizing users and resources.
 
-    Lab groups provide a way to organize users into collaborative teams
-    and control access to shared resources. They support invitation-based
-    membership and configurable permission settings.
+    Lab groups are a core concept in CUPCAKE, providing a way to organize users
+    into collaborative teams and control access to shared resources like metadata
+    tables, instruments, and protocols. They support a hierarchical structure
+    with parent-child relationships, allowing for complex organizational charts.
 
     Key Features:
-    - Creator-based ownership with member management
-    - Invitation system for adding new members
-    - Configurable member invitation permissions
-    - Integration with resource visibility controls
-    - Audit trail with timestamps
+    - **Hierarchical Structure:** Groups can be nested within parent groups.
+    - **Membership Management:** Users can be added as members to groups.
+    - **Invitation System:** New members can be invited via email.
+    - **Permission Control:** Granular permissions for inviting members and managing the group.
+    - **Resource Association:** Resources can be associated with a lab group to control access.
 
-    Examples:
-        >>> # Create a new lab group
-        >>> lab_group = LabGroup.objects.create(
-        ...     name='Proteomics Lab',
-        ...     description='Research group focused on proteomics analysis',
-        ...     creator=pi_user,
-        ...     allow_member_invites=True
-        ... )
-
-        >>> # Add members to the group
-        >>> lab_group.members.add(researcher1, researcher2)
-
-        >>> # Check permissions
-        >>> can_invite = lab_group.can_invite(researcher1)  # True if allow_member_invites
-        >>> can_manage = lab_group.can_manage(pi_user)      # True for creator
-        >>> is_member = lab_group.is_member(researcher1)    # True
-
-        >>> # Use with resource visibility
-        >>> document.lab_group = lab_group
-        >>> document.visibility = ResourceVisibility.GROUP
-        >>> document.save()  # Now accessible to all lab group members
+    Attributes:
+        name (str): The name of the lab group.
+        description (str): A detailed description of the group's purpose.
+        parent_group (LabGroup): The parent group in the hierarchy.
+        creator (User): The user who created the group.
+        members (ManyToManyField): The users who are members of this group.
+        is_active (bool): Whether the group is currently active.
+        allow_member_invites (bool): If true, members can invite other users.
+        allow_process_jobs (bool): If true, new members can process jobs.
     """
 
     name = models.CharField(max_length=255, help_text="Name of the lab group")
@@ -878,8 +867,15 @@ class LabGroup(models.Model):
 
     def get_full_path(self):
         """
-        Get the full hierarchical path to root as an array of objects.
-        Each object contains id and name for frontend navigation.
+        Get the full hierarchical path to the root as a list of objects.
+
+        Each object in the list contains the ID and name of a group in the
+        path, starting from the root. This is useful for breadcrumb navigation
+        in the frontend.
+
+        Returns:
+            list[dict]: A list of dictionaries, where each dictionary
+                        represents a group in the path with 'id' and 'name' keys.
         """
         path = []
         current = self
@@ -889,7 +885,15 @@ class LabGroup(models.Model):
         return path
 
     def get_all_sub_groups(self):
-        """Get all nested sub groups recursively."""
+        """
+        Get all nested sub-groups recursively.
+
+        This method traverses the group hierarchy downwards and collects all
+        sub-groups at any level below the current group.
+
+        Returns:
+            list[LabGroup]: A flat list of all sub-group instances.
+        """
         sub_groups = []
         for sub_group in self.sub_groups.all():
             sub_groups.append(sub_group)
@@ -897,11 +901,24 @@ class LabGroup(models.Model):
         return sub_groups
 
     def is_root(self):
-        """Check if this lab group is at root level (no parent)."""
+        """
+        Check if this lab group is at the root level (has no parent).
+
+        Returns:
+            bool: True if the group has no parent, False otherwise.
+        """
         return self.parent_group is None
 
     def get_depth(self):
-        """Get the depth/level of this lab group in the hierarchy."""
+        """
+        Get the depth of this lab group in the hierarchy.
+
+        The root level is considered depth 0. A direct child of the root is
+        at depth 1, and so on.
+
+        Returns:
+            int: The depth of the group in the hierarchy.
+        """
         depth = 0
         current = self.parent_group
         while current:
@@ -911,42 +928,28 @@ class LabGroup(models.Model):
 
     def is_creator(self, user):
         """
-        Check if user is the creator of this lab group.
+        Check if a user is the creator of this lab group.
 
         Args:
-            user: Django User instance to check
+            user (User): The user to check.
 
         Returns:
-            bool: True if user created this lab group
-
-        Examples:
-            >>> lab_group.creator = pi_user
-            >>> lab_group.is_creator(pi_user)  # True
-            >>> lab_group.is_creator(student)  # False
+            bool: True if the user is the creator, False otherwise.
         """
         return self.creator == user
 
     def is_member(self, user):
         """
-        Check if user is a member of this lab group or any of its sub-groups.
+        Check if a user is a member of this group or any of its parent groups.
 
-        Membership bubbles up: if you're a member of a sub-group, you're
-        automatically considered a member of all parent groups.
+        Membership "bubbles up" the hierarchy. A user who is a member of a
+        sub-group is considered a member of all its parent groups.
 
         Args:
-            user: Django User instance to check
+            user (User): The user to check.
 
         Returns:
-            bool: True if user is in the members list or is a member of any sub-group
-
-        Examples:
-            >>> lab_group.members.add(researcher)
-            >>> lab_group.is_member(researcher)  # True
-
-            >>> # User is member of sub-group
-            >>> sub_group = LabGroup.objects.create(name="Sub", parent_group=lab_group)
-            >>> sub_group.members.add(researcher2)
-            >>> lab_group.is_member(researcher2)  # True (bubbles up from sub-group)
+            bool: True if the user is a member, False otherwise.
         """
         # Direct membership
         if self.members.filter(id=user.id).exists():
@@ -961,20 +964,18 @@ class LabGroup(models.Model):
 
     def can_invite(self, user):
         """
-        Check if user can invite others to this lab group.
+        Check if a user can invite others to this lab group.
 
-        Staff users can always invite. Members can invite only if
-        allow_member_invites is enabled for the group. Users with
-        explicit can_invite permission can also invite.
-
-        Membership bubbles up: if user is a member of any sub-group,
-        they can invite if allow_member_invites is enabled.
+        Permissions are determined by the following rules, in order:
+        1. Staff users can always invite.
+        2. Users with explicit 'can_invite' permission can invite.
+        3. If 'allow_member_invites' is True for the group, any member can invite.
 
         Args:
-            user: Django User instance to check
+            user (User): The user to check.
 
         Returns:
-            bool: True if user can send invitations
+            bool: True if the user can invite, False otherwise.
         """
         if user.is_authenticated and user.is_staff:
             return True
@@ -987,18 +988,16 @@ class LabGroup(models.Model):
 
     def can_manage(self, user):
         """
-        Check if user can manage this lab group.
+        Check if a user can manage this lab group.
 
-        Staff users get management privileges. Users with explicit
-        LabGroupPermission.can_manage can also manage.
-
-        NOTE: Management permissions do NOT bubble up from sub-groups.
+        Management permissions are required to edit group settings or manage
+        members. These permissions do NOT bubble up from sub-groups.
 
         Args:
-            user: Django User instance to check
+            user (User): The user to check.
 
         Returns:
-            bool: True if user can manage the lab group
+            bool: True if the user can manage the group, False otherwise.
         """
         if user.is_authenticated and user.is_staff:
             return True
@@ -1011,16 +1010,16 @@ class LabGroup(models.Model):
 
     def can_process_jobs(self, user):
         """
-        Check if user can process instrument jobs for this lab group.
+        Check if a user can process instrument jobs for this lab group.
 
-        Staff users can always process jobs. Users with explicit
-        can_process_jobs permission can also process jobs.
+        This permission is typically granted to lab technicians or other users
+        who are responsible for running experiments.
 
         Args:
-            user: Django User instance to check
+            user (User): The user to check.
 
         Returns:
-            bool: True if user can process instrument jobs
+            bool: True if the user can process jobs, False otherwise.
         """
         if user.is_authenticated and user.is_staff:
             return True
@@ -1034,22 +1033,16 @@ class LabGroup(models.Model):
     @classmethod
     def get_accessible_group_ids(cls, user):
         """
-        Get all lab group IDs accessible to a user (includes bubble-up from sub-groups).
+        Get all lab group IDs accessible to a user.
 
-        Returns IDs of groups where the user is either:
-        - A direct member
-        - The creator
-        - A member of any sub-group (parent groups via bubble-up)
+        This includes groups where the user is a direct member, the creator,
+        or a member of any sub-group (which grants access to parent groups).
 
         Args:
-            user: Django User instance
+            user (User): The user to get accessible groups for.
 
         Returns:
-            set: Set of lab group IDs accessible to the user
-
-        Examples:
-            >>> accessible_ids = LabGroup.get_accessible_group_ids(user)
-            >>> projects = Project.objects.filter(lab_group_id__in=accessible_ids)
+            set[int]: A set of lab group IDs.
         """
         from django.db.models import Q
 
@@ -1070,19 +1063,14 @@ class LabGroup(models.Model):
         """
         Get all members of this lab group.
 
+        Can optionally include members from all nested sub-groups.
+
         Args:
-            include_subgroups (bool): If True, include members from all sub-groups.
-                                     If False, return only direct members.
+            include_subgroups (bool): If True, recursively include members
+                                      from all sub-groups. Defaults to True.
 
         Returns:
-            QuerySet: User objects that are members
-
-        Examples:
-            >>> # Get all members including sub-groups (default)
-            >>> all_members = lab_group.get_all_members()
-
-            >>> # Get only direct members
-            >>> direct_members = lab_group.get_all_members(include_subgroups=False)
+            QuerySet[User]: A queryset of all member users.
         """
         from django.contrib.auth import get_user_model
 
@@ -1758,6 +1746,7 @@ class Annotation(AbstractResource):
         from django.contrib.auth import get_user_model
         from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 
+        User = get_user_model()
         signer = TimestampSigner()
 
         try:
@@ -1766,7 +1755,6 @@ class Annotation(AbstractResource):
 
             annotation_id, user_id, file_path = payload.split(":", 2)
 
-            User = get_user_model()
             user = User.objects.get(id=user_id)
 
             annotation = cls.objects.get(id=annotation_id, file=file_path)

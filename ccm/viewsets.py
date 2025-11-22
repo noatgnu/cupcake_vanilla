@@ -529,9 +529,10 @@ class InstrumentJobViewSet(BaseViewSet):
     @action(detail=False, methods=["get"])
     def autocomplete_fields(self, request):
         """
-        Get distinct funder and cost_center values from user's existing jobs for autocomplete.
+        Get distinct field values from user's existing jobs for autocomplete.
 
         Returns unique, non-null values that the current user has used in their previous jobs.
+        Includes: funders, cost_centers, search_engines (with their versions)
         """
         user_jobs = self.get_queryset().filter(user=request.user)
 
@@ -551,7 +552,31 @@ class InstrumentJobViewSet(BaseViewSet):
             .order_by("cost_center")
         )
 
-        return Response({"funders": list(funders), "cost_centers": list(cost_centers)})
+        search_engines_data = (
+            user_jobs.exclude(search_engine__isnull=True)
+            .exclude(search_engine__exact="")
+            .values("search_engine", "search_engine_version")
+            .distinct()
+            .order_by("search_engine", "search_engine_version")
+        )
+
+        search_engines = {}
+        for item in search_engines_data:
+            engine = item["search_engine"]
+            version = item.get("search_engine_version") or ""
+
+            if engine not in search_engines:
+                search_engines[engine] = []
+
+            if version and version not in search_engines[engine]:
+                search_engines[engine].append(version)
+
+        for engine in search_engines:
+            search_engines[engine].sort()
+
+        return Response(
+            {"funders": list(funders), "cost_centers": list(cost_centers), "search_engines": search_engines}
+        )
 
     @action(detail=True, methods=["post"])
     def create_metadata_from_template(self, request, pk=None):

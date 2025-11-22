@@ -80,6 +80,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "ccv.middleware.DemoModeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "social_django.middleware.SocialAuthExceptionMiddleware",
@@ -314,6 +315,9 @@ CORS_ORIGIN_WHITELIST = cors_origins
 CORS_ALLOW_METHODS = ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost").split(",")
 
+# Trust X-Forwarded-Proto header from nginx for HTTPS detection
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Simple JWT configuration
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
@@ -417,6 +421,12 @@ WHISPERCPP_THREAD_COUNT = os.environ.get("WHISPERCPP_THREAD_COUNT", "6")
 
 # Feature flags
 USE_WHISPER = os.environ.get("USE_WHISPER", "False") == "True"
+
+DEMO_MODE = os.environ.get("DEMO_MODE", "False").lower() == "true"
+DEMO_USER_USERNAME = os.environ.get("DEMO_USER_USERNAME", "demo")
+DEMO_USER_PASSWORD = os.environ.get("DEMO_USER_PASSWORD", "demo123")
+DEMO_USER_EMAIL = os.environ.get("DEMO_USER_EMAIL", "demo@example.com")
+DEMO_CLEANUP_INTERVAL_MINUTES = int(os.environ.get("DEMO_CLEANUP_INTERVAL_MINUTES", "15"))
 
 STORAGES = {
     "default": {

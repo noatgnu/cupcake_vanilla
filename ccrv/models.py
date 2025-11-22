@@ -213,6 +213,575 @@ class ProtocolModel(AbstractResource):
 
         raise ValueError("Failed to import protocol from protocols.io")
 
+    def get_session_annotations(self, session):
+        """
+        Get all step annotations for this protocol within a session context.
+
+        Args:
+            session: Session instance
+
+        Returns:
+            dict: Mapping of step_id to list of StepAnnotation objects
+        """
+        from ccrv.models import StepAnnotation
+
+        step_annotations = {}
+        protocol_steps = ProtocolStep.objects.filter(step_section__protocol=self).prefetch_related(
+            "step_annotations__annotation__owner"
+        )
+
+        for step in protocol_steps:
+            annotations = (
+                StepAnnotation.objects.filter(session=session, step=step)
+                .select_related("annotation", "annotation__owner")
+                .order_by("order")
+            )
+
+            if annotations.exists():
+                step_annotations[step.id] = list(annotations)
+
+        return step_annotations
+
+    def gather_session_files(self, session):
+        """
+        Gather all annotation file paths for this protocol in a session.
+
+        Args:
+            session: Session instance
+
+        Returns:
+            list: List of (annotation, file_path) tuples
+        """
+        files = []
+        step_annotations = self.get_session_annotations(session)
+
+        for step_id, annotations in step_annotations.items():
+            for step_ann in annotations:
+                if step_ann.annotation.file:
+                    files.append((step_ann.annotation, step_ann.annotation.file.path))
+
+        return files
+
+    def generate_html(self):
+        """
+        Generate HTML representation of this protocol without session context.
+
+        Returns:
+            str: HTML content for this protocol structure only
+        """
+        from django.utils.html import escape
+
+        sections_html = []
+
+        for section in self.sections.all().order_by("order"):
+            steps_html = []
+
+            for step in section.get_steps_by_order():
+                reagents_html = ""
+                if step.reagents.exists():
+                    reagent_items = []
+                    for sr in step.reagents.all():
+                        unit = sr.unit or sr.reagent.unit or ""
+                        quantity_part = f" - {sr.quantity} {unit}" if sr.quantity else ""
+                        scalable_part = " (scalable)" if sr.scalable else ""
+                        reagent_items.append(f"<li>{sr.reagent.name}{quantity_part}{scalable_part}</li>")
+                    reagents_list = "".join(reagent_items)
+                    reagents_html = f"""
+                    <div class="step-reagents">
+                        <h4>Required Reagents</h4>
+                        <ul class="reagent-list">{reagents_list}</ul>
+                    </div>
+                    """
+
+                import re
+
+                step_desc = step.step_description or ""
+
+                step_reagents = step.reagents.all().select_related("reagent")
+                for step_reagent in step_reagents:
+                    reagent = step_reagent.reagent
+                    reagent_id = step_reagent.id
+
+                    base_quantity = step_reagent.quantity or 0
+                    scaled_quantity = (
+                        step_reagent.scaled_quantity
+                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
+                        else base_quantity
+                    )
+
+                    reagent_name_escaped = escape(reagent.name)
+                    unit_value = escape(step_reagent.unit or reagent.unit or "")
+
+                    step_desc = re.sub(rf"%{reagent_id}\.quantity%", f"{{{{REAGENT_QTY_{reagent_id}}}}}", step_desc)
+                    step_desc = re.sub(
+                        rf"%{reagent_id}\.scaled_quantity%", f"{{{{REAGENT_SCALED_{reagent_id}}}}}", step_desc
+                    )
+                    step_desc = re.sub(rf"%{reagent_id}\.name%", f"{{{{REAGENT_NAME_{reagent_id}}}}}", step_desc)
+                    step_desc = re.sub(rf"%{reagent_id}\.unit%", f"{{{{REAGENT_UNIT_{reagent_id}}}}}", step_desc)
+
+                step_desc = escape(step_desc)
+
+                for step_reagent in step_reagents:
+                    reagent = step_reagent.reagent
+                    reagent_id = step_reagent.id
+
+                    base_quantity = step_reagent.quantity or 0
+                    scaled_quantity = (
+                        step_reagent.scaled_quantity
+                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
+                        else base_quantity
+                    )
+
+                    reagent_name_escaped = escape(reagent.name)
+                    unit_value = escape(step_reagent.unit or reagent.unit or "")
+
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_QTY_{reagent_id}}}}}",
+                        f'<span class="template-value" title="Reagent quantity: {reagent_name_escaped}">{base_quantity}</span>',
+                    )
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_SCALED_{reagent_id}}}}}",
+                        f'<span class="template-value template-value-scaled" title="Scaled quantity: {reagent_name_escaped}">{scaled_quantity}</span>',
+                    )
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_NAME_{reagent_id}}}}}",
+                        f'<span class="template-value template-value-name" title="Reagent name">{reagent_name_escaped or "Unknown"}</span>',
+                    )
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_UNIT_{reagent_id}}}}}",
+                        f'<span class="template-value template-value-unit" title="Reagent unit: {reagent_name_escaped}">{unit_value}</span>',
+                    )
+
+                step_desc = step_desc.replace("\n", "<br>")
+
+                duration_html = ""
+                if step.step_duration:
+                    hours = step.step_duration // 3600
+                    minutes = (step.step_duration % 3600) // 60
+                    seconds = step.step_duration % 60
+
+                    duration_parts = []
+                    if hours > 0:
+                        duration_parts.append(f"{hours}h")
+                    if minutes > 0:
+                        duration_parts.append(f"{minutes}m")
+                    if seconds > 0 or not duration_parts:
+                        duration_parts.append(f"{seconds}s")
+
+                    duration_display = " ".join(duration_parts)
+                    duration_html = f'<span class="step-duration">{duration_display}</span>'
+
+                steps_html.append(
+                    f"""
+                <div class="step">
+                    <div class="step-header">
+                        <span class="step-number">{step.order}</span>
+                        <span class="step-title">Step {step.order}</span>
+                        {duration_html}
+                    </div>
+                    <div class="step-description">{step_desc}</div>
+                    {reagents_html}
+                </div>
+                """
+                )
+
+            section_desc = escape(section.section_description)
+            section_desc = section_desc.replace("\n", "<br>")
+
+            section_duration_html = ""
+            if section.section_duration:
+                hours = section.section_duration // 3600
+                minutes = (section.section_duration % 3600) // 60
+                seconds = section.section_duration % 60
+
+                duration_parts = []
+                if hours > 0:
+                    duration_parts.append(f"{hours}h")
+                if minutes > 0:
+                    duration_parts.append(f"{minutes}m")
+                if seconds > 0 or not duration_parts:
+                    duration_parts.append(f"{seconds}s")
+
+                duration_display = " ".join(duration_parts)
+                section_duration_html = (
+                    f'<span style="font-size: 0.9em; color: #7f8c8d; margin-left: 10px;">({duration_display})</span>'
+                )
+
+            sections_html.append(
+                f"""
+            <div class="section">
+                <div class="section-header">
+                    {section_desc}
+                    {section_duration_html}
+                </div>
+                {''.join(steps_html)}
+            </div>
+            """
+            )
+
+        protocol_desc = escape(self.protocol_description) if self.protocol_description else ""
+        protocol_desc = protocol_desc.replace("\n", "<br>") if protocol_desc else ""
+        protocol_title = escape(self.protocol_title)
+        protocol_doi = escape(self.protocol_doi) if self.protocol_doi else ""
+        protocol_url = escape(self.protocol_url) if self.protocol_url else ""
+
+        return f"""
+        <div class="protocol">
+            <div class="protocol-header">
+                <h2>{protocol_title}</h2>
+                {f'<div class="protocol-description">{protocol_desc}</div>' if protocol_desc else ''}
+                <div class="protocol-meta">
+                    {f'<span><strong>DOI:</strong> {protocol_doi}</span>' if protocol_doi else ''}
+                    {f'<span><strong>URL:</strong> {protocol_url}</span>' if protocol_url else ''}
+                </div>
+            </div>
+            {''.join(sections_html)}
+        </div>
+        """
+
+    def generate_html_for_session(self, session):
+        """
+        Generate HTML representation of this protocol for a specific session.
+
+        Args:
+            session: Session instance
+
+        Returns:
+            str: HTML content for this protocol with session-specific annotations
+        """
+        step_annotations = self.get_session_annotations(session)
+
+        sections_html = []
+
+        for section in self.sections.all().order_by("order"):
+            steps_html = []
+
+            for step in section.get_steps_by_order():
+                reagents_html = ""
+                if step.reagents.exists():
+                    reagents_list = "".join(
+                        [
+                            f"<li>{sr.reagent.name}"
+                            f"{f' - {sr.quantity}' if sr.quantity else ''}"
+                            f"{' (scalable)' if sr.scalable else ''}</li>"
+                            for sr in step.reagents.all()
+                        ]
+                    )
+                    reagents_html = f"""
+                    <div class="step-reagents">
+                        <h4>Required Reagents</h4>
+                        <ul class="reagent-list">{reagents_list}</ul>
+                    </div>
+                    """
+
+                annotations_html = ""
+                if step.id in step_annotations:
+                    annotations_items = []
+                    for step_ann in step_annotations[step.id]:
+                        from ccrv.export_utils import _process_annotation_file
+
+                        annotation = step_ann.annotation
+                        file_html = _process_annotation_file(annotation) or ""
+
+                        from django.utils.html import escape
+
+                        transcription_html = ""
+                        if annotation.transcription:
+                            trans_text = escape(annotation.transcription).replace("\n", "<br>")
+                            transcription_html = f"""
+                            <div class="transcription">
+                                <h5>Transcription:</h5>
+                                {trans_text}
+                            </div>
+                            """
+
+                        ann_text = escape(annotation.annotation) if annotation.annotation else ""
+                        ann_text = ann_text.replace("\n", "<br>") if ann_text else ""
+                        annotations_items.append(
+                            f"""
+                        <div class="annotation">
+                            <div class="annotation-meta">
+                                <strong>{annotation.owner.get_full_name() or annotation.owner.username}</strong>
+                                - {annotation.created_at.strftime('%B %d, %Y, %I:%M %p')}
+                                {f'<span class="badge badge-{annotation.annotation_type}">{annotation.annotation_type}</span>' if annotation.annotation_type else ''}
+                            </div>
+                            {f'<div class="annotation-text">{ann_text}</div>' if ann_text else ''}
+                            {f'<div class="annotation-file">{file_html}</div>' if file_html else ''}
+                            {transcription_html}
+                        </div>
+                        """
+                        )
+
+                    annotations_html = f"""
+                    <div class="step-annotations">
+                        <h4>Annotations</h4>
+                        {''.join(annotations_items)}
+                    </div>
+                    """
+
+                import re
+
+                step_desc = step.step_description or ""
+
+                step_reagents = step.reagents.all().select_related("reagent")
+                for step_reagent in step_reagents:
+                    reagent = step_reagent.reagent
+                    reagent_id = step_reagent.id
+
+                    base_quantity = step_reagent.quantity or 0
+                    scaled_quantity = (
+                        step_reagent.scaled_quantity
+                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
+                        else base_quantity
+                    )
+
+                    reagent_name_escaped = escape(reagent.name)
+                    unit_value = escape(step_reagent.unit or reagent.unit or "")
+
+                    step_desc = re.sub(rf"%{reagent_id}\.quantity%", f"{{{{REAGENT_QTY_{reagent_id}}}}}", step_desc)
+                    step_desc = re.sub(
+                        rf"%{reagent_id}\.scaled_quantity%", f"{{{{REAGENT_SCALED_{reagent_id}}}}}", step_desc
+                    )
+                    step_desc = re.sub(rf"%{reagent_id}\.name%", f"{{{{REAGENT_NAME_{reagent_id}}}}}", step_desc)
+                    step_desc = re.sub(rf"%{reagent_id}\.unit%", f"{{{{REAGENT_UNIT_{reagent_id}}}}}", step_desc)
+
+                step_desc = escape(step_desc)
+
+                for step_reagent in step_reagents:
+                    reagent = step_reagent.reagent
+                    reagent_id = step_reagent.id
+
+                    base_quantity = step_reagent.quantity or 0
+                    scaled_quantity = (
+                        step_reagent.scaled_quantity
+                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
+                        else base_quantity
+                    )
+
+                    reagent_name_escaped = escape(reagent.name)
+                    unit_value = escape(step_reagent.unit or reagent.unit or "")
+
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_QTY_{reagent_id}}}}}",
+                        f'<span class="template-value" title="Reagent quantity: {reagent_name_escaped}">{base_quantity}</span>',
+                    )
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_SCALED_{reagent_id}}}}}",
+                        f'<span class="template-value template-value-scaled" title="Scaled quantity: {reagent_name_escaped}">{scaled_quantity}</span>',
+                    )
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_NAME_{reagent_id}}}}}",
+                        f'<span class="template-value template-value-name" title="Reagent name">{reagent_name_escaped or "Unknown"}</span>',
+                    )
+                    step_desc = step_desc.replace(
+                        f"{{{{REAGENT_UNIT_{reagent_id}}}}}",
+                        f'<span class="template-value template-value-unit" title="Reagent unit: {reagent_name_escaped}">{unit_value}</span>',
+                    )
+
+                step_desc = step_desc.replace("\n", "<br>")
+
+                duration_html = ""
+                if step.step_duration:
+                    hours = step.step_duration // 3600
+                    minutes = (step.step_duration % 3600) // 60
+                    seconds = step.step_duration % 60
+
+                    duration_parts = []
+                    if hours > 0:
+                        duration_parts.append(f"{hours}h")
+                    if minutes > 0:
+                        duration_parts.append(f"{minutes}m")
+                    if seconds > 0 or not duration_parts:
+                        duration_parts.append(f"{seconds}s")
+
+                    duration_display = " ".join(duration_parts)
+                    duration_html = f'<span class="step-duration">{duration_display}</span>'
+
+                steps_html.append(
+                    f"""
+                <div class="step">
+                    <div class="step-header">
+                        <span class="step-number">{step.order}</span>
+                        <span class="step-title">Step {step.order}</span>
+                        {duration_html}
+                    </div>
+                    <div class="step-description">{step_desc}</div>
+                    {reagents_html}
+                    {annotations_html}
+                </div>
+                """
+                )
+
+            section_desc = escape(section.section_description)
+            section_desc = section_desc.replace("\n", "<br>")
+
+            section_duration_html = ""
+            if section.section_duration:
+                hours = section.section_duration // 3600
+                minutes = (section.section_duration % 3600) // 60
+                seconds = section.section_duration % 60
+
+                duration_parts = []
+                if hours > 0:
+                    duration_parts.append(f"{hours}h")
+                if minutes > 0:
+                    duration_parts.append(f"{minutes}m")
+                if seconds > 0 or not duration_parts:
+                    duration_parts.append(f"{seconds}s")
+
+                duration_display = " ".join(duration_parts)
+                section_duration_html = (
+                    f'<span style="font-size: 0.9em; color: #7f8c8d; margin-left: 10px;">({duration_display})</span>'
+                )
+
+            sections_html.append(
+                f"""
+            <div class="section">
+                <div class="section-header">
+                    {section_desc}
+                    {section_duration_html}
+                </div>
+                {''.join(steps_html)}
+            </div>
+            """
+            )
+
+        from django.utils.html import escape
+
+        protocol_desc = escape(self.protocol_description) if self.protocol_description else ""
+        protocol_desc = protocol_desc.replace("\n", "<br>") if protocol_desc else ""
+        protocol_title = escape(self.protocol_title)
+        protocol_doi = escape(self.protocol_doi) if self.protocol_doi else ""
+        protocol_url = escape(self.protocol_url) if self.protocol_url else ""
+
+        return f"""
+        <div class="protocol">
+            <div class="protocol-header">
+                <h2>{protocol_title}</h2>
+                {f'<div class="protocol-description">{protocol_desc}</div>' if protocol_desc else ''}
+                <div class="protocol-meta">
+                    {f'<span><strong>DOI:</strong> {protocol_doi}</span>' if protocol_doi else ''}
+                    {f'<span><strong>URL:</strong> {protocol_url}</span>' if protocol_url else ''}
+                </div>
+            </div>
+            {''.join(sections_html)}
+        </div>
+        """
+
+    def export_html(self, session=None):
+        """
+        Export protocol as complete HTML document.
+
+        Args:
+            session: Optional Session instance. If provided, includes session-specific annotations.
+
+        Returns:
+            str: Complete HTML document
+        """
+        from datetime import datetime
+
+        from django.utils.html import escape
+
+        from ccrv.export_utils import get_html_template
+
+        if session:
+            protocol_html = self.generate_html_for_session(session)
+            session_name = escape(session.name)
+            owner_name = escape(session.owner.get_full_name() or session.owner.username)
+            started_at_html = (
+                f'<div class="meta-info-item"><strong>Started:</strong> {session.started_at.strftime("%B %d, %Y, %I:%M %p")}</div>'
+                if session.started_at
+                else ""
+            )
+            ended_at_html = (
+                f'<div class="meta-info-item"><strong>Ended:</strong> {session.ended_at.strftime("%B %d, %Y, %I:%M %p")}</div>'
+                if session.ended_at
+                else ""
+            )
+            session_annotations_section = ""
+        else:
+            protocol_html = self.generate_html()
+            session_name = escape(self.protocol_title)
+            owner_name = escape(self.owner.get_full_name() or self.owner.username) if self.owner else "Unknown"
+            started_at_html = ""
+            ended_at_html = ""
+            session_annotations_section = ""
+
+        export_date = datetime.now().strftime("%B %d, %Y, %I:%M %p")
+
+        template = get_html_template()
+
+        html_content = template.format(
+            session_name=session_name,
+            owner_name=owner_name,
+            started_at_html=started_at_html,
+            ended_at_html=ended_at_html,
+            export_date=export_date,
+            session_annotations_section=session_annotations_section,
+            protocols_html=protocol_html,
+        )
+
+        return html_content
+
+    def generate_export_token(self, user, session_id=None):
+        """
+        Generate a signed export token for this protocol.
+
+        Args:
+            user: The user requesting the export
+            session_id: Optional session ID for session-specific export
+
+        Returns:
+            str: Signed token containing protocol ID, user ID, and optional session ID
+        """
+        from django.core.signing import TimestampSigner
+
+        signer = TimestampSigner()
+        if session_id:
+            payload = f"protocol:{self.id}:{user.id}:{session_id}"
+        else:
+            payload = f"protocol:{self.id}:{user.id}"
+        return signer.sign(payload)
+
+    @classmethod
+    def verify_export_token(cls, signed_token):
+        """
+        Verify a signed export token and return the Protocol and session if valid.
+
+        Returns:
+            tuple: (protocol, user, session_id or None) or (None, None, None) if invalid
+        """
+        from django.conf import settings
+        from django.contrib.auth import get_user_model
+        from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
+
+        User = get_user_model()
+        signer = TimestampSigner()
+
+        try:
+            max_age = getattr(settings, "EXPORT_TOKEN_MAX_AGE", 600)
+            payload = signer.unsign(signed_token, max_age=max_age)
+
+            parts = payload.split(":")
+            if parts[0] != "protocol":
+                return None, None, None
+
+            if len(parts) == 3:
+                _, protocol_id, user_id = parts
+                session_id = None
+            elif len(parts) == 4:
+                _, protocol_id, user_id, session_id = parts
+            else:
+                return None, None, None
+
+            user = User.objects.get(id=user_id)
+            protocol = cls.objects.get(id=protocol_id)
+
+            return protocol, user, session_id
+
+        except (BadSignature, SignatureExpired, ValueError, User.DoesNotExist, cls.DoesNotExist):
+            return None, None, None
+
 
 class Session(AbstractResource):
     """
@@ -355,6 +924,178 @@ class Session(AbstractResource):
         """
         # Original implementation would go here
         pass
+
+    def get_session_annotations(self):
+        """
+        Get all session-level annotations.
+
+        Returns:
+            QuerySet: SessionAnnotation objects for this session
+        """
+        from ccrv.models import SessionAnnotation
+
+        return (
+            SessionAnnotation.objects.filter(session=self)
+            .select_related("annotation", "annotation__owner")
+            .order_by("order")
+        )
+
+    def gather_all_files(self):
+        """
+        Gather all annotation files from session and protocol annotations.
+
+        Returns:
+            list: List of (annotation, file_path) tuples
+        """
+        files = []
+
+        for sa in self.get_session_annotations():
+            if sa.annotation.file:
+                files.append((sa.annotation, sa.annotation.file.path))
+
+        for protocol in self.protocols.all():
+            files.extend(protocol.gather_session_files(self))
+
+        return files
+
+    def export_protocols_html(self):
+        """
+        Export all protocols with annotations as HTML.
+
+        Returns:
+            str: Complete HTML document with all protocols and annotations
+        """
+        from datetime import datetime
+
+        from django.utils.html import escape
+
+        from ccrv.export_utils import get_html_template
+
+        session_annotations_html = []
+        for sa in self.get_session_annotations():
+            from ccrv.export_utils import _process_annotation_file
+
+            annotation = sa.annotation
+            file_html = _process_annotation_file(annotation) or ""
+
+            transcription_html = ""
+            if annotation.transcription:
+                trans_text = escape(annotation.transcription).replace("\n", "<br>")
+                transcription_html = f"""
+                <div class="transcription">
+                    <h5>Transcription:</h5>
+                    {trans_text}
+                </div>
+                """
+
+            ann_text = escape(annotation.annotation) if annotation.annotation else ""
+            ann_text = ann_text.replace("\n", "<br>") if ann_text else ""
+            session_annotations_html.append(
+                f"""
+            <div class="annotation">
+                <div class="annotation-meta">
+                    <strong>{escape(annotation.owner.get_full_name() or annotation.owner.username)}</strong>
+                    - {annotation.created_at.strftime('%B %d, %Y, %I:%M %p')}
+                    {f'<span class="badge badge-{escape(annotation.annotation_type)}">{escape(annotation.annotation_type)}</span>' if annotation.annotation_type else ''}
+                </div>
+                {f'<div class="annotation-text">{ann_text}</div>' if ann_text else ''}
+                {f'<div class="annotation-file">{file_html}</div>' if file_html else ''}
+                {transcription_html}
+            </div>
+            """
+            )
+
+        session_annotations_section = ""
+        if session_annotations_html:
+            session_annotations_section = f"""
+        <div class="session-annotations">
+            <h2>Session Annotations</h2>
+            {''.join(session_annotations_html)}
+        </div>
+            """
+
+        protocols_html = []
+        for protocol in self.protocols.all():
+            protocols_html.append(protocol.generate_html_for_session(self))
+
+        session_name = escape(self.name)
+        owner_name = escape(self.owner.get_full_name() or self.owner.username)
+
+        started_at_html = (
+            f'<div class="meta-info-item"><strong>Started:</strong> {self.started_at.strftime("%B %d, %Y, %I:%M %p")}</div>'
+            if self.started_at
+            else ""
+        )
+        ended_at_html = (
+            f'<div class="meta-info-item"><strong>Ended:</strong> {self.ended_at.strftime("%B %d, %Y, %I:%M %p")}</div>'
+            if self.ended_at
+            else ""
+        )
+
+        export_date = datetime.now().strftime("%B %d, %Y, %I:%M %p")
+
+        template = get_html_template()
+
+        html_content = template.format(
+            session_name=session_name,
+            owner_name=owner_name,
+            started_at_html=started_at_html,
+            ended_at_html=ended_at_html,
+            export_date=export_date,
+            session_annotations_section=session_annotations_section,
+            protocols_html="".join(protocols_html),
+        )
+
+        return html_content
+
+    def generate_export_token(self, user):
+        """
+        Generate a signed export token for this session.
+
+        Args:
+            user: The user requesting the export
+
+        Returns:
+            str: Signed token containing session ID and user ID
+        """
+        from django.core.signing import TimestampSigner
+
+        signer = TimestampSigner()
+        payload = f"session:{self.id}:{user.id}"
+        return signer.sign(payload)
+
+    @classmethod
+    def verify_export_token(cls, signed_token):
+        """
+        Verify a signed export token and return the Session if valid.
+
+        Returns:
+            tuple: (session, user) or (None, None) if invalid
+        """
+        from django.conf import settings
+        from django.contrib.auth import get_user_model
+        from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
+
+        User = get_user_model()
+        signer = TimestampSigner()
+
+        try:
+            max_age = getattr(settings, "EXPORT_TOKEN_MAX_AGE", 600)
+            payload = signer.unsign(signed_token, max_age=max_age)
+
+            parts = payload.split(":")
+            if parts[0] != "session" or len(parts) != 3:
+                return None, None
+
+            _, session_id, user_id = parts
+
+            user = User.objects.get(id=user_id)
+            session = cls.objects.get(id=session_id)
+
+            return session, user
+
+        except (BadSignature, SignatureExpired, ValueError, User.DoesNotExist, cls.DoesNotExist):
+            return None, None
 
 
 class ProtocolSection(models.Model):

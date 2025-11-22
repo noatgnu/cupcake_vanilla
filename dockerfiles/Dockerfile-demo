@@ -1,0 +1,83 @@
+FROM node:20-alpine AS frontend-builder
+
+ARG TUNNEL_DOMAIN=""
+ARG API_PROTOCOL="http"
+ARG API_HOST="localhost:8000"
+ARG WS_PROTOCOL="ws"
+
+RUN apk add --no-cache git
+
+WORKDIR /frontend
+
+RUN git clone https://github.com/noatgnu/cupcake-webgui.git .
+
+RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
+      sed -i "s|apiUrl: 'https://localhost/api/v1'|apiUrl: 'https://${TUNNEL_DOMAIN}/api/v1'|g" src/environments/environment.ts && \
+      sed -i "s|websocketUrl: 'wss://localhost/ws'|websocketUrl: 'wss://${TUNNEL_DOMAIN}/ws'|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
+    else \
+      sed -i "s|apiUrl: 'https://localhost/api/v1'|apiUrl: 'http://localhost:8000/api/v1'|g" src/environments/environment.ts && \
+      sed -i "s|websocketUrl: 'wss://localhost/ws'|websocketUrl: 'ws://localhost:8000/ws'|g" src/environments/environment.ts; \
+    fi
+
+RUN cat src/environments/environment.ts
+
+RUN npm ci
+
+RUN npm run build -- --configuration production
+
+FROM python:3.11-slim AS backend-builder
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN pip install poetry
+
+COPY pyproject.toml poetry.lock ./
+
+RUN poetry config virtualenvs.create false \
+    && poetry install --only main --no-interaction --no-ansi
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    libpq-dev \
+    nginx \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=backend-builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=backend-builder /usr/local/bin /usr/local/bin
+
+COPY . .
+
+COPY --from=frontend-builder /frontend/dist/cupcake-webgui /app/frontend
+
+RUN mkdir -p /app/staticfiles /app/media
+
+COPY dockerfiles/nginx-demo.conf /etc/nginx/sites-available/default
+
+RUN ln -sf /dev/stdout /var/log/nginx/access.log \
+    && ln -sf /dev/stderr /var/log/nginx/error.log
+
+EXPOSE 8000
+
+COPY dockerfiles/entrypoint-demo.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

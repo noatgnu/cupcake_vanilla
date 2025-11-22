@@ -212,7 +212,6 @@ extend-ignore = ["E203", "W503", "E501", "E402"]
 exclude = [
     ".git",
     "__pycache__",
-    "docs/source/conf.py",
     "old",
     "build",
     "dist",
@@ -272,3 +271,6 @@ exclude_lines = [
     "if 0:",
     "if __name__ == .__main__.:"
 ]
+
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.8"

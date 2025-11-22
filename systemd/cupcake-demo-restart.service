@@ -1,0 +1,15 @@
+[Unit]
+Description=Restart Cupcake Vanilla Demo Mode Containers
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/cupcake_vanilla
+ExecStart=/usr/bin/docker-compose -f docker-compose.demo.yml down -v
+ExecStart=/usr/bin/docker-compose -f docker-compose.demo.yml up -d
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
