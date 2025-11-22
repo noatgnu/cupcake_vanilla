@@ -34,11 +34,6 @@ services:
       - ENABLE_CUPCAKE_SALTED_CARAMEL=True
       - ENABLE_CUPCAKE_RED_VELVET=True
       - USE_WHISPER=False
-      - COTURN_HOST=
-      - COTURN_PORT=
-      - COTURN_TLS_PORT=
-      - COTURN_SECRET=
-      - COTURN_TTL=
     entrypoint: ["sh", "/entrypoint-demo.sh"]
     command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "cupcake_vanilla.asgi:application"]
     depends_on:
