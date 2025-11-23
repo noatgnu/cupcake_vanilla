@@ -1,0 +1,177 @@
+services:
+  frontend-demo-vanilla-ng:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile-demo-frontend-vanilla-ng
+      args:
+        - TUNNEL_DOMAIN=${TUNNEL_DOMAIN:-}
+    container_name: cupcake-vanilla-frontend-demo-ng
+    networks:
+      - cupcake-demo-ng-network
+
+  app-demo-vanilla-ng:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile
+    container_name: cupcake-vanilla-app-demo-ng
+    expose:
+      - "8000"
+    volumes:
+      - demo-ng-media:/app/media/
+      - demo-ng-static:/app/staticfiles/
+      - ./dockerfiles/entrypoint-demo.sh:/entrypoint-demo.sh:ro
+      - ./dockerfiles/demo-db-prepopulated.sql:/demo-db-prepopulated.sql:ro
+    environment:
+      - DEMO_MODE=True
+      - DEMO_USER_USERNAME=demo
+      - DEMO_USER_PASSWORD=demo123
+      - DEMO_USER_EMAIL=demo@example.com
+      - DEMO_CLEANUP_INTERVAL_MINUTES=15
+      - POSTGRES_NAME=cupcake_vanilla_demo_ng
+      - POSTGRES_DB=cupcake_vanilla_demo_ng
+      - POSTGRES_USER=cupcake_demo_ng
+      - POSTGRES_PASSWORD=cupcake_demo_ng_pass
+      - POSTGRES_HOST=db-demo-ng
+      - POSTGRES_PORT=5432
+      - SECRET_KEY=demo-ng-secret-key-change-in-production
+      - DEBUG=False
+      - ALLOWED_HOSTS=localhost,127.0.0.1,nginx-demo-ng,app-demo-vanilla-ng,${TUNNEL_DOMAIN:-}
+      - CORS_ORIGIN_WHITELIST=http://localhost:4200,http://localhost:8001,https://${TUNNEL_DOMAIN:-localhost}
+      - REDIS_URL=redis://redis-demo-ng:6379/1
+      - REDIS_HOST=redis-demo-ng
+      - REDIS_PORT=6379
+      - REDIS_DB_RQ=3
+      - ENABLE_RQ_TASKS=True
+      - ENABLE_CUPCAKE_MACARON=True
+      - ENABLE_CUPCAKE_MINT_CHOCOLATE=True
+      - ENABLE_CUPCAKE_SALTED_CARAMEL=True
+      - ENABLE_CUPCAKE_RED_VELVET=True
+      - USE_WHISPER=False
+    entrypoint: ["sh", "/entrypoint-demo.sh"]
+    command: ["gunicorn","--workers=4", "cupcake_vanilla.asgi:application", "--bind", "0.0.0.0:8000","--timeout", "300", "-k", "uvicorn.workers.UvicornWorker", "--log-level", "info"]
+    depends_on:
+      db-demo-ng:
+        condition: service_healthy
+      redis-demo-ng:
+        condition: service_healthy
+    networks:
+      - cupcake-demo-ng-network
+
+  rq-worker-demo-vanilla-ng:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile
+    container_name: cupcake-vanilla-rq-worker-demo-ng
+    volumes:
+      - demo-ng-media:/app/media/
+    environment:
+      - DEMO_MODE=True
+      - POSTGRES_NAME=cupcake_vanilla_demo_ng
+      - POSTGRES_DB=cupcake_vanilla_demo_ng
+      - POSTGRES_USER=cupcake_demo_ng
+      - POSTGRES_PASSWORD=cupcake_demo_ng_pass
+      - POSTGRES_HOST=db-demo-ng
+      - POSTGRES_PORT=5432
+      - SECRET_KEY=demo-ng-secret-key-change-in-production
+      - DEBUG=False
+      - REDIS_URL=redis://redis-demo-ng:6379/1
+      - REDIS_HOST=redis-demo-ng
+      - REDIS_PORT=6379
+      - REDIS_DB_RQ=3
+      - ENABLE_RQ_TASKS=True
+      - ENABLE_CUPCAKE_MACARON=True
+      - ENABLE_CUPCAKE_MINT_CHOCOLATE=True
+      - ENABLE_CUPCAKE_SALTED_CARAMEL=True
+      - ENABLE_CUPCAKE_RED_VELVET=True
+      - USE_WHISPER=False
+    command: >
+      sh -c "python manage.py cleanup_dead_workers &&
+             python manage.py rqworker default high low"
+    depends_on:
+      db-demo-ng:
+        condition: service_healthy
+      redis-demo-ng:
+        condition: service_healthy
+      app-demo-vanilla-ng:
+        condition: service_started
+    networks:
+      - cupcake-demo-ng-network
+
+  nginx-demo-vanilla-ng:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile-demo-nginx-vanilla-ng
+    container_name: cupcake-vanilla-nginx-demo-ng
+    environment:
+      - NGINX_SERVER_NAME=${TUNNEL_DOMAIN:-_}
+    volumes:
+      - demo-ng-media:/media/
+      - demo-ng-static:/static/
+    ports:
+      - "8001:80"
+    depends_on:
+      - app-demo-vanilla-ng
+      - frontend-demo-vanilla-ng
+    networks:
+      - cupcake-demo-ng-network
+
+  db-demo-ng:
+    container_name: cupcake-vanilla-db-demo-ng
+    image: postgres:16
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: cupcake_demo_ng_pass
+      POSTGRES_USER: cupcake_demo_ng
+      POSTGRES_DB: cupcake_vanilla_demo_ng
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cupcake_demo_ng"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cupcake-demo-ng-network
+
+  redis-demo-ng:
+    container_name: cupcake-vanilla-redis-demo-ng
+    image: redis:7-alpine
+    tmpfs:
+      - /data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cupcake-demo-ng-network
+
+  cloudflared-vanilla-ng:
+    image: cloudflare/cloudflared:latest
+    container_name: cupcake-vanilla-cloudflared-demo-ng
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - cupcake-demo-ng-network
+    depends_on:
+      - nginx-demo-vanilla-ng
+    restart: unless-stopped
+    profiles:
+      - cloudflare
+
+volumes:
+  demo-ng-media:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+  demo-ng-static:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+
+networks:
+  cupcake-demo-ng-network:
+    driver: bridge

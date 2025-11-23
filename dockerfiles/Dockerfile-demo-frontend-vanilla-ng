@@ -1,0 +1,36 @@
+FROM node:20-alpine AS frontend-builder
+
+ARG TUNNEL_DOMAIN=""
+
+RUN apk add --no-cache git curl bash
+
+WORKDIR /app
+
+RUN git clone https://github.com/noatgnu/cupcake-vanilla-ng.git .
+
+RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
+      sed -i "s|https://localhost|https://${TUNNEL_DOMAIN}|g" src/environments/environment.ts && \
+      sed -i "s|wss://localhost|wss://${TUNNEL_DOMAIN}|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
+    else \
+      sed -i "s|https://localhost|http://localhost:8000|g" src/environments/environment.ts && \
+      sed -i "s|wss://localhost|ws://localhost:8000|g" src/environments/environment.ts; \
+    fi
+
+RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
+
+RUN npm ci
+
+RUN npm run build:libs
+
+RUN npm run build
+
+RUN ls -la dist/ && ls -la dist/cupcake-vanilla-ng/
+
+FROM nginx:alpine
+
+COPY --from=frontend-builder /app/dist/cupcake-vanilla-ng/browser /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
