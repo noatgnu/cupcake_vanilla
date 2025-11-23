@@ -14,6 +14,8 @@ services:
       context: .
       dockerfile: ./dockerfiles/Dockerfile
     container_name: cupcake-vanilla-app-demo
+    expose:
+      - "8000"
     volumes:
       - demo-media:/app/media/
       - demo-static:/app/staticfiles/
