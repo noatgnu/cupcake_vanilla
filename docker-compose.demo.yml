@@ -16,6 +16,7 @@ services:
     container_name: cupcake-vanilla-app-demo
     volumes:
       - demo-media:/app/media/
+      - demo-static:/app/staticfiles/
       - ./dockerfiles/entrypoint-demo.sh:/entrypoint-demo.sh:ro
       - ./dockerfiles/demo-db-prepopulated.sql:/demo-db-prepopulated.sql:ro
     environment:
@@ -45,7 +46,6 @@ services:
       - ENABLE_CUPCAKE_RED_VELVET=True
       - USE_WHISPER=False
     entrypoint: ["sh", "/entrypoint-demo.sh"]
-    command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "cupcake_vanilla.asgi:application"]
     depends_on:
       db-demo:
         condition: service_healthy
@@ -103,6 +103,7 @@ services:
       - NGINX_SERVER_NAME=${TUNNEL_DOMAIN:-_}
     volumes:
       - demo-media:/media/
+      - demo-static:/static/
     ports:
       - "8000:80"
     depends_on:
@@ -158,6 +159,11 @@ services:
 
 volumes:
   demo-media:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+  demo-static:
     driver: local
     driver_opts:
       type: tmpfs
