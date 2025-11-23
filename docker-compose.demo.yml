@@ -48,6 +48,7 @@ services:
       - ENABLE_CUPCAKE_RED_VELVET=True
       - USE_WHISPER=False
     entrypoint: ["sh", "/entrypoint-demo.sh"]
+    command: ["gunicorn","--workers=4", "cupcake_vanilla.asgi:application", "--bind", "0.0.0.0:8000","--timeout", "300", "-k", "uvicorn.workers.UvicornWorker", "--log-level", "info"]
     depends_on:
       db-demo:
         condition: service_healthy
