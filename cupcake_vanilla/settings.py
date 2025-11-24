@@ -429,6 +429,11 @@ DEMO_USER_PASSWORD = os.environ.get("DEMO_USER_PASSWORD", "demo123")
 DEMO_USER_EMAIL = os.environ.get("DEMO_USER_EMAIL", "demo@example.com")
 DEMO_CLEANUP_INTERVAL_MINUTES = int(os.environ.get("DEMO_CLEANUP_INTERVAL_MINUTES", "15"))
 
+if DEMO_MODE:
+    FILE_UPLOAD_MAX_MEMORY_SIZE = 1048576  # 1MB for demo mode
+    DATA_UPLOAD_MAX_MEMORY_SIZE = 1048576  # 1MB for demo mode
+    DRF_CHUNKED_UPLOAD_MAX_BYTES = 1048576  # 1MB for demo mode chunked uploads
+
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",

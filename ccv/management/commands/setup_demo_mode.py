@@ -26,21 +26,25 @@ class Command(BaseCommand):
             defaults={
                 "email": demo_email,
                 "first_name": "Demo",
-                "last_name": "User",
+                "last_name": "Admin",
                 "is_active": True,
-                "is_staff": False,
-                "is_superuser": False,
+                "is_staff": True,
+                "is_superuser": True,
             },
         )
 
         if created:
             user.set_password(demo_password)
             user.save()
-            self.stdout.write(self.style.SUCCESS(f"Created demo user: {demo_username}"))
+            self.stdout.write(self.style.SUCCESS(f"Created demo admin user: {demo_username}"))
         else:
             user.set_password(demo_password)
+            user.is_staff = True
+            user.is_superuser = True
             user.save()
-            self.stdout.write(self.style.SUCCESS(f"Demo user already exists: {demo_username}, password updated"))
+            self.stdout.write(
+                self.style.SUCCESS(f"Demo admin user already exists: {demo_username}, password and privileges updated")
+            )
 
         lab_group, created = LabGroup.objects.get_or_create(
             name="Demo Lab Group",

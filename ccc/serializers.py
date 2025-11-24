@@ -36,6 +36,8 @@ class SiteConfigSerializer(serializers.ModelSerializer):
     installed_apps = serializers.SerializerMethodField()
     ui_features_with_defaults = serializers.SerializerMethodField()
     available_whisper_models = serializers.SerializerMethodField()
+    max_upload_size = serializers.SerializerMethodField()
+    max_chunked_upload_size = serializers.SerializerMethodField()
 
     class Meta:
         model = SiteConfig
@@ -53,6 +55,8 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "ui_features",
             "ui_features_with_defaults",
             "installed_apps",
+            "max_upload_size",
+            "max_chunked_upload_size",
             "created_at",
             "updated_at",
             "updated_by",
@@ -64,6 +68,8 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "installed_apps",
             "ui_features_with_defaults",
             "available_whisper_models",
+            "max_upload_size",
+            "max_chunked_upload_size",
         ]
 
     def get_installed_apps(self, obj):
@@ -135,6 +141,28 @@ class SiteConfigSerializer(serializers.ModelSerializer):
         The transcribe worker scans its filesystem and updates this cache.
         """
         return obj.cached_available_models or []
+
+    def get_max_upload_size(self, obj):
+        """
+        Return maximum upload size in bytes for regular uploads.
+
+        Returns the FILE_UPLOAD_MAX_MEMORY_SIZE setting which applies to
+        regular (non-chunked) file uploads.
+        """
+        from django.conf import settings
+
+        return settings.FILE_UPLOAD_MAX_MEMORY_SIZE
+
+    def get_max_chunked_upload_size(self, obj):
+        """
+        Return maximum upload size in bytes for chunked uploads.
+
+        Returns the DRF_CHUNKED_UPLOAD_MAX_BYTES setting which applies to
+        chunked file uploads (large files uploaded in chunks).
+        """
+        from django.conf import settings
+
+        return settings.DRF_CHUNKED_UPLOAD_MAX_BYTES
 
 
 class LabGroupSerializer(serializers.ModelSerializer):

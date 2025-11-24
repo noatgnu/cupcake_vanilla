@@ -144,7 +144,11 @@ class AnnotationFileUpload(BaseChunkedUpload):
         ]
 
     def get_max_file_size(self) -> int:
-        """Get maximum file size in bytes (500MB)."""
+        """Get maximum file size in bytes (500MB, or 1MB in demo mode)."""
+        from django.conf import settings
+
+        if settings.DEMO_MODE:
+            return settings.DRF_CHUNKED_UPLOAD_MAX_BYTES
         return 500 * 1024 * 1024  # 500MB
 
 

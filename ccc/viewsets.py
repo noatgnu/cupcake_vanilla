@@ -116,6 +116,8 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                     "booking_deletion_window_minutes": serializer.data["booking_deletion_window_minutes"],
                     "ui_features": serializer.data["ui_features_with_defaults"],
                     "installed_apps": serializer.data["installed_apps"],
+                    "max_upload_size": serializer.data["max_upload_size"],
+                    "max_chunked_upload_size": serializer.data["max_chunked_upload_size"],
                     "demo_mode": settings.DEMO_MODE,
                     "demo_cleanup_interval_minutes": settings.DEMO_CLEANUP_INTERVAL_MINUTES
                     if settings.DEMO_MODE
@@ -135,6 +137,8 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                         "booking_deletion_window_minutes": 30,
                         "ui_features": temp_serializer.data["ui_features_with_defaults"],
                         "installed_apps": temp_serializer.data["installed_apps"],
+                        "max_upload_size": temp_serializer.data["max_upload_size"],
+                        "max_chunked_upload_size": temp_serializer.data["max_chunked_upload_size"],
                         "demo_mode": settings.DEMO_MODE,
                         "demo_cleanup_interval_minutes": settings.DEMO_CLEANUP_INTERVAL_MINUTES
                         if settings.DEMO_MODE
