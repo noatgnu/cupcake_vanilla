@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-DUMP_FILE="/demo-db-prepopulated.sql"
+DUMP_FILE="/demo-db-prepopulated.psql.bin"
 
 if [ -f "$DUMP_FILE" ]; then
     echo "Found prepopulated database dump - restoring..."
@@ -17,10 +17,10 @@ if [ -f "$DUMP_FILE" ]; then
 
     echo "Copying backup file to backups directory..."
     mkdir -p /app/backups
-    cp "$DUMP_FILE" /app/backups/demo-prepopulated.psql
+    cp "$DUMP_FILE" /app/backups/demo-prepopulated.psql.bin
 
     echo "Restoring database from backup using Django dbrestore..."
-    python manage.py dbrestore --noinput --input-filename=demo-prepopulated.psql
+    echo "yes" | python manage.py dbrestore --input-filename=demo-prepopulated.psql.bin
 
     echo "Database restored!"
     echo "Setting up demo mode..."
