@@ -27,8 +27,12 @@ cleanup() {
 
 trap cleanup EXIT
 
-echo "Building web-temp image with latest code..."
-$DOCKER_COMPOSE -f docker-compose.db-dump.yml build --no-cache web-temp
+echo "Cleaning up any existing containers and images..."
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml down -v 2>/dev/null || true
+docker rmi $(docker images -q -f "label=com.docker.compose.project=cupcake_vanilla") 2>/dev/null || true
+
+echo "Building web-temp image with latest code (no cache)..."
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml build --no-cache --pull web-temp
 
 echo "Starting temporary environment with docker-compose..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml up -d postgres-temp redis-temp
@@ -88,9 +92,10 @@ echo "Verifying data exists before backup..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py shell -c "
 from ccv.models import (
     Species, Tissue, HumanDisease, SubcellularLocation,
-    MSUniqueVocabularies, Unimod, MetadataColumn, Schema
+    MSUniqueVocabularies, Unimod, MetadataColumnTemplate, Schema
 )
 from django.contrib.auth import get_user_model
+
 User = get_user_model()
 
 print('=== Ontology Data Counts ===')
@@ -100,7 +105,7 @@ print(f'Human Disease: {HumanDisease.objects.count()}')
 print(f'Subcellular Location: {SubcellularLocation.objects.count()}')
 print(f'MS Terms: {MSUniqueVocabularies.objects.count()}')
 print(f'MS Modifications (Unimod): {Unimod.objects.count()}')
-print(f'Metadata Column Templates: {MetadataColumn.objects.count()}')
+print(f'Metadata Column Templates: {MetadataColumnTemplate.objects.count()}')
 print(f'Schemas: {Schema.objects.count()}')
 print(f'Demo user exists: {User.objects.filter(username=\"demo\").exists()}')
 print('============================')
