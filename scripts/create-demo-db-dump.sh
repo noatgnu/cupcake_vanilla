@@ -5,7 +5,7 @@ echo "Creating prepopulated demo database dump..."
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
-DUMP_FILE="$PROJECT_ROOT/dockerfiles/demo-db-prepopulated.psql.bin"
+DUMP_FILE="$PROJECT_ROOT/dockerfiles/demo-db-prepopulated.psql"
 
 if command -v docker-compose &> /dev/null; then
     DOCKER_COMPOSE="docker-compose"
@@ -82,13 +82,13 @@ print(f'Demo user exists: {User.objects.filter(username=\"demo\").exists()}')
 "
 
 echo "Creating database backup using Django dbbackup..."
-$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py dbbackup --output-filename=demo-prepopulated.psql.bin
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py dbbackup --output-filename=demo-prepopulated.psql
 
 echo "Listing backup files..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp ls -lh /app/backups/
 
 echo "Copying backup file to dockerfiles directory..."
-$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp cat /app/backups/demo-prepopulated.psql.bin > "$DUMP_FILE"
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp cat /app/backups/demo-prepopulated.psql > "$DUMP_FILE"
 
 if [ ! -f "$DUMP_FILE" ] || [ ! -s "$DUMP_FILE" ]; then
     echo "Error: Backup file was not created or is empty!"

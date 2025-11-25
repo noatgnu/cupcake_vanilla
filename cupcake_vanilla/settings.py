@@ -448,3 +448,13 @@ STORAGES = {
         },
     },
 }
+
+DBBACKUP_CONNECTORS = {
+    "default": "dbbackup.db.postgresql.PgDumpConnector",
+}
+DBBACKUP_CONNECTOR_OPTIONS = {
+    "default": {
+        "exclude_tables": [],
+        "single_transaction": True,
+    }
+}

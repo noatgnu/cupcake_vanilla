@@ -20,7 +20,7 @@ services:
       - demo-media:/app/media/
       - demo-static:/app/staticfiles/
       - ./dockerfiles/entrypoint-demo.sh:/entrypoint-demo.sh:ro
-      - ./dockerfiles/demo-db-prepopulated.psql.bin:/demo-db-prepopulated.psql.bin:ro
+      - ./dockerfiles/demo-db-prepopulated.psql:/demo-db-prepopulated.psql:ro
     environment:
       - DEMO_MODE=True
       - DEMO_USER_USERNAME=demo
