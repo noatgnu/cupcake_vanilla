@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres-temp:
-    image: postgres:16
+    image: postgres:15
     container_name: cupcake_dump_postgres_temp
     environment:
       POSTGRES_DB: cupcake_dump_temp

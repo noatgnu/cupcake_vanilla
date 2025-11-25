@@ -117,7 +117,7 @@ services:
 
   db-demo:
     container_name: cupcake-vanilla-db-demo
-    image: postgres:16
+    image: postgres:15
     tmpfs:
       - /var/lib/postgresql/data
     environment:
