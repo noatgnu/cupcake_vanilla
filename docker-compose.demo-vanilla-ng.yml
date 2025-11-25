@@ -20,7 +20,7 @@ services:
       - demo-ng-media:/app/media/
       - demo-ng-static:/app/staticfiles/
       - ./dockerfiles/entrypoint-demo.sh:/entrypoint-demo.sh:ro
-      - ./dockerfiles/demo-db-prepopulated.psql:/demo-db-prepopulated.psql:ro
+      - ./dockerfiles/demo-db-prepopulated.psql.bin:/demo-db-prepopulated.psql.bin:ro
     environment:
       - DEMO_MODE=True
       - DEMO_USER_USERNAME=demo
