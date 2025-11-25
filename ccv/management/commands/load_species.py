@@ -30,7 +30,10 @@ def parse_uniprot_species(file_path: str = None):
                 if species["synonym"] == "Synonym":
                     species = {}
                 else:
-                    Species.objects.create(**species)
+                    try:
+                        Species.objects.create(**species)
+                    except Exception as e:
+                        print(f"Warning: Failed to create species {species.get('code', 'unknown')}: {str(e)}")
             species = {
                 "code": match.group(1),
                 "taxon": int(match.group(2)),

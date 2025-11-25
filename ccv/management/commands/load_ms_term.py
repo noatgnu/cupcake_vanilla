@@ -28,36 +28,45 @@ def load_ms_ontology_data():
     sub_1000031 = ms["MS:1000031"].subclasses().to_set()
     for term in sub_1000031:
         if term.is_leaf():
-            MSUniqueVocabularies.objects.create(
-                accession=term.id,
-                name=term.name,
-                definition=term.definition,
-                term_type="instrument",
-            )
-            created_count += 1
+            try:
+                MSUniqueVocabularies.objects.create(
+                    accession=term.id,
+                    name=term.name,
+                    definition=term.definition,
+                    term_type="instrument",
+                )
+                created_count += 1
+            except Exception as e:
+                print(f"Warning: Failed to create instrument term {term.id} - {term.name}: {str(e)}")
 
     # Get cleavage agent terms (MS:1001045)
     sub_1001045 = ms["MS:1001045"].subclasses().to_set()
     for term in sub_1001045:
         if term.is_leaf():
-            MSUniqueVocabularies.objects.create(
-                accession=term.id,
-                name=term.name,
-                definition=term.definition,
-                term_type="cleavage agent",
-            )
-            created_count += 1
+            try:
+                MSUniqueVocabularies.objects.create(
+                    accession=term.id,
+                    name=term.name,
+                    definition=term.definition,
+                    term_type="cleavage agent",
+                )
+                created_count += 1
+            except Exception as e:
+                print(f"Warning: Failed to create cleavage agent term {term.id} - {term.name}: {str(e)}")
 
     # Get dissociation method terms (MS:1000133)
     sub_1000133 = ms["MS:1000133"].subclasses().to_set()
     for term in sub_1000133:
-        MSUniqueVocabularies.objects.create(
-            accession=term.id,
-            name=term.name,
-            definition=term.definition,
-            term_type="dissociation method",
-        )
-        created_count += 1
+        try:
+            MSUniqueVocabularies.objects.create(
+                accession=term.id,
+                name=term.name,
+                definition=term.definition,
+                term_type="dissociation method",
+            )
+            created_count += 1
+        except Exception as e:
+            print(f"Warning: Failed to create dissociation method term {term.id} - {term.name}: {str(e)}")
 
     # Load additional terms from EBI OLS API
     created_count += load_ebi_resource(
@@ -142,13 +151,16 @@ def load_ebi_resource(base_url: str, size: int = 20, term_type: str = "sample at
                 for term in data["_embedded"]["terms"]:
                     # Check if term has required fields
                     if "obo_id" in term and "label" in term:
-                        MSUniqueVocabularies.objects.create(
-                            accession=term["obo_id"],
-                            name=term["label"],
-                            definition=term.get("description", ""),
-                            term_type=term_type,
-                        )
-                        created_count += 1
+                        try:
+                            MSUniqueVocabularies.objects.create(
+                                accession=term["obo_id"],
+                                name=term["label"],
+                                definition=term.get("description", ""),
+                                term_type=term_type,
+                            )
+                            created_count += 1
+                        except Exception as e:
+                            print(f"Warning: Failed to create term {term['obo_id']} - {term['label']}: {str(e)}")
 
                 # Process additional pages if they exist
                 if "page" in data and data["page"].get("totalPages", 0) > 1:

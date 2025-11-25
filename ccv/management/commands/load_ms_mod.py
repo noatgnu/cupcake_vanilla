@@ -55,13 +55,16 @@ def load_unimod_data():
                         )
             result = list(existed_dict.values())
 
-            Unimod.objects.create(
-                accession=term.id,
-                name=term.name,
-                definition=term.definition,
-                additional_data=result,
-            )
-            created_count += 1
+            try:
+                Unimod.objects.create(
+                    accession=term.id,
+                    name=term.name,
+                    definition=term.definition,
+                    additional_data=result,
+                )
+                created_count += 1
+            except Exception as e:
+                print(f"Warning: Failed to create Unimod term {term.id} - {term.name}: {str(e)}")
 
     return created_count
 

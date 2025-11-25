@@ -44,7 +44,7 @@ echo "  - Syncing schemas..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py sync_schemas
 
 echo "  - Loading column templates..."
-$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py load_column_templates
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py load_column_templates --admin-user=demo
 
 echo "  - Loading human disease ontology..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py load_human_disease
