@@ -39,6 +39,18 @@ $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py 
 echo "Setting up demo mode..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py setup_demo_mode
 
+echo "Verifying demo user was created..."
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py shell -c "
+from django.contrib.auth import get_user_model
+User = get_user_model()
+u = User.objects.filter(username='demo').first()
+if u:
+    print(f'Demo user found: username={u.username}, is_staff={u.is_staff}, is_superuser={u.is_superuser}')
+else:
+    print('ERROR: Demo user not found!')
+    exit(1)
+"
+
 echo "Loading reference data..."
 echo "  - Syncing schemas..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py sync_schemas
