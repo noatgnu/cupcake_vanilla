@@ -66,8 +66,17 @@ $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py 
 
 echo "Reference data loaded successfully!"
 
-echo "Creating database dump..."
-$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T postgres-temp pg_dump -U cupcake_dump -d cupcake_dump_temp --clean --if-exists > "$DUMP_FILE"
+echo "Creating database backup using Django dbbackup..."
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py dbbackup
+
+echo "Copying backup file to dockerfiles directory..."
+BACKUP_FILE=$($DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp ls -t /app/backups/*.psql 2>/dev/null | head -1 | tr -d '\r')
+if [ -z "$BACKUP_FILE" ]; then
+    echo "Error: No backup file found!"
+    exit 1
+fi
+
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp cat "$BACKUP_FILE" > "$DUMP_FILE"
 
 echo "Database dump created at: $DUMP_FILE"
 echo "Dump size: $(du -h "$DUMP_FILE" | cut -f1)"

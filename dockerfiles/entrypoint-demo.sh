@@ -12,10 +12,17 @@ if [ -f "$DUMP_FILE" ]; then
         sleep 2
     done
 
-    echo "Restoring database from dump..."
-    PGPASSWORD=$POSTGRES_PASSWORD psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$DUMP_FILE"
+    echo "Running migrations..."
+    python manage.py migrate --noinput
 
-    echo "Database restored successfully!"
+    echo "Copying backup file to backups directory..."
+    mkdir -p /app/backups
+    cp "$DUMP_FILE" /app/backups/demo-prepopulated.psql
+
+    echo "Restoring database from backup using Django dbrestore..."
+    python manage.py dbrestore --noinput --input-filename=demo-prepopulated.psql
+
+    echo "Database restored!"
     echo "Setting up demo mode..."
     python manage.py setup_demo_mode
 
