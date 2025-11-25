@@ -34,6 +34,10 @@ services:
     container_name: cupcake_dump_web_temp
     environment:
       - DEMO_MODE=True
+      - DEMO_USER_USERNAME=demo
+      - DEMO_USER_PASSWORD=demo123
+      - DEMO_USER_EMAIL=demo@example.com
+      - DEMO_CLEANUP_INTERVAL_MINUTES=15
       - SECRET_KEY=temp-secret-key-for-db-generation
       - DEBUG=False
       - POSTGRES_DB=cupcake_dump_temp

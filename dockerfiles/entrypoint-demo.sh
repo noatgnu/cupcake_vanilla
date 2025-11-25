@@ -20,9 +20,27 @@ if [ -f "$DUMP_FILE" ]; then
     cp "$DUMP_FILE" /app/backups/demo-prepopulated.psql.bin
 
     echo "Restoring database from backup using Django dbrestore..."
-    echo "yes" | python manage.py dbrestore --input-filename=demo-prepopulated.psql.bin --pg-options="--no-owner --no-acl"
+    if ! echo "yes" | python manage.py dbrestore --input-filename=demo-prepopulated.psql.bin --pg-options="--no-owner --no-acl"; then
+        echo "ERROR: Database restore failed! Check logs above."
+        echo "Falling back to loading data from commands..."
 
-    echo "Database restored!"
+        echo "Running migrations again..."
+        python manage.py migrate --noinput
+
+        echo "Loading reference data..."
+        python manage.py sync_schemas
+        python manage.py load_column_templates
+        python manage.py load_human_disease
+        python manage.py load_ms_mod
+        python manage.py load_ms_term
+        python manage.py load_species
+        python manage.py load_subcellular_location
+        python manage.py load_tissue
+        echo "Reference data loaded successfully."
+    else
+        echo "Database restored successfully!"
+    fi
+
     echo "Setting up demo mode..."
     python manage.py setup_demo_mode
 

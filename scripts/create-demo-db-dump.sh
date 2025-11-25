@@ -66,6 +66,21 @@ $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py 
 
 echo "Reference data loaded successfully!"
 
+echo "Closing database connections and waiting for PostgreSQL to flush..."
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python -c "from django.db import connections; [conn.close() for conn in connections.all()]"
+sleep 5
+
+echo "Verifying data exists before backup..."
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py shell -c "
+from ccv.models import Species, Tissue, HumanDisease
+print(f'Species count: {Species.objects.count()}')
+print(f'Tissue count: {Tissue.objects.count()}')
+print(f'Human disease count: {HumanDisease.objects.count()}')
+from django.contrib.auth import get_user_model
+User = get_user_model()
+print(f'Demo user exists: {User.objects.filter(username=\"demo\").exists()}')
+"
+
 echo "Creating database backup using Django dbbackup..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py dbbackup --output-filename=demo-prepopulated.psql.bin
 
