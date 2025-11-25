@@ -21,51 +21,54 @@ def load_ms_ontology_data():
     created_count = 0
 
     # Load MS ontology from OBO library
-    ms = pronto.Ontology.from_obo_library("ms.obo")
+    try:
+        ms = pronto.Ontology.from_obo_library("ms.obo")
 
-    # Get only leaf nodes that are subclasses of MS:1000031 (instrument)
-    sub_1000031 = ms["MS:1000031"].subclasses().to_set()
-    for term in sub_1000031:
-        if term.is_leaf():
+        # Get only leaf nodes that are subclasses of MS:1000031 (instrument)
+        sub_1000031 = ms["MS:1000031"].subclasses().to_set()
+        for term in sub_1000031:
+            if term.is_leaf():
+                try:
+                    MSUniqueVocabularies.objects.create(
+                        accession=term.id,
+                        name=term.name,
+                        definition=term.definition,
+                        term_type="instrument",
+                    )
+                    created_count += 1
+                except Exception as e:
+                    print(f"Warning: Failed to create instrument term {term.id} - {term.name}: {str(e)}")
+
+        # Get cleavage agent terms (MS:1001045)
+        sub_1001045 = ms["MS:1001045"].subclasses().to_set()
+        for term in sub_1001045:
+            if term.is_leaf():
+                try:
+                    MSUniqueVocabularies.objects.create(
+                        accession=term.id,
+                        name=term.name,
+                        definition=term.definition,
+                        term_type="cleavage agent",
+                    )
+                    created_count += 1
+                except Exception as e:
+                    print(f"Warning: Failed to create cleavage agent term {term.id} - {term.name}: {str(e)}")
+
+        # Get dissociation method terms (MS:1000133)
+        sub_1000133 = ms["MS:1000133"].subclasses().to_set()
+        for term in sub_1000133:
             try:
                 MSUniqueVocabularies.objects.create(
                     accession=term.id,
                     name=term.name,
                     definition=term.definition,
-                    term_type="instrument",
+                    term_type="dissociation method",
                 )
                 created_count += 1
             except Exception as e:
-                print(f"Warning: Failed to create instrument term {term.id} - {term.name}: {str(e)}")
-
-    # Get cleavage agent terms (MS:1001045)
-    sub_1001045 = ms["MS:1001045"].subclasses().to_set()
-    for term in sub_1001045:
-        if term.is_leaf():
-            try:
-                MSUniqueVocabularies.objects.create(
-                    accession=term.id,
-                    name=term.name,
-                    definition=term.definition,
-                    term_type="cleavage agent",
-                )
-                created_count += 1
-            except Exception as e:
-                print(f"Warning: Failed to create cleavage agent term {term.id} - {term.name}: {str(e)}")
-
-    # Get dissociation method terms (MS:1000133)
-    sub_1000133 = ms["MS:1000133"].subclasses().to_set()
-    for term in sub_1000133:
-        try:
-            MSUniqueVocabularies.objects.create(
-                accession=term.id,
-                name=term.name,
-                definition=term.definition,
-                term_type="dissociation method",
-            )
-            created_count += 1
-        except Exception as e:
-            print(f"Warning: Failed to create dissociation method term {term.id} - {term.name}: {str(e)}")
+                print(f"Warning: Failed to create dissociation method term {term.id} - {term.name}: {str(e)}")
+    except Exception as e:
+        print(f"Warning: Failed to load MS ontology from OBO library: {str(e)}")
 
     # Load additional terms from EBI OLS API
     created_count += load_ebi_resource(
