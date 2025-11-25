@@ -71,13 +71,24 @@ sleep 5
 
 echo "Verifying data exists before backup..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py shell -c "
-from ccv.models import Species, Tissue, HumanDisease
-print(f'Species count: {Species.objects.count()}')
-print(f'Tissue count: {Tissue.objects.count()}')
-print(f'Human disease count: {HumanDisease.objects.count()}')
+from ccv.models import (
+    Species, Tissue, HumanDisease, SubcellularLocation,
+    MSUniqueVocabularies, Unimod, MetadataColumn, Schema
+)
 from django.contrib.auth import get_user_model
 User = get_user_model()
+
+print('=== Ontology Data Counts ===')
+print(f'Species: {Species.objects.count()}')
+print(f'Tissue: {Tissue.objects.count()}')
+print(f'Human Disease: {HumanDisease.objects.count()}')
+print(f'Subcellular Location: {SubcellularLocation.objects.count()}')
+print(f'MS Terms: {MSUniqueVocabularies.objects.count()}')
+print(f'MS Modifications (Unimod): {Unimod.objects.count()}')
+print(f'Metadata Column Templates: {MetadataColumn.objects.count()}')
+print(f'Schemas: {Schema.objects.count()}')
 print(f'Demo user exists: {User.objects.filter(username=\"demo\").exists()}')
+print('============================')
 "
 
 echo "Creating database backup using Django dbbackup..."
