@@ -27,6 +27,9 @@ cleanup() {
 
 trap cleanup EXIT
 
+echo "Building web-temp image with latest code..."
+$DOCKER_COMPOSE -f docker-compose.db-dump.yml build --no-cache web-temp
+
 echo "Starting temporary environment with docker-compose..."
 $DOCKER_COMPOSE -f docker-compose.db-dump.yml up -d postgres-temp redis-temp
 
