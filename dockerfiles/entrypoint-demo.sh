@@ -20,7 +20,7 @@ if [ -f "$DUMP_FILE" ]; then
     cp "$DUMP_FILE" /app/backups/demo-prepopulated.psql.bin
 
     echo "Restoring database from backup using Django dbrestore..."
-    echo "yes" | python manage.py dbrestore --input-filename=demo-prepopulated.psql.bin
+    echo "yes" | python manage.py dbrestore --input-filename=demo-prepopulated.psql.bin --pg-options="--no-owner --no-acl"
 
     echo "Database restored!"
     echo "Setting up demo mode..."
