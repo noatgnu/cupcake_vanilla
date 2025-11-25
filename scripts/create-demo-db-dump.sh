@@ -66,8 +66,7 @@ $DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python manage.py 
 
 echo "Reference data loaded successfully!"
 
-echo "Closing database connections and waiting for PostgreSQL to flush..."
-$DOCKER_COMPOSE -f docker-compose.db-dump.yml exec -T web-temp python -c "from django.db import connections; [conn.close() for conn in connections.all()]"
+echo "Waiting for PostgreSQL to flush data to disk..."
 sleep 5
 
 echo "Verifying data exists before backup..."
