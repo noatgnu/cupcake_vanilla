@@ -3,6 +3,7 @@ Management command to load mass spectrometry controlled vocabulary data.
 """
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 import requests
 
@@ -28,45 +29,45 @@ def load_ms_ontology_data():
         sub_1000031 = ms["MS:1000031"].subclasses().to_set()
         for term in sub_1000031:
             if term.is_leaf():
-                try:
-                    MSUniqueVocabularies.objects.create(
-                        accession=term.id,
-                        name=term.name,
-                        definition=term.definition,
-                        term_type="instrument",
-                    )
+                _, created = MSUniqueVocabularies.objects.get_or_create(
+                    accession=term.id,
+                    defaults={
+                        "name": term.name,
+                        "definition": term.definition,
+                        "term_type": "instrument",
+                    },
+                )
+                if created:
                     created_count += 1
-                except Exception as e:
-                    print(f"Warning: Failed to create instrument term {term.id} - {term.name}: {str(e)}")
 
         # Get cleavage agent terms (MS:1001045)
         sub_1001045 = ms["MS:1001045"].subclasses().to_set()
         for term in sub_1001045:
             if term.is_leaf():
-                try:
-                    MSUniqueVocabularies.objects.create(
-                        accession=term.id,
-                        name=term.name,
-                        definition=term.definition,
-                        term_type="cleavage agent",
-                    )
+                _, created = MSUniqueVocabularies.objects.get_or_create(
+                    accession=term.id,
+                    defaults={
+                        "name": term.name,
+                        "definition": term.definition,
+                        "term_type": "cleavage agent",
+                    },
+                )
+                if created:
                     created_count += 1
-                except Exception as e:
-                    print(f"Warning: Failed to create cleavage agent term {term.id} - {term.name}: {str(e)}")
 
         # Get dissociation method terms (MS:1000133)
         sub_1000133 = ms["MS:1000133"].subclasses().to_set()
         for term in sub_1000133:
-            try:
-                MSUniqueVocabularies.objects.create(
-                    accession=term.id,
-                    name=term.name,
-                    definition=term.definition,
-                    term_type="dissociation method",
-                )
+            _, created = MSUniqueVocabularies.objects.get_or_create(
+                accession=term.id,
+                defaults={
+                    "name": term.name,
+                    "definition": term.definition,
+                    "term_type": "dissociation method",
+                },
+            )
+            if created:
                 created_count += 1
-            except Exception as e:
-                print(f"Warning: Failed to create dissociation method term {term.id} - {term.name}: {str(e)}")
     except Exception as e:
         print(f"Warning: Failed to load MS ontology from OBO library: {str(e)}")
 
@@ -148,43 +149,42 @@ def load_ebi_resource(base_url: str, size: int = 20, term_type: str = "sample at
         response.raise_for_status()
         data = response.json()
 
-        if "_embedded" in data and "terms" in data["_embedded"]:
-            for term in data["_embedded"]["terms"]:
-                # Check if term has required fields
-                if "obo_id" in term and "label" in term:
-                    try:
-                        MSUniqueVocabularies.objects.create(
+        with transaction.atomic():
+            if "_embedded" in data and "terms" in data["_embedded"]:
+                for term in data["_embedded"]["terms"]:
+                    # Check if term has required fields
+                    if "obo_id" in term and "label" in term:
+                        _, created = MSUniqueVocabularies.objects.get_or_create(
                             accession=term["obo_id"],
-                            name=term["label"],
-                            definition=term.get("description", ""),
-                            term_type=term_type,
+                            defaults={
+                                "name": term["label"],
+                                "definition": term.get("description", ""),
+                                "term_type": term_type,
+                            },
                         )
-                        created_count += 1
-                    except Exception as e:
-                        print(f"Warning: Failed to create term {term['obo_id']} - {term['label']}: {str(e)}")
+                        if created:
+                            created_count += 1
 
-            # Process additional pages if they exist
-            if "page" in data and data["page"].get("totalPages", 0) > 1:
-                for i in range(1, data["page"]["totalPages"]):
-                    response = requests.get(f"{base_url}?page={i}&size={size}", timeout=30)
-                    response.raise_for_status()
-                    data2 = response.json()
+                # Process additional pages if they exist
+                if "page" in data and data["page"].get("totalPages", 0) > 1:
+                    for i in range(1, data["page"]["totalPages"]):
+                        response = requests.get(f"{base_url}?page={i}&size={size}", timeout=30)
+                        response.raise_for_status()
+                        data2 = response.json()
 
-                    if "_embedded" in data2 and "terms" in data2["_embedded"]:
-                        for term in data2["_embedded"]["terms"]:
-                            if "obo_id" in term and "label" in term:
-                                try:
-                                    MSUniqueVocabularies.objects.create(
+                        if "_embedded" in data2 and "terms" in data2["_embedded"]:
+                            for term in data2["_embedded"]["terms"]:
+                                if "obo_id" in term and "label" in term:
+                                    _, created = MSUniqueVocabularies.objects.get_or_create(
                                         accession=term["obo_id"],
-                                        name=term["label"],
-                                        definition=term.get("description", ""),
-                                        term_type=term_type,
+                                        defaults={
+                                            "name": term["label"],
+                                            "definition": term.get("description", ""),
+                                            "term_type": term_type,
+                                        },
                                     )
-                                    created_count += 1
-                                except Exception as e:
-                                    print(
-                                        f"Warning: Failed to create term {term['obo_id']} - {term['label']}: {str(e)}"
-                                    )
+                                    if created:
+                                        created_count += 1
     except Exception as e:
         print(f"Warning: Failed to load from {base_url}: {str(e)}")
 

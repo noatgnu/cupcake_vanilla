@@ -654,6 +654,7 @@ class StoredReagentSerializer(serializers.ModelSerializer):
             "storage_object",
             "storage_object_name",
             "quantity",
+            "molecular_weight",
             "current_quantity",
             "notes",
             "user",

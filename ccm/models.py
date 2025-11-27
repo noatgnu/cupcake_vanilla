@@ -438,6 +438,9 @@ class StoredReagent(models.Model):
         StorageObject, on_delete=models.CASCADE, related_name="stored_reagents", blank=True, null=True
     )
     quantity = models.FloatField(default=0.0)
+    molecular_weight = models.DecimalField(
+        max_digits=10, decimal_places=4, blank=True, null=True, help_text="Molecular weight in g/mol"
+    )
     notes = models.TextField(blank=True, null=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stored_reagents", blank=True, null=True
