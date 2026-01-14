@@ -820,7 +820,12 @@ class StoredReagentViewSet(BaseViewSet):
 
     queryset = StoredReagent.objects.all()
     serializer_class = StoredReagentSerializer
-    filterset_fields = ["reagent", "quantity", "molecular_weight", "expiration_date"]
+    filterset_fields = {
+        "reagent": ["exact"],
+        "quantity": ["exact", "gte", "lte", "gt", "lt"],
+        "molecular_weight": ["exact", "gte", "lte", "gt", "lt", "isnull"],
+        "expiration_date": ["exact", "gte", "lte", "gt", "lt", "isnull"],
+    }
     search_fields = ["reagent__name", "notes", "reagent__unit", "barcode"]
     ordering_fields = ["quantity", "molecular_weight", "expiration_date", "created_at"]
     ordering = ["reagent__name"]
