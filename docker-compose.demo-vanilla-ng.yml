@@ -47,6 +47,9 @@ services:
       - ENABLE_CUPCAKE_SALTED_CARAMEL=True
       - ENABLE_CUPCAKE_RED_VELVET=True
       - USE_WHISPER=False
+      - ORCID_CLIENT_ID=${ORCID_CLIENT_ID}
+      - ORCID_CLIENT_SECRET=${ORCID_CLIENT_SECRET}
+      - ORCID_BASE_URL=${ORCID_BASE_URL:-https://sandbox.orcid.org}
     entrypoint: ["sh", "/entrypoint-demo.sh"]
     command: ["gunicorn","--workers=4", "cupcake_vanilla.asgi:application", "--bind", "0.0.0.0:8000","--timeout", "300", "-k", "uvicorn.workers.UvicornWorker", "--log-level", "info"]
     depends_on:
