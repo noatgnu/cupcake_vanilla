@@ -128,7 +128,7 @@ services:
       POSTGRES_USER: cupcake_demo_ng
       POSTGRES_DB: cupcake_vanilla_demo_ng
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cupcake_demo_ng"]
+      test: ["CMD-SHELL", "pg_isready -U cupcake_vanilla_demo_ng"]
       interval: 10s
       timeout: 5s
       retries: 5
