@@ -21,8 +21,6 @@ RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
 
 RUN npm ci
 
-RUN npm run build:libs
-
 RUN npm run build
 
 RUN ls -la dist/ && ls -la dist/cupcake-vanilla-ng/
