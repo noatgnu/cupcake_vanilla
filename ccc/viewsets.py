@@ -837,7 +837,7 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def registration_status(self, request):
         """
         Check if user registration is currently enabled.
@@ -859,7 +859,7 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def auth_config(self, request):
         """
         Get authentication configuration for the frontend.
