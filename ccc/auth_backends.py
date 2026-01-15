@@ -7,6 +7,7 @@ import logging
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.backends import BaseBackend
+from django.urls import reverse
 
 import requests
 from requests_oauthlib import OAuth2Session
@@ -238,10 +239,16 @@ class ORCIDOAuth2Helper:
             raise ValueError("ORCID_CLIENT_ID not configured")
 
         # Build redirect URI
-        redirect_uri = request.build_absolute_uri("/auth/orcid/callback/")
+        redirect_path = reverse("orcid-callback")
+        redirect_uri = request.build_absolute_uri(redirect_path)
 
-        # Use sandbox or production
+        # Force HTTPS in production
         base_url = getattr(settings, "ORCID_BASE_URL", "https://sandbox.orcid.org")
+        is_production = "sandbox" not in base_url
+
+        if (not settings.DEBUG or is_production) and redirect_uri.startswith("http://"):
+            redirect_uri = redirect_uri.replace("http://", "https://", 1)
+
         authorization_base_url = f"{base_url}/oauth/authorize"
 
         # Create OAuth2 session
@@ -272,10 +279,16 @@ class ORCIDOAuth2Helper:
             raise ValueError("ORCID credentials not configured")
 
         # Build redirect URI
-        redirect_uri = request.build_absolute_uri("/auth/orcid/callback/")
+        redirect_path = reverse("orcid-callback")
+        redirect_uri = request.build_absolute_uri(redirect_path)
 
-        # Use sandbox or production
+        # Force HTTPS in production/Cloudflare environments if not detected correctly
         base_url = getattr(settings, "ORCID_BASE_URL", "https://sandbox.orcid.org")
+        is_production = "sandbox" not in base_url
+
+        if (not settings.DEBUG or is_production) and redirect_uri.startswith("http://"):
+            redirect_uri = redirect_uri.replace("http://", "https://", 1)
+
         token_url = f"{base_url}/oauth/token"
 
         try:
