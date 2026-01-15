@@ -31,19 +31,44 @@ class ORCIDOAuth2Backend(BaseBackend):
         Args:
             request: The HTTP request object
             **credentials: Should contain 'orcid_token' and 'orcid_id'
+                          Optional: 'orcid_name', 'verify_token' (default True)
 
         Returns:
             User object if authentication successful, None otherwise
         """
         orcid_token = credentials.get("orcid_token")
         orcid_id = credentials.get("orcid_id")
+        orcid_name = credentials.get("orcid_name", "")
+        verify_token = credentials.get("verify_token", True)
 
         if not orcid_token or not orcid_id:
             return None
 
         try:
-            # Verify the token with ORCID API
-            user_data = self._get_orcid_user_data(orcid_token, orcid_id)
+            user_data = None
+
+            # Verify the token with ORCID API if requested
+            if verify_token:
+                user_data = self._get_orcid_user_data(orcid_token, orcid_id)
+
+            # If verification skipped or failed but we have credentials (fallback only if verification wasn't required)
+            if not user_data and not verify_token:
+                # Construct user data from credentials
+                first_name = ""
+                last_name = ""
+                if orcid_name:
+                    parts = orcid_name.split(" ", 1)
+                    first_name = parts[0]
+                    last_name = parts[1] if len(parts) > 1 else ""
+
+                user_data = {
+                    "orcid_id": orcid_id,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "email": f'{orcid_id.replace("-", "")}@orcid.org',
+                    "full_name": orcid_name or f"ORCID User {orcid_id}",
+                }
+
             if not user_data:
                 return None
 

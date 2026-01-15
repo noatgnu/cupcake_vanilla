@@ -79,11 +79,15 @@ def orcid_callback(request):
 
         orcid_id = token_data.get("orcid")
         access_token = token_data.get("access_token")
+        orcid_name = token_data.get("name", "")
 
         if not orcid_id or not access_token:
             return Response({"error": "Invalid token response from ORCID"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = authenticate(request, orcid_token=access_token, orcid_id=orcid_id)
+        # We trust the token since we just exchanged it with client_secret
+        user = authenticate(
+            request, orcid_token=access_token, orcid_id=orcid_id, orcid_name=orcid_name, verify_token=False
+        )
 
         if not user:
             return Response({"error": "Authentication failed"}, status=status.HTTP_401_UNAUTHORIZED)
