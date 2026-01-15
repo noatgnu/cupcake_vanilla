@@ -62,8 +62,8 @@ def orcid_callback(request):
     error = request.GET.get("error")
     remember_me = request.GET.get("remember_me", "false").lower() == "true"
 
-    # Base frontend URL (relative path, assuming same domain)
-    frontend_url = "/login"
+    # Base frontend URL (using hash routing)
+    frontend_url = "/#/login"
 
     if error:
         logger.warning(f"ORCID authentication error: {error}")
