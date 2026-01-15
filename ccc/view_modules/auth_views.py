@@ -6,6 +6,8 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.http import HttpResponseRedirect
+from django.utils.http import urlencode
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -53,44 +55,57 @@ def orcid_callback(request):
     Handle ORCID OAuth2 callback.
 
     Exchange authorization code for access token and authenticate user.
-    Supports remember_me query parameter for extended token lifetime.
+    Redirects back to frontend with tokens in query parameters.
     """
     code = request.GET.get("code")
     state = request.GET.get("state")
     error = request.GET.get("error")
     remember_me = request.GET.get("remember_me", "false").lower() == "true"
 
+    # Base frontend URL (relative path, assuming same domain)
+    frontend_url = "/login"
+
     if error:
         logger.warning(f"ORCID authentication error: {error}")
-        return Response({"error": f"ORCID authentication failed: {error}"}, status=status.HTTP_400_BAD_REQUEST)
+        params = urlencode({"error": f"ORCID authentication failed: {error}"})
+        return HttpResponseRedirect(f"{frontend_url}?{params}")
 
     if not code or not state:
-        return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
+        params = urlencode({"error": "Missing required parameters"})
+        return HttpResponseRedirect(f"{frontend_url}?{params}")
 
     stored_state = request.session.get("orcid_state")
     if not stored_state or stored_state != state:
         logger.warning("ORCID state mismatch - possible CSRF attack")
-        return Response({"error": "Invalid state parameter"}, status=status.HTTP_400_BAD_REQUEST)
+        params = urlencode({"error": "Invalid state parameter"})
+        return HttpResponseRedirect(f"{frontend_url}?{params}")
 
     try:
         token_data = ORCIDOAuth2Helper.exchange_code_for_token(request, code, state)
         if not token_data:
-            return Response({"error": "Failed to exchange code for token"}, status=status.HTTP_400_BAD_REQUEST)
+            params = urlencode({"error": "Failed to exchange code for token"})
+            return HttpResponseRedirect(f"{frontend_url}?{params}")
 
         orcid_id = token_data.get("orcid")
         access_token = token_data.get("access_token")
         orcid_name = token_data.get("name", "")
 
         if not orcid_id or not access_token:
-            return Response({"error": "Invalid token response from ORCID"}, status=status.HTTP_400_BAD_REQUEST)
+            params = urlencode({"error": "Invalid token response from ORCID"})
+            return HttpResponseRedirect(f"{frontend_url}?{params}")
 
         # We trust the token since we just exchanged it with client_secret
         user = authenticate(
-            request, orcid_token=access_token, orcid_id=orcid_id, orcid_name=orcid_name, verify_token=False
+            request,
+            orcid_token=access_token,
+            orcid_id=orcid_id,
+            orcid_name=orcid_name,
+            verify_token=False,
         )
 
         if not user:
-            return Response({"error": "Authentication failed"}, status=status.HTTP_401_UNAUTHORIZED)
+            params = urlencode({"error": "Authentication failed"})
+            return HttpResponseRedirect(f"{frontend_url}?{params}")
 
         refresh = RefreshToken.for_user(user)
         access_jwt = refresh.access_token
@@ -102,29 +117,26 @@ def orcid_callback(request):
         if "orcid_state" in request.session:
             del request.session["orcid_state"]
 
-        return Response(
-            {
-                "access_token": str(access_jwt),
-                "refresh_token": str(refresh),
-                "user": {
-                    "id": user.id,
-                    "username": user.username,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "orcid_id": orcid_id,
-                },
-            }
-        )
+        # Redirect to frontend with tokens
+        response_data = {
+            "access_token": str(access_jwt),
+            "refresh_token": str(refresh),
+            "username": user.username,
+            "orcid_id": orcid_id,
+            "valid": "true",
+        }
+
+        params = urlencode(response_data)
+        return HttpResponseRedirect(f"{frontend_url}?{params}")
 
     except ValueError as e:
         logger.error(f"ORCID configuration error: {e}")
-        return Response(
-            {"error": "ORCID authentication not properly configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        params = urlencode({"error": "ORCID authentication not properly configured"})
+        return HttpResponseRedirect(f"{frontend_url}?{params}")
     except Exception as e:
         logger.error(f"Error in ORCID callback: {e}")
-        return Response({"error": "Authentication processing failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        params = urlencode({"error": "Authentication processing failed"})
+        return HttpResponseRedirect(f"{frontend_url}?{params}")
 
 
 @api_view(["POST"])
