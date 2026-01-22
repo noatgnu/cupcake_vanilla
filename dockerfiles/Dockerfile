@@ -14,7 +14,8 @@ ARG TARGETARCH
 ENV SUPERCRONIC_VERSION=v0.2.33
 
 # Set architecture-specific variables
-RUN case "${TARGETARCH}" in \
+RUN if [ -z "${TARGETARCH}" ]; then export TARGETARCH="amd64"; fi && \
+    case "${TARGETARCH}" in \
     "amd64") \
         export SUPERCRONIC_ARCH="linux-amd64" && \
         export SUPERCRONIC_SHA1SUM="71b0d58cc53f6bd72cf2f293e09e294b79c666d8" ;; \
