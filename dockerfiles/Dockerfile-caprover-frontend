@@ -1,0 +1,77 @@
+# Multi-stage Dockerfile for CapRover deployment
+# Stage 1: Build Angular frontend
+# Stage 2: Setup nginx with frontend and proxy to Django backend
+
+# ===== STAGE 1: Frontend Builder =====
+FROM node:20-alpine AS frontend-builder
+
+ARG TUNNEL_DOMAIN=""
+ARG API_URL=""
+ARG WS_URL=""
+
+RUN apk add --no-cache git curl bash
+
+WORKDIR /app
+
+# Clone the Angular frontend repository
+RUN git clone https://github.com/noatgnu/cupcake-vanilla-ng.git .
+
+# Configure environment based on TUNNEL_DOMAIN or API_URL
+RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
+      sed -i "s|https://localhost|https://${TUNNEL_DOMAIN}|g" src/environments/environment.ts && \
+      sed -i "s|wss://localhost|wss://${TUNNEL_DOMAIN}|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
+    elif [ -n "$API_URL" ]; then \
+      sed -i "s|https://localhost|${API_URL}|g" src/environments/environment.ts && \
+      sed -i "s|wss://localhost|${WS_URL:-ws://localhost:8000}|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
+    else \
+      sed -i "s|https://localhost|http://localhost:8000|g" src/environments/environment.ts && \
+      sed -i "s|wss://localhost|ws://localhost:8000|g" src/environments/environment.ts; \
+    fi
+
+RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
+
+# Install dependencies
+RUN npm ci
+
+# Fix permissions for build scripts
+RUN chmod +x build-all.sh
+
+# Build libraries and application
+RUN npm run build:libs
+RUN npm run build
+
+# Verify build output
+RUN ls -la dist/ && ls -la dist/cupcake-vanilla-ng/
+
+# ===== STAGE 2: Nginx Server =====
+FROM nginx:alpine
+
+# Install gettext for envsubst
+RUN apk add --no-cache gettext
+
+# Copy built frontend from builder stage
+COPY --from=frontend-builder /app/dist/cupcake-vanilla-ng/browser /usr/share/nginx/html
+
+# Create media directory for internal X-Accel-Redirect
+RUN mkdir -p /media && chown -R nginx:nginx /media
+
+# Remove default nginx config
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copy nginx configuration template
+COPY nginx-caprover.conf /etc/nginx/templates/default.conf.template
+
+# Create entrypoint script to substitute environment variables
+RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
+    echo 'set -e' >> /docker-entrypoint.sh && \
+    echo 'echo "Starting nginx with BACKEND_SERVICE_URL=${BACKEND_SERVICE_URL}"' >> /docker-entrypoint.sh && \
+    echo 'envsubst "\$BACKEND_SERVICE_URL" < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'cat /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'exec nginx -g "daemon off;"' >> /docker-entrypoint.sh && \
+    chmod +x /docker-entrypoint.sh
+
+EXPOSE 80
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
