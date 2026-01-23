@@ -6,8 +6,6 @@
 FROM node:20-alpine AS frontend-builder
 
 ARG TUNNEL_DOMAIN=""
-ARG API_URL=""
-ARG WS_URL=""
 
 RUN apk add --no-cache git curl bash
 
@@ -16,18 +14,17 @@ WORKDIR /app
 # Clone the Angular frontend repository
 RUN git clone https://github.com/noatgnu/cupcake-vanilla-ng.git .
 
-# Configure environment based on TUNNEL_DOMAIN or API_URL
+# Configure environment for production with nginx proxy
+# Since nginx proxies /api/*, the frontend should use the same domain (no separate API URL needed)
 RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
-      sed -i "s|https://localhost|https://${TUNNEL_DOMAIN}|g" src/environments/environment.ts && \
-      sed -i "s|wss://localhost|wss://${TUNNEL_DOMAIN}|g" src/environments/environment.ts && \
-      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
-    elif [ -n "$API_URL" ]; then \
-      sed -i "s|https://localhost|${API_URL}|g" src/environments/environment.ts && \
-      sed -i "s|wss://localhost|${WS_URL:-ws://localhost:8000}|g" src/environments/environment.ts && \
+      # Production mode with specific domain (for external deployments)
+      sed -i "s|apiUrl: 'https://localhost/api/v1'|apiUrl: 'https://${TUNNEL_DOMAIN}/api/v1'|g" src/environments/environment.ts && \
       sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
     else \
-      sed -i "s|https://localhost|http://localhost:8000|g" src/environments/environment.ts && \
-      sed -i "s|wss://localhost|ws://localhost:8000|g" src/environments/environment.ts; \
+      # Production mode with same-origin URLs (default for CapRover)
+      # This works because nginx on the same domain proxies /api/* to backend
+      sed -i "s|apiUrl: 'https://localhost/api/v1'|apiUrl: window.location.origin + '/api/v1'|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
     fi
 
 RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
@@ -55,6 +52,9 @@ RUN apk add --no-cache gettext
 COPY --from=frontend-builder /app/dist/cupcake-vanilla-ng/browser /usr/share/nginx/html
 
 # Create media directory for internal X-Accel-Redirect
+# IMPORTANT: This directory MUST be mounted as a persistent volume in CapRover
+# and MUST be the SAME volume used by the Django backend container
+# In CapRover UI: App Configs → Persistent Directories → Add: /media
 RUN mkdir -p /media && chown -R nginx:nginx /media
 
 # Remove default nginx config
@@ -66,9 +66,28 @@ COPY nginx-caprover.conf /etc/nginx/templates/default.conf.template
 # Create entrypoint script to substitute environment variables
 RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
     echo 'set -e' >> /docker-entrypoint.sh && \
-    echo 'echo "Starting nginx with BACKEND_SERVICE_URL=${BACKEND_SERVICE_URL}"' >> /docker-entrypoint.sh && \
-    echo 'envsubst "\$BACKEND_SERVICE_URL" < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
-    echo 'cat /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo '' >> /docker-entrypoint.sh && \
+    echo '# Set default values if not provided' >> /docker-entrypoint.sh && \
+    echo 'export BACKEND_SERVICE_URL="${BACKEND_SERVICE_URL:-backend:8000}"' >> /docker-entrypoint.sh && \
+    echo 'export CLIENT_MAX_BODY_SIZE="${CLIENT_MAX_BODY_SIZE:-2G}"' >> /docker-entrypoint.sh && \
+    echo '' >> /docker-entrypoint.sh && \
+    echo 'echo "=== Nginx Configuration ==="' >> /docker-entrypoint.sh && \
+    echo 'echo "Backend service: ${BACKEND_SERVICE_URL}"' >> /docker-entrypoint.sh && \
+    echo 'echo "Max upload size: ${CLIENT_MAX_BODY_SIZE}"' >> /docker-entrypoint.sh && \
+    echo 'echo "=========================="' >> /docker-entrypoint.sh && \
+    echo '' >> /docker-entrypoint.sh && \
+    echo '# Substitute environment variables' >> /docker-entrypoint.sh && \
+    echo 'envsubst "\$BACKEND_SERVICE_URL \$CLIENT_MAX_BODY_SIZE" < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo '' >> /docker-entrypoint.sh && \
+    echo '# Test nginx configuration' >> /docker-entrypoint.sh && \
+    echo 'nginx -t || (echo "Nginx configuration test failed!" && exit 1)' >> /docker-entrypoint.sh && \
+    echo '' >> /docker-entrypoint.sh && \
+    echo '# Show first 50 lines of config for debugging' >> /docker-entrypoint.sh && \
+    echo 'echo "=== Nginx Config Preview ==="' >> /docker-entrypoint.sh && \
+    echo 'head -n 50 /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'echo "==========================="' >> /docker-entrypoint.sh && \
+    echo '' >> /docker-entrypoint.sh && \
+    echo '# Start nginx' >> /docker-entrypoint.sh && \
     echo 'exec nginx -g "daemon off;"' >> /docker-entrypoint.sh && \
     chmod +x /docker-entrypoint.sh
 
