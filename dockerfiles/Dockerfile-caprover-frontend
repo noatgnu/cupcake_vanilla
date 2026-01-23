@@ -1,6 +1,9 @@
 # Multi-stage Dockerfile for CapRover deployment
 # Stage 1: Build Angular frontend
 # Stage 2: Setup nginx with frontend and proxy to Django backend
+#
+# IMPORTANT: Build context is the repository root directory
+# All COPY commands use paths relative to the repo root, not this Dockerfile's location
 
 # ===== STAGE 1: Frontend Builder =====
 FROM node:20-alpine AS frontend-builder
@@ -61,7 +64,8 @@ RUN mkdir -p /media && chown -R nginx:nginx /media
 RUN rm /etc/nginx/conf.d/default.conf
 
 # Copy nginx configuration template
-COPY nginx-caprover.conf /etc/nginx/templates/default.conf.template
+# Build context is the repo root, so specify full path from root
+COPY dockerfiles/nginx-caprover.conf /etc/nginx/templates/default.conf.template
 
 # Create entrypoint script to substitute environment variables
 RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
