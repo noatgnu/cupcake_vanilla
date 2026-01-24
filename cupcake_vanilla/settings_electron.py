@@ -12,7 +12,16 @@ import os
 import tempfile
 from pathlib import Path
 
-from .settings import *  # Import base settings  # noqa: F403, F401
+from .settings import *  # noqa: F403, F401
+from .settings import (
+    REDIS_DB_RQ,
+    REDIS_HOST,
+    REDIS_PASSWORD,
+    REDIS_PORT,
+    REDIS_URL_BASE,
+    REDIS_URL_CACHE,
+    REDIS_URL_CHANNELS,
+)
 
 # Build paths
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,11 +65,11 @@ DATABASES = {
 
 DATABASE_BACKEND = "sqlite3"
 
-# Cache configuration - Use Redis for caching
+# Cache configuration - Use Redis for caching (inherits REDIS_URL_CACHE from settings.py)
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1"),
+        "LOCATION": REDIS_URL_CACHE,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "CONNECTION_POOL_KWARGS": {
@@ -75,37 +84,33 @@ CACHES = {
 
 from datetime import timedelta
 
-# RQ (Redis Queue) configuration for async tasks in Electron
-# Use portable Redis binary included with Electron
-
-# Redis configuration for Electron - use standard Redis environment variables
-
+# RQ (Redis Queue) configuration for async tasks in Electron (inherits Redis vars from settings.py)
 RQ_QUEUES = {
     "default": {
-        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
-        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
-        "DB": int(os.environ.get("REDIS_DB_RQ", "3")),  # Use different DB from cache and channels
-        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
-        "DEFAULT_TIMEOUT": 3600,  # 1 hour timeout for tasks
+        "HOST": REDIS_HOST,
+        "PORT": int(REDIS_PORT),
+        "DB": REDIS_DB_RQ,
+        "PASSWORD": REDIS_PASSWORD or None,
+        "DEFAULT_TIMEOUT": 3600,
         "CONNECTION_KWARGS": {
             "health_check_interval": 30,
         },
     },
     "high": {
-        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
-        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
-        "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
-        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
+        "HOST": REDIS_HOST,
+        "PORT": int(REDIS_PORT),
+        "DB": REDIS_DB_RQ,
+        "PASSWORD": REDIS_PASSWORD or None,
         "DEFAULT_TIMEOUT": 500,
         "CONNECTION_KWARGS": {
             "health_check_interval": 30,
         },
     },
     "low": {
-        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
-        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
-        "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
-        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
+        "HOST": REDIS_HOST,
+        "PORT": int(REDIS_PORT),
+        "DB": REDIS_DB_RQ,
+        "PASSWORD": REDIS_PASSWORD or None,
         "DEFAULT_TIMEOUT": 500,
         "CONNECTION_KWARGS": {
             "health_check_interval": 30,
@@ -178,7 +183,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/2")],
+            "hosts": [REDIS_URL_CHANNELS],
             "capacity": 1000,
             "expiry": 60,
         },
@@ -263,10 +268,10 @@ ELECTRON_SETTINGS = {
     "REFRESH_TOKEN_DAYS": ELECTRON_REFRESH_TOKEN_DAYS,
     "WEBSOCKET_FILE_ORIGIN_ALLOWED": True,
     "ASGI_APPLICATION": "cupcake_vanilla.asgi_electron.application",
-    "REDIS_HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
-    "REDIS_PORT": int(os.environ.get("REDIS_PORT", "6379")),
-    "REDIS_PASSWORD": os.environ.get("REDIS_PASSWORD", None),
-    "REDIS_URL": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379"),
+    "REDIS_HOST": REDIS_HOST,
+    "REDIS_PORT": int(REDIS_PORT),
+    "REDIS_PASSWORD": REDIS_PASSWORD or None,
+    "REDIS_URL": REDIS_URL_BASE,
 }
 
 # Environment detection flag
@@ -300,24 +305,24 @@ def check_database_status():
 
 
 def get_redis_info():
-    """Get Redis connection information for debugging"""
+    """Get Redis connection information for debugging."""
     return {
-        "host": os.environ.get("REDIS_HOST", "127.0.0.1"),
-        "port": int(os.environ.get("REDIS_PORT", "6379")),
-        "password_set": bool(os.environ.get("REDIS_PASSWORD")),
-        "redis_url": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379"),
+        "host": REDIS_HOST,
+        "port": int(REDIS_PORT),
+        "password_set": bool(REDIS_PASSWORD),
+        "redis_url": REDIS_URL_BASE,
     }
 
 
 def check_redis_status():
-    """Check if Redis is accessible"""
+    """Check if Redis is accessible."""
     try:
         import redis
 
         r = redis.Redis(
-            host=os.environ.get("REDIS_HOST", "127.0.0.1"),
-            port=int(os.environ.get("REDIS_PORT", "6379")),
-            password=os.environ.get("REDIS_PASSWORD", None),
+            host=REDIS_HOST,
+            port=int(REDIS_PORT),
+            password=REDIS_PASSWORD or None,
             socket_connect_timeout=5,
         )
         r.ping()
@@ -363,10 +368,10 @@ if __name__ == "__main__":
     print(f"App Data Directory: {ELECTRON_USER_DATA}")
     print(f"Database Backend: {DATABASE_BACKEND}")
     print(f"Database File: {DATABASES['default']['NAME']}")
-    print(f"Redis Host: {os.environ.get('REDIS_HOST', '127.0.0.1')}")
-    print(f"Redis Port: {os.environ.get('REDIS_PORT', '6379')}")
-    print(f"Redis URL: {os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379')}")
-    print(f"Redis Password: {'SET' if os.environ.get('REDIS_PASSWORD') else 'NOT SET'}")
+    print(f"Redis Host: {REDIS_HOST}")
+    print(f"Redis Port: {REDIS_PORT}")
+    print(f"Redis URL: {REDIS_URL_BASE}")
+    print(f"Redis Password: {'SET' if REDIS_PASSWORD else 'NOT SET'}")
     print(f"Static Files: {STATIC_ROOT}")
     print(f"Media Files: {MEDIA_ROOT}")
     print(f"Log File: {os.path.join(ELECTRON_USER_DATA, 'cupcake_vanilla.log')}")
