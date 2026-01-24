@@ -127,26 +127,10 @@ DATABASES = {
 # Cache configuration
 # https://docs.djangoproject.com/en/5.2/topics/cache/
 
-# Redis configuration
-# Build Redis URL with password if provided
-REDIS_HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
-REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", None)
-
-# Build Redis URL with authentication if password is provided
-if REDIS_PASSWORD:
-    REDIS_URL_BASE = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"
-else:
-    REDIS_URL_BASE = f"redis://{REDIS_HOST}:{REDIS_PORT}"
-
-# Allow override via REDIS_URL environment variable (for custom configurations)
-REDIS_URL_CACHE = os.environ.get("REDIS_URL", f"{REDIS_URL_BASE}/1")
-REDIS_URL_CHANNELS = os.environ.get("REDIS_URL_CHANNELS", f"{REDIS_URL_BASE}/2")
-
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": REDIS_URL_CACHE,
+        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1"),
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "CONNECTION_POOL_KWARGS": {
@@ -172,40 +156,40 @@ CACHE_TTL = 60 * 15
 # RQ (Redis Queue) configuration
 RQ_QUEUES = {
     "default": {
-        "HOST": REDIS_HOST,
-        "PORT": int(REDIS_PORT),
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
         "DB": int(os.environ.get("REDIS_DB_RQ", "3")),  # Use different DB from cache and channels
-        "PASSWORD": REDIS_PASSWORD,
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
         "DEFAULT_TIMEOUT": 3600,  # 1 hour timeout for tasks
         "CONNECTION_KWARGS": {
             "health_check_interval": 30,
         },
     },
     "high": {
-        "HOST": REDIS_HOST,
-        "PORT": int(REDIS_PORT),
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
         "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
-        "PASSWORD": REDIS_PASSWORD,
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
         "DEFAULT_TIMEOUT": 1800,  # 30 minutes for high priority tasks
         "CONNECTION_KWARGS": {
             "health_check_interval": 30,
         },
     },
     "low": {
-        "HOST": REDIS_HOST,
-        "PORT": int(REDIS_PORT),
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
         "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
-        "PASSWORD": REDIS_PASSWORD,
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
         "DEFAULT_TIMEOUT": 7200,  # 2 hours for low priority tasks
         "CONNECTION_KWARGS": {
             "health_check_interval": 30,
         },
     },
     "transcribe": {
-        "HOST": REDIS_HOST,
-        "PORT": int(REDIS_PORT),
+        "HOST": os.environ.get("REDIS_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("REDIS_PORT", "6379")),
         "DB": int(os.environ.get("REDIS_DB_RQ", "3")),
-        "PASSWORD": REDIS_PASSWORD,
+        "PASSWORD": os.environ.get("REDIS_PASSWORD", None),
         "DEFAULT_TIMEOUT": 3600,  # 1 hour for transcription tasks
         "CONNECTION_KWARGS": {
             "health_check_interval": 30,
@@ -225,7 +209,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_URL_CHANNELS],
+            "hosts": [os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/2")],
             "capacity": 1500,  # Maximum number of messages to store
             "expiry": 60,  # Message expiry time in seconds
         },
