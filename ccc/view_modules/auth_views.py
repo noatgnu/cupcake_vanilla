@@ -31,8 +31,10 @@ def orcid_login_initiate(request):
     try:
         authorization_url, state = ORCIDOAuth2Helper.get_authorization_url(request)
 
-        # Store state in session for CSRF protection
+        remember_me = request.GET.get("remember_me", "false").lower() == "true"
+
         request.session["orcid_state"] = state
+        request.session["orcid_remember_me"] = remember_me
 
         return Response({"authorization_url": authorization_url, "state": state})
 
@@ -60,7 +62,7 @@ def orcid_callback(request):
     code = request.GET.get("code")
     state = request.GET.get("state")
     error = request.GET.get("error")
-    remember_me = request.GET.get("remember_me", "false").lower() == "true"
+    remember_me = request.session.get("orcid_remember_me", False)
 
     # Base frontend URL (using hash routing)
     frontend_url = "/#/login"
@@ -116,14 +118,16 @@ def orcid_callback(request):
 
         if "orcid_state" in request.session:
             del request.session["orcid_state"]
+        if "orcid_remember_me" in request.session:
+            del request.session["orcid_remember_me"]
 
-        # Redirect to frontend with tokens
         response_data = {
             "access_token": str(access_jwt),
             "refresh_token": str(refresh),
             "username": user.username,
             "orcid_id": orcid_id,
             "valid": "true",
+            "remember_me": "true" if remember_me else "false",
         }
 
         params = urlencode(response_data)
