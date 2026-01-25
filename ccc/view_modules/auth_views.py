@@ -3,9 +3,11 @@ Authentication views for ORCID OAuth2 integration.
 """
 
 import logging
+import secrets
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.core.cache import cache
 from django.http import HttpResponseRedirect
 from django.utils.http import urlencode
 
@@ -16,6 +18,9 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from ..auth_backends import ORCIDOAuth2Helper
+
+ORCID_CODE_CACHE_PREFIX = "orcid_auth_code_"
+ORCID_CODE_EXPIRY = 60
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +69,6 @@ def orcid_callback(request):
     error = request.GET.get("error")
     remember_me = request.session.get("orcid_remember_me", False)
 
-    # Base frontend URL (using hash routing)
     frontend_url = "/#/login"
 
     if error:
@@ -96,7 +100,6 @@ def orcid_callback(request):
             params = urlencode({"error": "Invalid token response from ORCID"})
             return HttpResponseRedirect(f"{frontend_url}?{params}")
 
-        # We trust the token since we just exchanged it with client_secret
         user = authenticate(
             request,
             orcid_token=access_token,
@@ -126,17 +129,29 @@ def orcid_callback(request):
         if "orcid_remember_me" in request.session:
             del request.session["orcid_remember_me"]
 
-        response_data = {
-            "access_token": str(access_jwt),
-            "refresh_token": str(refresh),
-            "username": user.username,
-            "orcid_id": orcid_id,
-            "valid": "true",
-            "remember_me": "true" if remember_me else "false",
-        }
+        auth_code = secrets.token_urlsafe(32)
+        cache_key = f"{ORCID_CODE_CACHE_PREFIX}{auth_code}"
+        cache.set(
+            cache_key,
+            {
+                "access_token": str(access_jwt),
+                "refresh_token": str(refresh),
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "is_staff": user.is_staff,
+                    "is_superuser": user.is_superuser,
+                    "orcid_id": orcid_id,
+                },
+            },
+            ORCID_CODE_EXPIRY,
+        )
 
-        params = urlencode(response_data)
-        return HttpResponseRedirect(f"{frontend_url}?{params}")
+        logger.info(f"ORCID login successful for user {user.username}, redirecting with auth code")
+        return HttpResponseRedirect(f"{frontend_url}?auth_code={auth_code}")
 
     except ValueError as e:
         logger.error(f"ORCID configuration error: {e}")
@@ -225,3 +240,36 @@ def auth_status(request):
         )
     else:
         return Response({"authenticated": False})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def exchange_auth_code(request):
+    """
+    Exchange a short-lived auth code for JWT tokens.
+
+    This endpoint is used after ORCID OAuth callback to securely
+    transfer tokens to the frontend without exposing them in URLs.
+
+    Expected payload: {"auth_code": "..."}
+    """
+    auth_code = request.data.get("auth_code")
+
+    if not auth_code:
+        return Response({"error": "auth_code is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    cache_key = f"{ORCID_CODE_CACHE_PREFIX}{auth_code}"
+    token_data = cache.get(cache_key)
+
+    if not token_data:
+        return Response({"error": "Invalid or expired auth code"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    cache.delete(cache_key)
+
+    return Response(
+        {
+            "access_token": token_data["access_token"],
+            "refresh_token": token_data["refresh_token"],
+            "user": token_data["user"],
+        }
+    )
