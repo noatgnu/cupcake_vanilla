@@ -15,7 +15,7 @@ RUN apk add --no-cache git curl bash
 WORKDIR /app
 
 # Cache bust argument - pass different value to force fresh clone
-ARG CACHEBUST=1
+ARG CACHEBUST=2
 
 # Clone the Angular frontend repository
 RUN git clone https://github.com/noatgnu/cupcake-vanilla-ng.git .
