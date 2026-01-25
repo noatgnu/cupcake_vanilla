@@ -116,6 +116,11 @@ def orcid_callback(request):
             refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
             access_jwt.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
 
+        access_jwt["username"] = user.username
+        access_jwt["email"] = user.email
+        access_jwt["is_staff"] = user.is_staff
+        access_jwt["is_superuser"] = user.is_superuser
+
         if "orcid_state" in request.session:
             del request.session["orcid_state"]
         if "orcid_remember_me" in request.session:
@@ -172,6 +177,11 @@ def orcid_token_exchange(request):
             refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
             access_jwt.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
 
+        access_jwt["username"] = user.username
+        access_jwt["email"] = user.email
+        access_jwt["is_staff"] = user.is_staff
+        access_jwt["is_superuser"] = user.is_superuser
+
         return Response(
             {
                 "access_token": str(access_jwt),
@@ -182,6 +192,8 @@ def orcid_token_exchange(request):
                     "email": user.email,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
+                    "is_staff": user.is_staff,
+                    "is_superuser": user.is_superuser,
                     "orcid_id": orcid_id,
                 },
             }
