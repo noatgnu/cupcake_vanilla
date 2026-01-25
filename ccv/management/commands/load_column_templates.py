@@ -30,10 +30,20 @@ class Command(BaseCommand):
             help="Clear existing system templates before loading new ones",
         )
         parser.add_argument(
+            "--update-references",
+            action="store_true",
+            help="Update existing MetadataColumn references to point to newly created templates (use with --clear)",
+        )
+        parser.add_argument(
             "--schema",
             type=str,
-            default="minimum",
-            help="Specific schema to load (defaults to 'minimum')",
+            default=None,
+            help="Specific schema to load (if not specified, loads all available schemas)",
+        )
+        parser.add_argument(
+            "--all",
+            action="store_true",
+            help="Load all available schemas (default behavior)",
         )
         parser.add_argument(
             "--schema-file",
@@ -52,31 +62,87 @@ class Command(BaseCommand):
         if not admin_user:
             return
 
-        schema_name = options.get("schema", "minimum")
+        schema_name = options.get("schema")
         schema_file = options.get("schema_file")
         schema_dir = options.get("schema_dir")
+        load_all = options.get("all", False)
+        update_references = options.get("update_references", False)
 
         self.stdout.write(f"Using admin user: {admin_user.username}")
-        self.stdout.write(f"Loading schema: {schema_name}")
 
-        # Clear existing templates for this schema if requested
-        if options["clear"]:
-            self.clear_schema_templates(schema_name)
+        # Determine which schemas to load
+        schemas_to_load = []
+        if schema_name:
+            # Load specific schema
+            schemas_to_load = [schema_name]
+            self.stdout.write(f"Loading specific schema: {schema_name}")
+        elif load_all or not schema_name:
+            # Load all available schemas (default behavior)
+            from ccv.utils import get_all_default_schema_names
 
-        # Get or create Schema model instance
-        schema_obj = self.get_or_create_schema_object(schema_name, admin_user)
-        if not schema_obj:
-            return
+            schemas_to_load = get_all_default_schema_names()
+            self.stdout.write(f"Loading all available schemas: {', '.join(schemas_to_load)}")
 
-        # Load the schema definition
-        schema = self.load_schema(schema_name, schema_file, schema_dir)
-        if not schema:
-            return
+        if update_references and not options["clear"]:
+            self.stdout.write(
+                self.style.WARNING(
+                    "\n⚠️  --update-references flag requires --clear to be set. Ignoring --update-references.\n"
+                )
+            )
+            update_references = False
 
-        # Process columns from schema
-        templates_created = self.process_schema_columns(schema, admin_user, schema_name, schema_obj)
+        total_templates_created = 0
+        total_references_updated = 0
 
-        self.stdout.write(self.style.SUCCESS(f"\nLoaded {templates_created} templates from schema '{schema_name}'"))
+        # Track old template mappings for reference updates
+        old_template_mapping = {}  # Maps (schema_name, column_name) -> old_template_id
+
+        # Process each schema
+        for schema_name in schemas_to_load:
+            self.stdout.write(f"\n{'='*60}")
+            self.stdout.write(f"Processing schema: {schema_name}")
+            self.stdout.write(f"{'='*60}")
+
+            # Clear existing templates for this schema if requested
+            if options["clear"]:
+                old_template_mapping.update(self.clear_schema_templates(schema_name, update_references))
+
+            # Get or create Schema model instance
+            schema_obj = self.get_or_create_schema_object(schema_name, admin_user)
+            if not schema_obj:
+                self.stdout.write(
+                    self.style.WARNING(f"Skipping schema '{schema_name}' - could not get/create Schema object")
+                )
+                continue
+
+            # Load the schema definition
+            schema = self.load_schema(schema_name, schema_file, schema_dir)
+            if not schema:
+                self.stdout.write(
+                    self.style.WARNING(f"Skipping schema '{schema_name}' - could not load schema definition")
+                )
+                continue
+
+            # Process columns from schema
+            new_templates = self.process_schema_columns(schema, admin_user, schema_name, schema_obj)
+            total_templates_created += len(new_templates)
+
+            # Update references if requested
+            if update_references and old_template_mapping:
+                updated_count = self.update_column_references(schema_name, old_template_mapping, new_templates)
+                total_references_updated += updated_count
+
+            self.stdout.write(self.style.SUCCESS(f"Loaded {len(new_templates)} templates from schema '{schema_name}'"))
+
+        self.stdout.write(f"\n{'='*60}")
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"TOTAL: Loaded {total_templates_created} templates from {len(schemas_to_load)} schema(s)"
+            )
+        )
+
+        if update_references:
+            self.stdout.write(self.style.SUCCESS(f"TOTAL: Updated {total_references_updated} column references"))
 
     def get_admin_user(self, options):
         """Get the admin user for creating templates."""
@@ -126,22 +192,76 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f"Error during schema sync: {str(e)}"))
                 return None
 
-    def clear_schema_templates(self, schema_name):
-        """Clear existing templates for a specific schema."""
-        # Clear by both source_schema name and Schema object
-        deleted_count = MetadataColumnTemplate.objects.filter(
+    def clear_schema_templates(self, schema_name, track_for_update=False):
+        """
+        Clear existing templates for a specific schema.
+
+        Args:
+            schema_name: Name of the schema
+            track_for_update: If True, returns mapping of old templates for reference updates
+
+        Returns:
+            dict: Mapping of (schema_name, column_name) -> template_id (if track_for_update)
+        """
+        from ccv.models import MetadataColumn
+
+        old_template_mapping = {}
+
+        # Find templates to delete
+        templates_to_delete = MetadataColumnTemplate.objects.filter(
             models.Q(source_schema=schema_name) | models.Q(schema__name=schema_name), is_system_template=True
-        ).count()
+        )
+
+        deleted_count = templates_to_delete.count()
 
         if deleted_count > 0:
-            MetadataColumnTemplate.objects.filter(
-                models.Q(source_schema=schema_name) | models.Q(schema__name=schema_name), is_system_template=True
-            ).delete()
-            self.stdout.write(
-                self.style.WARNING(f"Deleted {deleted_count} existing templates for schema '{schema_name}'")
-            )
+            # Track old template info if needed for updates
+            if track_for_update:
+                for template in templates_to_delete:
+                    key = (schema_name, template.column_name)
+                    old_template_mapping[key] = template.id
+
+            # Check if any templates are being used by existing MetadataColumns
+            templates_in_use = []
+            for template in templates_to_delete:
+                usage_count = MetadataColumn.objects.filter(template=template).count()
+                if usage_count > 0:
+                    templates_in_use.append({"template": template, "usage_count": usage_count})
+
+            if templates_in_use:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"\n⚠️  {len(templates_in_use)} template(s) are currently in use by existing metadata columns:"
+                    )
+                )
+                for item in templates_in_use[:5]:  # Show first 5
+                    self.stdout.write(f"   - '{item['template'].name}' used by {item['usage_count']} column(s)")
+                if len(templates_in_use) > 5:
+                    self.stdout.write(f"   ... and {len(templates_in_use) - 5} more")
+
+                if track_for_update:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            "\n📝 Note: References will be updated to point to newly created templates.\n"
+                        )
+                    )
+                else:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            "\n📝 Note: Existing MetadataColumn references will be preserved but set to NULL.\n"
+                            "   The columns themselves will NOT be deleted - only the template link will be removed.\n"
+                            "   New templates with matching names will be created and can be linked manually if needed.\n"
+                            "   Use --update-references to automatically update column references to new templates.\n"
+                        )
+                    )
+
+            # Delete the templates (existing columns will have template=NULL due to on_delete=SET_NULL)
+            templates_to_delete.delete()
+            self.stdout.write(self.style.WARNING(f"✓ Deleted {deleted_count} template(s) for schema '{schema_name}'"))
         else:
             self.stdout.write(f"No existing templates found for schema '{schema_name}'")
+
+        return old_template_mapping
 
     def load_schema(self, schema_name, schema_file, schema_dir):
         """Load schema from system or file."""
@@ -186,8 +306,13 @@ class Command(BaseCommand):
         return None
 
     def process_schema_columns(self, schema, admin_user, schema_name, schema_obj):
-        """Process columns from schema and create templates."""
-        templates_created = 0
+        """
+        Process columns from schema and create templates.
+
+        Returns:
+            dict: Mapping of column_name -> template object for newly created templates
+        """
+        new_templates = {}
 
         for column in schema.columns:
             column_type = ""
@@ -233,7 +358,7 @@ class Command(BaseCommand):
             self.configure_ontology_options(template, column)
 
             template.save()
-            templates_created += 1
+            new_templates[column_name] = template
 
             # Increment usage count on the schema
             if schema_obj:
@@ -242,7 +367,52 @@ class Command(BaseCommand):
 
             self.stdout.write(f"Created template: {display_name} ({column_type})")
 
-        return templates_created
+        return new_templates
+
+    def update_column_references(self, schema_name, old_template_mapping, new_templates):
+        """
+        Update existing MetadataColumn references to point to newly created templates.
+
+        Args:
+            schema_name: Name of the schema
+            old_template_mapping: Dict mapping (schema_name, column_name) -> old_template_id
+            new_templates: Dict mapping column_name -> new_template object
+
+        Returns:
+            int: Number of column references updated
+        """
+        from ccv.models import MetadataColumn
+
+        updated_count = 0
+
+        self.stdout.write(f"\nUpdating column references for schema '{schema_name}'...")
+
+        for column_name, new_template in new_templates.items():
+            key = (schema_name, column_name)
+            if key not in old_template_mapping:
+                continue
+
+            # Find columns that were linked to the old template (now NULL due to cascade)
+            # We need to find columns that:
+            # 1. Have template=NULL (was set by cascade delete)
+            # 2. Have the same column name
+            # This is a heuristic - we can only update columns where we're confident
+
+            # Since template is now NULL, we look for columns with matching names
+            # that belong to tables that might have used this schema
+            null_template_columns = MetadataColumn.objects.filter(template__isnull=True, name=column_name)
+
+            if null_template_columns.exists():
+                # Update these columns to point to the new template
+                update_count = null_template_columns.update(template=new_template)
+                if update_count > 0:
+                    updated_count += update_count
+                    self.stdout.write(f"  ✓ Updated {update_count} column(s) named '{column_name}' to new template")
+
+        if updated_count == 0:
+            self.stdout.write("  No column references needed updating.")
+
+        return updated_count
 
     def configure_ontology_options(self, template, column):
         """Configure ontology options based on column validators."""
