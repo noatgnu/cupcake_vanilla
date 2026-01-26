@@ -7,12 +7,13 @@ for handling SDRF files, Excel templates, and metadata operations.
 
 import io
 import itertools
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 import pandas as pd
-from sdrf_pipelines.sdrf.schemas import SchemaRegistry
-from sdrf_pipelines.sdrf.sdrf import SDRFDataFrame, read_sdrf
+from sdrf_pipelines.sdrf.schemas import SchemaRegistry, SchemaValidator
+from sdrf_pipelines.sdrf.sdrf import read_sdrf
 
 from .models import FavouriteMetadataOption, MetadataColumn, MetadataTable, SamplePool, Schema
 
@@ -274,31 +275,51 @@ def convert_sdrf_to_metadata(name: str, value: str) -> str:
     return value.strip()
 
 
-def validate_sdrf(data: List[List[str]]) -> List[str]:
+def validate_sdrf(
+    data: List[List[str]],
+    schema_name: str = "default",
+    use_ols_cache_only: bool = False,
+    skip_ontology: bool = False,
+) -> Dict[str, List[str]]:
     """
-    Validate SDRF data using the sdrf-pipelines library.
+    Validate SDRF data using the sdrf-pipelines SchemaValidator.
 
     Args:
-        data: 2D array of SDRF data
+        data: 2D array of SDRF data (first row should be headers)
+        schema_name: Name of the schema to validate against (default: "default")
+        use_ols_cache_only: If True, use only cached OLS data for ontology validation
+        skip_ontology: If True, skip ontology term validation entirely
 
     Returns:
-        List of validation errors
+        Dictionary with 'errors' and 'warnings' lists
     """
-    errors = []
+    result = {"errors": [], "warnings": []}
 
     try:
-        # Convert data to DataFrame format expected by sdrf-pipelines
         df_string = "\n".join(["\t".join(row) for row in data])
-        df = SDRFDataFrame(read_sdrf(io.StringIO(df_string)))
+        sdrf_df = read_sdrf(io.StringIO(df_string))
 
-        # Run validation
-        errors.extend(df.validate("minimum"))
-        errors.extend(df.validate_experimental_design())
+        registry = SchemaRegistry()
+        validator = SchemaValidator(registry)
+
+        validation_errors = validator.validate(
+            sdrf_df,
+            schema_name,
+            use_ols_cache_only=use_ols_cache_only,
+            skip_ontology=skip_ontology,
+        )
+
+        for error in validation_errors:
+            error_str = str(error)
+            if error.error_type == logging.WARNING:
+                result["warnings"].append(error_str)
+            else:
+                result["errors"].append(error_str)
 
     except Exception as e:
-        errors.append(f"SDRF validation error: {str(e)}")
+        result["errors"].append(f"SDRF validation error: {str(e)}")
 
-    return errors
+    return result
 
 
 def detect_pooled_samples(data: List[List[str]], headers: List[str]) -> Tuple[Optional[int], List[int], List[int]]:

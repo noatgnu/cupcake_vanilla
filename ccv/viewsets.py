@@ -1112,16 +1112,26 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
         """Validate SDRF data format."""
         metadata_ids = request.data.get("metadata_ids", [])
         sample_number = request.data.get("sample_number", 1)
+        schema_name = request.data.get("schema_name", "default")
+        skip_ontology = request.data.get("skip_ontology", False)
 
         metadata_columns = MetadataColumn.objects.filter(id__in=metadata_ids)
         result_data, _ = sort_metadata(list(metadata_columns), sample_number)
 
-        errors = validate_sdrf(result_data)
+        validation_result = validate_sdrf(
+            result_data,
+            schema_name=schema_name,
+            skip_ontology=skip_ontology,
+        )
+
+        errors = validation_result.get("errors", [])
+        warnings = validation_result.get("warnings", [])
 
         return Response(
             {
                 "valid": len(errors) == 0,
                 "errors": errors,
+                "warnings": warnings,
                 "sample_count": len(result_data) - 1 if result_data else 0,
             }
         )

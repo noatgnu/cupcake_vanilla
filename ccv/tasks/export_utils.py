@@ -15,9 +15,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from ccv.models import FavouriteMetadataOption, MetadataColumn, MetadataTable, SamplePool
-
-# Import helper functions from the main utils module
 from ccv.utils import sort_metadata, sort_pool_metadata
+from ccv.utils import validate_sdrf as validate_sdrf_data
 
 
 def _create_safe_filename(base_name: str, extension: str, max_length: int = 200) -> str:
@@ -141,16 +140,14 @@ def export_sdrf_data(
 
     sdrf_text = "\n".join(sdrf_content)
 
-    # Validate SDRF format if validation was requested
     validation_results = None
     if validate_sdrf:
         try:
-            validation_results = validate_sdrf(result_data)
+            validation_results = validate_sdrf_data(result_data)
         except Exception as e:
             validation_results = {
                 "errors": [f"SDRF validation failed: {str(e)}"],
                 "warnings": [],
-                "suggestions": [],
             }
 
     # Create filename based on metadata table name

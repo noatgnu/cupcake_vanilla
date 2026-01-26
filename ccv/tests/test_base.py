@@ -458,7 +458,6 @@ class SDRFImportTest(TestCase):
         """Test SDRF data validation using sdrf-pipelines."""
         from ccv.utils import validate_sdrf
 
-        # Create valid SDRF data
         valid_data = [
             [
                 "source name",
@@ -486,22 +485,24 @@ class SDRFImportTest(TestCase):
             ],
         ]
 
-        # Test validation
-        errors = validate_sdrf(valid_data)
+        result = validate_sdrf(valid_data)
 
-        # Should return a list (may have warnings but not critical errors for
-        # our basic test)
-        self.assertIsInstance(errors, list)
+        self.assertIsInstance(result, dict)
+        self.assertIn("errors", result)
+        self.assertIn("warnings", result)
+        self.assertIsInstance(result["errors"], list)
+        self.assertIsInstance(result["warnings"], list)
 
-        # Test with invalid data (missing required columns)
         invalid_data = [
             ["source name", "some_column"],
             ["Sample1", "value1"],
             ["Sample2", "value2"],
         ]
 
-        errors = validate_sdrf(invalid_data)
-        self.assertIsInstance(errors, list)
+        result = validate_sdrf(invalid_data)
+        self.assertIsInstance(result, dict)
+        self.assertIn("errors", result)
+        self.assertIn("warnings", result)
 
     def test_sample_count_calculation(self):
         """Test sample count calculation from SDRF data."""

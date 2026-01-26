@@ -1472,6 +1472,15 @@ class MetadataValidationSerializer(serializers.Serializer):
     async_processing = serializers.BooleanField(
         default=False, help_text="Whether to process the validation asynchronously via task queue"
     )
+    schema_names = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        default=["default"],
+        help_text="List of schema names to validate against (e.g., ['default', 'human', 'cell_lines'])",
+    )
+    skip_ontology = serializers.BooleanField(
+        default=False, help_text="Whether to skip ontology term validation for faster results"
+    )
 
     def validate_metadata_table_id(self, value):
         """Validate that the metadata table exists."""

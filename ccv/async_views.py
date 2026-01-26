@@ -611,6 +611,28 @@ class AsyncValidationViewSet(viewsets.GenericViewSet):
     serializer_class = MetadataValidationSerializer
     permission_classes = [IsAuthenticated]
 
+    @action(detail=False, methods=["get"])
+    def available_schemas(self, request):
+        """Get list of available validation schemas from sdrf-pipelines."""
+        from sdrf_pipelines.sdrf.schemas import SchemaRegistry
+
+        registry = SchemaRegistry()
+        schema_names = registry.get_schema_names()
+
+        schemas = []
+        for name in schema_names:
+            schema = registry.get_schema(name)
+            schemas.append(
+                {
+                    "name": name,
+                    "display_name": name.replace("_", " ").title(),
+                    "description": schema.description if schema else "",
+                    "column_count": len(schema.columns) if schema else 0,
+                }
+            )
+
+        return Response(schemas)
+
     @action(detail=False, methods=["post"])
     def metadata_table(self, request):
         """Queue metadata table validation task."""
@@ -638,10 +660,11 @@ class AsyncValidationViewSet(viewsets.GenericViewSet):
             # description=f"Validating metadata table: {metadata_table.name}",
         )
 
-        # Prepare validation options
         validation_options = {
             "validate_sdrf_format": data.get("validate_sdrf_format", True),
             "include_pools": data.get("include_pools", True),
+            "schema_names": data.get("schema_names", ["default"]),
+            "skip_ontology": data.get("skip_ontology", False),
         }
 
         # Queue validation task

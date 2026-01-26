@@ -733,11 +733,11 @@ class SDRFValidationIntegrationTest(TestCase, QuickTestDataMixin):
             ["Sample2", "homo sapiens", "run 2", "proteomic profiling by mass spectrometry"],
         ]
 
-        # Test validation (may require sdrf-pipelines package)
         try:
-            errors = validate_sdrf(minimal_sdrf)
-            self.assertIsInstance(errors, list)
-            # Minimal SDRF might have warnings but should not have critical errors
+            result = validate_sdrf(minimal_sdrf)
+            self.assertIsInstance(result, dict)
+            self.assertIn("errors", result)
+            self.assertIn("warnings", result)
         except ImportError:
             self.skipTest("sdrf-pipelines not available for validation")
 
@@ -773,25 +773,27 @@ class SDRFValidationIntegrationTest(TestCase, QuickTestDataMixin):
         ]
 
         try:
-            errors = validate_sdrf(complex_sdrf)
-            self.assertIsInstance(errors, list)
-            # Complex SDRF should validate successfully
+            result = validate_sdrf(complex_sdrf)
+            self.assertIsInstance(result, dict)
+            self.assertIn("errors", result)
+            self.assertIn("warnings", result)
         except ImportError:
             self.skipTest("sdrf-pipelines not available for validation")
 
     def test_validate_invalid_sdrf(self):
         """Test validation catches invalid SDRF."""
         invalid_sdrf = [
-            ["invalid_column", "another_invalid"],  # Missing required columns
+            ["invalid_column", "another_invalid"],
             ["Sample1", "value1"],
             ["Sample2", "value2"],
         ]
 
         try:
-            errors = validate_sdrf(invalid_sdrf)
-            self.assertIsInstance(errors, list)
-            # Should have validation errors for missing required columns
-            self.assertGreater(len(errors), 0)
+            result = validate_sdrf(invalid_sdrf)
+            self.assertIsInstance(result, dict)
+            self.assertIn("errors", result)
+            self.assertIn("warnings", result)
+            self.assertGreater(len(result["errors"]), 0)
         except ImportError:
             self.skipTest("sdrf-pipelines not available for validation")
 
@@ -831,10 +833,9 @@ class SDRFValidationIntegrationTest(TestCase, QuickTestDataMixin):
         ]
 
         try:
-            errors = validate_sdrf(scientific_sdrf)
-            self.assertIsInstance(errors, list)
-
-            # Test that scientific terms are accepted
-            # (Specific validation depends on sdrf-pipelines implementation)
+            result = validate_sdrf(scientific_sdrf)
+            self.assertIsInstance(result, dict)
+            self.assertIn("errors", result)
+            self.assertIn("warnings", result)
         except ImportError:
             self.skipTest("sdrf-pipelines not available for validation")
