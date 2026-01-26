@@ -201,6 +201,8 @@ class ORCIDOAuth2Backend(BaseBackend):
             first_name=user_data["first_name"],
             last_name=user_data["last_name"],
         )
+        user.is_active = True
+        user.save()
 
         logger.info(f"Created new user for ORCID ID: {orcid_id}")
         return user

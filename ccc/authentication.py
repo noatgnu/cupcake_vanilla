@@ -4,6 +4,7 @@ Custom JWT authentication views and utilities for CUPCAKE Core.
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -80,6 +81,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
 
+@csrf_exempt
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def login_view(request):
