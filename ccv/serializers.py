@@ -585,6 +585,7 @@ class MetadataColumnTemplateSerializer(serializers.ModelSerializer):
 
     owner_username = serializers.CharField(source="owner.username", read_only=True)
     lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
+    schema_name = serializers.CharField(source="schema.name", read_only=True, allow_null=True)
     can_edit = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
 
@@ -610,6 +611,9 @@ class MetadataColumnTemplateSerializer(serializers.ModelSerializer):
             "owner_username",
             "lab_group",
             "lab_group_name",
+            "schema",
+            "schema_name",
+            "source_schema",
             "is_system_template",
             "is_active",
             "usage_count",

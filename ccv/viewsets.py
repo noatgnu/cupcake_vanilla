@@ -4408,6 +4408,14 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == "true")
 
+        schema_id = self.request.query_params.get("schema_id")
+        if schema_id:
+            queryset = queryset.filter(schema_id=schema_id)
+
+        source_schema = self.request.query_params.get("source_schema")
+        if source_schema:
+            queryset = queryset.filter(source_schema__icontains=source_schema)
+
         return queryset.order_by("-usage_count", "name")
 
     def perform_create(self, serializer):
