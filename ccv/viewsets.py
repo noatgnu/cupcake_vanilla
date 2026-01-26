@@ -5435,7 +5435,7 @@ class SchemaViewSet(FilterMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ["name", "display_name", "description"]
-    filterset_fields = ["is_builtin", "is_active", "is_public", "tags"]
+    filterset_fields = ["is_builtin", "is_active", "is_public"]
 
     def get_queryset(self):
         """Return schemas available to the user."""
