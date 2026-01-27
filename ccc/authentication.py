@@ -2,13 +2,16 @@
 Custom JWT authentication views and utilities for CUPCAKE Core.
 """
 
+import json
+
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -82,8 +85,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 
 @csrf_exempt
-@api_view(["POST"])
-@permission_classes([AllowAny])
+@require_POST
 def login_view(request):
     """
     Alternative login endpoint that returns JWT tokens.
@@ -92,18 +94,20 @@ def login_view(request):
     {
         "username": "your_username",
         "password": "your_password",
-        "remember_me": false  # Optional: extend token lifetime
+        "remember_me": false
     }
     """
-    username = request.data.get("username")
-    password = request.data.get("password")
-    remember_me = request.data.get("remember_me", False)
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    username = data.get("username")
+    password = data.get("password")
+    remember_me = data.get("remember_me", False)
 
     if not username or not password:
-        return Response(
-            {"error": "Username and password are required"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return JsonResponse({"error": "Username and password are required"}, status=400)
 
     user = authenticate(username=username, password=password)
 
@@ -120,7 +124,7 @@ def login_view(request):
         access_token["is_staff"] = user.is_staff
         access_token["is_superuser"] = user.is_superuser
 
-        return Response(
+        return JsonResponse(
             {
                 "access_token": str(access_token),
                 "refresh_token": str(refresh),
@@ -132,14 +136,13 @@ def login_view(request):
                     "last_name": user.last_name,
                     "is_staff": user.is_staff,
                     "is_superuser": user.is_superuser,
-                    "date_joined": user.date_joined,
-                    "last_login": user.last_login,
+                    "date_joined": user.date_joined.isoformat() if user.date_joined else None,
+                    "last_login": user.last_login.isoformat() if user.last_login else None,
                 },
-            },
-            status=status.HTTP_200_OK,
+            }
         )
     else:
-        return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        return JsonResponse({"error": "Invalid credentials"}, status=401)
 
 
 @api_view(["POST"])
