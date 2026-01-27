@@ -10,6 +10,7 @@ from django.contrib.auth import authenticate
 from django.core.cache import cache
 from django.http import HttpResponseRedirect
 from django.utils.http import urlencode
+from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -163,6 +164,7 @@ def orcid_callback(request):
         return HttpResponseRedirect(f"{frontend_url}?{params}")
 
 
+@csrf_exempt
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def orcid_token_exchange(request):
@@ -242,6 +244,7 @@ def auth_status(request):
         return Response({"authenticated": False})
 
 
+@csrf_exempt
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def exchange_auth_code(request):
