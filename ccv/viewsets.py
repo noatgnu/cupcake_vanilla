@@ -2166,11 +2166,12 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             return Response({"error": "Template name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not schema_ids:
-            # Default to minimum schema
-            try:
-                minimum_schema = Schema.objects.get(name="minimum", is_active=True)
-                schema_ids = [minimum_schema.id]
-            except Schema.DoesNotExist:
+            default_schema = Schema.objects.filter(
+                name__in=["ms-proteomics", "base", "default", "minimum"], is_active=True
+            ).first()
+            if default_schema:
+                schema_ids = [default_schema.id]
+            else:
                 return Response(
                     {"error": "No default schema available. Please specify schema_ids."},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -2312,11 +2313,12 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             return Response({"error": "Table name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not schema_ids:
-            # Default to minimum schema
-            try:
-                minimum_schema = Schema.objects.get(name="minimum", is_active=True)
-                schema_ids = [minimum_schema.id]
-            except Schema.DoesNotExist:
+            default_schema = Schema.objects.filter(
+                name__in=["ms-proteomics", "base", "default", "minimum"], is_active=True
+            ).first()
+            if default_schema:
+                schema_ids = [default_schema.id]
+            else:
                 return Response(
                     {"error": "No default schema available. Please specify schema_ids."},
                     status=status.HTTP_400_BAD_REQUEST,

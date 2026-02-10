@@ -2831,10 +2831,15 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                     print(f"Warning: Schema '{schema_name}' not found or not active")
         else:
             try:
-                minimum_schema = Schema.objects.get(name="minimum", is_active=True)
-                schema_objects = [minimum_schema]
+                default_schema = Schema.objects.filter(
+                    name__in=["ms-proteomics", "base", "default", "minimum"], is_active=True
+                ).first()
+                if default_schema:
+                    schema_objects = [default_schema]
+                else:
+                    raise ValueError("No schemas provided and no default schema found")
             except Schema.DoesNotExist:
-                raise ValueError("No schemas provided and minimum schema not found")
+                raise ValueError("No schemas provided and no default schema found")
 
         schema_names = [s.display_name or s.name for s in schema_objects]
         table_data = {
@@ -2852,18 +2857,16 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
         metadata_table = MetadataTable.objects.create(**table_data)
 
         try:
-            # Get column templates linked to the schemas
             column_templates = []
-            seen_template_ids = set()
+            seen_column_names = set()
 
             for schema_obj in schema_objects:
-                # Get all column templates linked to this schema
                 schema_templates = schema_obj.column_templates.filter(is_active=True).order_by("default_position", "id")
 
                 for col_template in schema_templates:
-                    if col_template.id not in seen_template_ids:
+                    if col_template.column_name not in seen_column_names:
                         column_templates.append(col_template)
-                        seen_template_ids.add(col_template.id)
+                        seen_column_names.add(col_template.column_name)
 
             # Create columns from linked templates
             position = 0
@@ -3229,12 +3232,16 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                 except Schema.DoesNotExist:
                     print(f"Warning: Schema '{schema_name}' not found or not active")
         else:
-            # Default to minimum schema
             try:
-                minimum_schema = Schema.objects.get(name="minimum", is_active=True)
-                schema_objects = [minimum_schema]
+                default_schema = Schema.objects.filter(
+                    name__in=["ms-proteomics", "base", "default", "minimum"], is_active=True
+                ).first()
+                if default_schema:
+                    schema_objects = [default_schema]
+                else:
+                    raise ValueError("No schemas provided and no default schema found")
             except Schema.DoesNotExist:
-                raise ValueError("No schemas provided and minimum schema not found")
+                raise ValueError("No schemas provided and no default schema found")
 
         # Create the template
         schema_names = [s.display_name or s.name for s in schema_objects]
@@ -3267,15 +3274,15 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                     schema_obj.save(update_fields=["usage_count"])
 
             column_templates = []
-            seen_template_ids = set()
+            seen_column_names = set()
 
             for schema_obj in schema_objects:
                 schema_templates = schema_obj.column_templates.filter(is_active=True).order_by("default_position", "id")
 
                 for col_template in schema_templates:
-                    if col_template.id not in seen_template_ids:
+                    if col_template.column_name not in seen_column_names:
                         column_templates.append(col_template)
-                        seen_template_ids.add(col_template.id)
+                        seen_column_names.add(col_template.column_name)
 
             # Create columns from linked templates
             position = 0
