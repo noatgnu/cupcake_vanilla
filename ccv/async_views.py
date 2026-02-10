@@ -618,16 +618,26 @@ class AsyncValidationViewSet(viewsets.GenericViewSet):
 
         registry = SchemaRegistry()
         schema_names = registry.get_schema_names()
+        manifest = registry.manifest or {}
+        templates_info = manifest.get("templates", {})
 
         schemas = []
         for name in schema_names:
             schema = registry.get_schema(name)
+            template_meta = templates_info.get(name, {})
+
             schemas.append(
                 {
                     "name": name,
-                    "display_name": name.replace("_", " ").title(),
-                    "description": schema.description if schema else "",
+                    "display_name": name.replace("-", " ").replace("_", " ").title(),
+                    "description": schema.description if schema else template_meta.get("description", ""),
                     "column_count": len(schema.columns) if schema else 0,
+                    "extends": template_meta.get("extends"),
+                    "usable_alone": template_meta.get("usable_alone", True),
+                    "layer": template_meta.get("layer"),
+                    "status": template_meta.get("status", "stable"),
+                    "latest_version": template_meta.get("latest"),
+                    "versions": template_meta.get("versions", []),
                 }
             )
 

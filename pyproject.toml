@@ -134,7 +134,7 @@ django-simple-history = "^3.4.0"
 psycopg2-binary = "^2.9.9"
 openpyxl = "^3.1.2"
 pandas = "^2.1.4"
-sdrf-pipelines = {git = "https://github.com/bigbio/sdrf-pipelines.git", rev = "a7ace6790d1c4925ef484b9050e3530e784920ed"}
+sdrf-pipelines = {git = "https://github.com/bigbio/sdrf-pipelines.git", rev = "3089f07"}
 drf-chunked-upload = "^0.6.0"
 pronto = "^2.5.7"
 requests = "^2.31.0"

@@ -843,8 +843,7 @@ def compile_sdrf_columns_from_schemas(
                         schema = pickle.load(open(schema_obj.schema_file.path, "rb"))
                         schemas.append(schema)
 
-            # Use temporary directory for SchemaRegistry
-            registry = SchemaRegistry(temp_dir)
+            registry = SchemaRegistry(temp_dir, use_versioned=False)
 
             # Get schemas by their names (without extension)
 
@@ -902,7 +901,7 @@ def reorder_columns_by_schema(
 
     df = pd.read_csv(input_file, sep="\t", dtype=str).fillna("")
 
-    sections = compile_sdrf_columns_from_schemas(schema_names, schema_dir)
+    sections = compile_sdrf_columns_from_schemas(schema_names=schema_names, schema_dir=schema_dir)
 
     processed_indices = set()
 

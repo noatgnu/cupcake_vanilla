@@ -11,6 +11,8 @@ from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 from django.db import models
 
+import yaml
+
 from ccv.models import MetadataColumnTemplate, Schema
 from ccv.utils import SchemaRegistry, get_specific_default_schema
 
@@ -281,9 +283,11 @@ class Command(BaseCommand):
                 return None
 
             try:
-                # Create a custom registry with the file
-                registry = SchemaRegistry(schema_dir)
-                schema = registry.load_schema_from_file(schema_file)
+                with open(schema_file, encoding="utf-8") as f:
+                    schema_data = yaml.safe_load(f)
+                registry = SchemaRegistry(schema_dir=None)
+                registry.add_schema(schema_name, schema_data)
+                schema = registry.get_schema(schema_name)
                 if schema:
                     self.stdout.write(f"Loaded schema from file: {schema_file}")
                     return schema
@@ -294,7 +298,7 @@ class Command(BaseCommand):
         # Try schema directory if provided
         if schema_dir:
             try:
-                registry = SchemaRegistry(schema_dir)
+                registry = SchemaRegistry(schema_dir, use_versioned=False)
                 schema = registry.get_schema(schema_name)
                 if schema:
                     self.stdout.write(f"Loaded schema '{schema_name}' from directory: {schema_dir}")

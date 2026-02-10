@@ -2371,6 +2371,8 @@ class Schema(models.Model):
 
             builtin_schemas = get_all_default_schema_names()
             registry = SchemaRegistry()
+            manifest = registry.manifest or {}
+            templates_info = manifest.get("templates", {})
             created_count = 0
             updated_count = 0
 
@@ -2380,16 +2382,15 @@ class Schema(models.Model):
                     print(f"Warning: Could not get schema object for '{schema_name}'")
                     continue
 
-                # Convert schema object to YAML content
+                template_meta = templates_info.get(schema_name, {})
+
                 schema_dict = {"name": schema_name, "version": "1.0", "columns": []}
 
-                # Extract column definitions
                 for column in schema_obj.columns:
                     column_dict = {
                         "name": column.name,
                     }
 
-                    # Add available attributes
                     if hasattr(column, "type") and column.type:
                         column_dict["type"] = column.type
                     if hasattr(column, "required"):
@@ -2403,32 +2404,25 @@ class Schema(models.Model):
 
                 schema_obj_pickle = pickletools.optimize(pickle.dumps(schema_obj))
 
-                display_name = schema_name.replace("_", " ").title()
-                description_map = {
-                    "minimum": "Basic required columns only - ideal for simple experiments",
-                    "default": "Standard proteomics columns - good starting point for most experiments",
-                    "proteomics": "Comprehensive proteomics schema with advanced metadata",
-                    "metabolomics": "Metabolomics-specific columns and annotations",
-                    "human": "Human sample-specific columns and ontologies",
-                    "vertebrates": "Vertebrate organism columns and taxonomies",
-                    "nonvertebrates": "Non-vertebrate organism columns and taxonomies",
-                    "plants": "Plant-specific columns and ontologies",
-                    "cell_lines": "Cell line experiment columns and metadata",
-                }
-                description = description_map.get(schema_name, f"Builtin schema: {display_name}")
+                display_name = schema_name.replace("-", " ").replace("_", " ").title()
 
-                # Determine tags
+                description = (
+                    template_meta.get("description") or schema_obj.description or f"Builtin schema: {display_name}"
+                )
+
                 tags = []
-                if "proteomics" in schema_name or schema_name in ["default", "minimum"]:
+                layer = template_meta.get("layer")
+                if layer:
+                    tags.append(layer)
+                if "proteomics" in schema_name or schema_name in ["ms-proteomics", "affinity-proteomics", "base"]:
                     tags.append("proteomics")
-                if "metabolomics" in schema_name:
-                    tags.append("metabolomics")
-                if schema_name in ["human", "vertebrates", "nonvertebrates", "plants"]:
+                if schema_name in ["human", "vertebrates", "invertebrates", "plants"]:
                     tags.append("organism-specific")
+                if template_meta.get("status") == "development":
+                    tags.append("development")
 
-                # Determine if this schema should be active by default
-                # Only 'minimum' schema is active by default for new installations
-                is_active_default = schema_name == "minimum"
+                usable_alone = template_meta.get("usable_alone", True)
+                is_active_default = schema_name == "ms-proteomics" or (usable_alone and schema_name == "base")
 
                 # Create or update schema
                 schema, created = cls.objects.get_or_create(
