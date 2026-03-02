@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET, require_POST
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from ..auth_backends import ORCIDOAuth2Helper
+from ..models import SiteConfig
 
 ORCID_CODE_CACHE_PREFIX = "orcid_auth_code_"
 ORCID_CODE_EXPIRY = 60
@@ -222,10 +223,16 @@ def auth_status(request):
     """
     Check authentication status and return user info if authenticated.
     """
+    site_config = SiteConfig.objects.first()
+    orcid_login_enabled = site_config.enable_orcid_login if site_config else False
+    registration_enabled = site_config.allow_user_registration if site_config else False
+
     if request.user.is_authenticated:
         return JsonResponse(
             {
                 "authenticated": True,
+                "orcid_login_enabled": orcid_login_enabled,
+                "registration_enabled": registration_enabled,
                 "user": {
                     "id": request.user.id,
                     "username": request.user.username,
@@ -236,7 +243,13 @@ def auth_status(request):
             }
         )
     else:
-        return JsonResponse({"authenticated": False})
+        return JsonResponse(
+            {
+                "authenticated": False,
+                "orcid_login_enabled": orcid_login_enabled,
+                "registration_enabled": registration_enabled,
+            }
+        )
 
 
 @csrf_exempt
