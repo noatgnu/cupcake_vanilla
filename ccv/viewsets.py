@@ -1777,7 +1777,7 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             accessible_queryset = accessible_queryset.filter(owner_id=owner_id)
 
         # Filter by lab group
-        lab_group_id = self.request.query_params.get("lab_group_id")
+        lab_group_id = self.request.query_params.get("lab_group_id") or self.request.query_params.get("lab_group")
         if lab_group_id:
             accessible_queryset = accessible_queryset.filter(lab_group_id=lab_group_id)
 
@@ -1800,6 +1800,10 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             accessible_queryset = accessible_queryset.filter(is_default=is_default.lower() == "true")
 
         return accessible_queryset.order_by("-is_default", "name")
+
+    def perform_create(self, serializer):
+        """Ensure owner is set when creating templates."""
+        serializer.save(owner=self.request.user)
 
     @action(detail=True, methods=["post"])
     def add_column(self, request, pk=None):
@@ -2191,7 +2195,7 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         try:
             # Get optional parameters
             description = request.data.get("description")
-            lab_group_id = request.data.get("lab_group_id")
+            lab_group_id = request.data.get("lab_group")
             is_public = request.data.get("is_public", False)
             is_default = request.data.get("is_default", False)
 
