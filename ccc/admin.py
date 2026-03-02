@@ -129,6 +129,7 @@ class LabGroupAdmin(admin.ModelAdmin):
     ]
     filter_horizontal = ["members"]
     readonly_fields = ["created_at", "updated_at"]
+    autocomplete_fields = ["creator"]
 
     fieldsets = (
         ("Basic Information", {"fields": ("name", "description", "creator")}),
@@ -301,6 +302,7 @@ class CustomUserAdmin(BaseUserAdmin):
     Extended User admin that includes ORCID profile information and better organization of user data.
     """
 
+    list_display = BaseUserAdmin.list_display + ("last_login", "date_joined")
     inlines = [UserOrcidInline]
 
 

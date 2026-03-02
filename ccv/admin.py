@@ -42,6 +42,7 @@ class MetadataTableAdmin(SimpleHistoryAdmin):
         "description",
         "sample_count",
         "get_column_count",
+        "visibility",
         "source_app",
         "owner",
         "lab_group",
@@ -49,10 +50,15 @@ class MetadataTableAdmin(SimpleHistoryAdmin):
         "is_locked",
         "created_at",
     ]
-    list_filter = ["is_published", "is_locked", "source_app", "lab_group", "owner", "created_at"]
+    list_filter = ["visibility", "is_published", "is_locked", "source_app", "lab_group", "owner", "created_at"]
     search_fields = ["name", "description"]
     ordering = ["-created_at", "name"]
     readonly_fields = ["created_at", "updated_at", "associated_jobs_info"]
+    autocomplete_fields = ["owner", "lab_group"]
+
+    def get_queryset(self, request):
+        """Optimize queryset."""
+        return super().get_queryset(request).select_related("owner", "lab_group")
 
     fieldsets = (
         (
@@ -203,6 +209,11 @@ class MetadataTableTemplateAdmin(SimpleHistoryAdmin):
     ordering = ["-is_default", "name"]
     readonly_fields = ["created_at", "updated_at"]
     filter_horizontal = ["user_columns"]
+    autocomplete_fields = ["owner", "lab_group"]
+
+    def get_queryset(self, request):
+        """Optimize queryset."""
+        return super().get_queryset(request).select_related("owner", "lab_group")
 
     fieldsets = (
         ("Basic Information", {"fields": ("name", "description", "owner", "lab_group", "visibility")}),
@@ -721,16 +732,16 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         """Filter templates based on user permissions for non-superusers."""
-        queryset = super().get_queryset(request)
+        queryset = super().get_queryset(request).select_related("owner", "lab_group", "schema")
         if not request.user.is_superuser:
             from ccc.models import LabGroup
 
             accessible_groups = LabGroup.get_accessible_group_ids(request.user)
 
             queryset = queryset.filter(
-                models.Q(creator=request.user)
+                models.Q(owner=request.user)
                 | models.Q(visibility__in=["public", "global"])
-                | models.Q(visibility="lab_group", lab_group_id__in=accessible_groups)
+                | models.Q(visibility="group", lab_group_id__in=accessible_groups)
                 | models.Q(shared_with_users=request.user)
             ).distinct()
         return queryset

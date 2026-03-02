@@ -31,6 +31,7 @@ class BaseResourceAdmin(SimpleHistoryAdmin):
     """Base admin class for AbstractResource models with common functionality."""
 
     readonly_fields = ["created_at", "updated_at", "remote_id", "remote_host"]
+    autocomplete_fields = ["owner", "lab_group"]
 
     def get_readonly_fields(self, request, obj=None):
         """Add unique_id to read-only fields if the model has it."""
@@ -55,8 +56,16 @@ class BaseResourceAdmin(SimpleHistoryAdmin):
 class ProjectAdmin(BaseResourceAdmin):
     """Admin interface for research projects with comprehensive management features."""
 
-    list_display = ["project_name", "owner_display", "is_vaulted", "sessions_count", "lab_group", "created_at"]
-    list_filter = ["is_vaulted", "created_at", "updated_at", "lab_group", "remote_host"]
+    list_display = [
+        "project_name",
+        "owner_display",
+        "is_vaulted",
+        "sessions_count",
+        "lab_group",
+        "visibility",
+        "created_at",
+    ]
+    list_filter = ["visibility", "is_vaulted", "created_at", "updated_at", "lab_group", "remote_host"]
     search_fields = ["project_name", "project_description", "owner__username", "owner__first_name", "owner__last_name"]
     filter_horizontal = ["sessions"]
 
@@ -95,12 +104,21 @@ class ProtocolModelAdmin(BaseResourceAdmin):
         "protocol_title",
         "owner_display",
         "enabled",
+        "visibility",
         "protocol_doi",
         "sections_count",
         "steps_count",
         "ratings_count",
     ]
-    list_filter = ["enabled", "created_at", "updated_at", "lab_group", "protocol_created_on", "remote_host"]
+    list_filter = [
+        "enabled",
+        "visibility",
+        "created_at",
+        "updated_at",
+        "lab_group",
+        "protocol_created_on",
+        "remote_host",
+    ]
     search_fields = [
         "protocol_title",
         "protocol_description",
@@ -183,13 +201,23 @@ class SessionAdmin(BaseResourceAdmin):
         "name",
         "owner_display",
         "enabled",
+        "visibility",
         "processing",
         "protocols_count",
         "projects_count",
         "duration",
         "created_at",
     ]
-    list_filter = ["enabled", "processing", "created_at", "updated_at", "started_at", "ended_at", "lab_group"]
+    list_filter = [
+        "enabled",
+        "visibility",
+        "processing",
+        "created_at",
+        "updated_at",
+        "started_at",
+        "ended_at",
+        "lab_group",
+    ]
     search_fields = [
         "name",
         "unique_id",
