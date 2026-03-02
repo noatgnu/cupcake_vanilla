@@ -121,8 +121,6 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
 
             if show_shared:
                 # Get all accessible lab groups (includes parent groups via bubble-up)
-                from ccc.models import LabGroup
-
                 accessible_groups = LabGroup.get_accessible_group_ids(user)
 
                 permission_filter = (
@@ -1766,13 +1764,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         # 1. Templates created by the user
         # 2. Public templates
         # 3. Templates from lab groups the user is a member of (includes bubble-up from sub-groups)
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(self.request.user)
         accessible_queryset = queryset.filter(
             Q(owner=self.request.user)
-            | Q(visibility="public")  # User's own templates
-            | Q(lab_group_id__in=accessible_groups)  # Lab group templates (includes bubble-up)
+            | Q(visibility=ResourceVisibility.PUBLIC)
+            | Q(visibility=ResourceVisibility.GROUP, lab_group_id__in=accessible_groups)
         ).distinct()
 
         # Apply additional query parameter filters
@@ -1792,6 +1788,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 accessible_queryset = accessible_queryset.filter(visibility="public")
             else:
                 accessible_queryset = accessible_queryset.exclude(visibility="public")
+
+        # Filter by visibility
+        visibility = self.request.query_params.get("visibility")
+        if visibility:
+            accessible_queryset = accessible_queryset.filter(visibility=visibility)
 
         # Filter by default status
         is_default = self.request.query_params.get("is_default")
@@ -4391,7 +4392,7 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             models.Q(visibility="global")
             | models.Q(visibility="public")
             | models.Q(visibility="private", owner=user)
-            | models.Q(visibility="lab_group", lab_group_id__in=accessible_groups)
+            | models.Q(visibility="group", lab_group_id__in=accessible_groups)
             | models.Q(shared_with_users=user)
         ).distinct()
 
