@@ -8,6 +8,7 @@ import secrets
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import update_last_login
 from django.core.cache import cache
 from django.http import HttpResponseRedirect, JsonResponse
 from django.utils.http import urlencode
@@ -106,6 +107,8 @@ def orcid_callback(request):
             params = urlencode({"error": "Authentication failed"})
             return HttpResponseRedirect(f"{frontend_url}?{params}")
 
+        update_last_login(None, user)
+
         refresh = RefreshToken.for_user(user)
         access_jwt = refresh.access_token
 
@@ -183,6 +186,8 @@ def orcid_token_exchange(request):
 
         if not user:
             return JsonResponse({"error": "Authentication failed"}, status=401)
+
+        update_last_login(None, user)
 
         refresh = RefreshToken.for_user(user)
         access_jwt = refresh.access_token

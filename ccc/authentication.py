@@ -6,6 +6,7 @@ import json
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.contrib.auth.models import update_last_login
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -112,6 +113,8 @@ def login_view(request):
     user = authenticate(username=username, password=password)
 
     if user:
+        update_last_login(None, user)
+
         refresh = RefreshToken.for_user(user)
         access_token = refresh.access_token
 

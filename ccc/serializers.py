@@ -374,6 +374,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     has_orcid = serializers.SerializerMethodField()
     orcid_id = serializers.SerializerMethodField()
+    orcid_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -390,6 +391,7 @@ class UserSerializer(serializers.ModelSerializer):
             "last_login",
             "has_orcid",
             "orcid_id",
+            "orcid_name",
         ]
 
     def get_has_orcid(self, obj):
@@ -400,6 +402,12 @@ class UserSerializer(serializers.ModelSerializer):
         """Get user's ORCID ID if available."""
         if hasattr(obj, "orcid_profile"):
             return obj.orcid_profile.orcid_id
+        return None
+
+    def get_orcid_name(self, obj):
+        """Get user's ORCID name if available."""
+        if hasattr(obj, "orcid_profile"):
+            return obj.orcid_profile.orcid_name
         return None
 
 
