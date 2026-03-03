@@ -8,16 +8,21 @@ lab groups, and site administration functionality.
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
+from django.utils import timezone
+from django.utils.html import format_html
 
 from .models import (
     AccountMergeRequest,
     Annotation,
     AnnotationFolder,
+    AsyncTaskStatus,
     LabGroup,
     LabGroupInvitation,
+    LabGroupPermission,
     RemoteHost,
     ResourcePermission,
     SiteConfig,
+    TaskResult,
     UserOrcidProfile,
 )
 
@@ -127,9 +132,8 @@ class LabGroupAdmin(admin.ModelAdmin):
         "creator__first_name",
         "creator__last_name",
     ]
-    filter_horizontal = ["members"]
     readonly_fields = ["created_at", "updated_at"]
-    autocomplete_fields = ["creator"]
+    autocomplete_fields = ["creator", "members"]
 
     fieldsets = (
         ("Basic Information", {"fields": ("name", "description", "creator")}),
@@ -422,3 +426,203 @@ class AnnotationAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Include select_related for better performance."""
         return super().get_queryset(request).select_related("owner", "folder", "lab_group")
+
+
+@admin.register(AsyncTaskStatus)
+class AsyncTaskStatusAdmin(admin.ModelAdmin):
+    """Admin interface for async task monitoring."""
+
+    list_display = [
+        "id_short",
+        "task_type",
+        "status",
+        "user",
+        "progress_display",
+        "created_at",
+        "completed_at",
+    ]
+    list_filter = ["task_type", "status", "created_at", "completed_at"]
+    search_fields = ["id", "user__username", "user__email", "error_message"]
+    readonly_fields = [
+        "id",
+        "rq_job_id",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "error_message",
+        "result_preview",
+    ]
+    date_hierarchy = "created_at"
+    list_per_page = 50
+    autocomplete_fields = ["user"]
+
+    fieldsets = (
+        ("Task Information", {"fields": ("id", "task_type", "status", "user", "rq_job_id")}),
+        ("Progress", {"fields": ("progress", "progress_message")}),
+        ("Result", {"fields": ("result_preview", "error_message"), "classes": ("collapse",)}),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "started_at", "completed_at"), "classes": ("collapse",)},
+        ),
+    )
+
+    def id_short(self, obj):
+        """Display shortened UUID."""
+        return str(obj.id)[:8] + "..."
+
+    id_short.short_description = "Task ID"
+
+    def progress_display(self, obj):
+        """Display progress as percentage bar."""
+        if obj.progress is not None:
+            color = "green" if obj.status == "SUCCESS" else "blue" if obj.status == "STARTED" else "gray"
+            return format_html(
+                '<div style="width:100px;background:#eee;border-radius:3px;">'
+                '<div style="width:{}%;background:{};height:15px;border-radius:3px;"></div>'
+                "</div> {}%",
+                obj.progress,
+                color,
+                obj.progress,
+            )
+        return "-"
+
+    progress_display.short_description = "Progress"
+
+    def result_preview(self, obj):
+        """Display result data preview."""
+        if obj.result_data:
+            import json
+
+            try:
+                formatted = json.dumps(obj.result_data, indent=2)[:500]
+                return format_html("<pre style='max-height:200px;overflow:auto;'>{}</pre>", formatted)
+            except Exception:
+                return str(obj.result_data)[:500]
+        return "No result data"
+
+    result_preview.short_description = "Result Data"
+
+    def get_queryset(self, request):
+        """Optimize queryset."""
+        return super().get_queryset(request).select_related("user", "metadata_table")
+
+    actions = ["cancel_tasks", "retry_failed_tasks", "clear_completed_tasks"]
+
+    def cancel_tasks(self, request, queryset):
+        """Cancel selected queued/started tasks."""
+        from django_rq import get_queue
+        from rq.job import Job
+
+        cancelled = 0
+        failed = 0
+
+        for task in queryset.filter(status__in=["QUEUED", "STARTED"]):
+            try:
+                if task.rq_job_id:
+                    queue = get_queue("default")
+                    try:
+                        job = Job.fetch(task.rq_job_id, connection=queue.connection)
+                        job.cancel()
+                    except Exception:
+                        pass
+                task.status = "CANCELLED"
+                task.save(update_fields=["status"])
+                cancelled += 1
+            except Exception:
+                failed += 1
+
+        msg = f"Cancelled {cancelled} task(s)."
+        if failed:
+            msg += f" Failed to cancel {failed} task(s)."
+        self.message_user(request, msg)
+
+    cancel_tasks.short_description = "Cancel selected tasks"
+
+    def retry_failed_tasks(self, request, queryset):
+        """Reset failed tasks to queued status."""
+        reset = queryset.filter(status="FAILURE").update(status="QUEUED", error_message="")
+        self.message_user(request, f"Reset {reset} failed task(s) to queued.")
+
+    retry_failed_tasks.short_description = "Retry failed tasks"
+
+    def clear_completed_tasks(self, request, queryset):
+        """Delete completed tasks older than 7 days."""
+        from datetime import timedelta
+
+        cutoff = timezone.now() - timedelta(days=7)
+        deleted, _ = queryset.filter(status="SUCCESS", completed_at__lt=cutoff).delete()
+        self.message_user(request, f"Deleted {deleted} old completed task(s).")
+
+    clear_completed_tasks.short_description = "Clear old completed tasks (7+ days)"
+
+
+@admin.register(TaskResult)
+class TaskResultAdmin(admin.ModelAdmin):
+    """Admin interface for task result files."""
+
+    list_display = ["id_short", "task", "file_name", "file_size_display", "created_at", "expires_at"]
+    list_filter = ["created_at", "expires_at"]
+    search_fields = ["task__id", "file_name"]
+    readonly_fields = ["id", "created_at", "file_size"]
+    date_hierarchy = "created_at"
+    list_per_page = 50
+
+    fieldsets = (
+        ("Result Information", {"fields": ("id", "task", "file_name")}),
+        ("File", {"fields": ("result_file", "file_size")}),
+        ("Expiration", {"fields": ("expires_at",)}),
+        ("Timestamps", {"fields": ("created_at",), "classes": ("collapse",)}),
+    )
+
+    def id_short(self, obj):
+        """Display shortened UUID."""
+        return str(obj.id)[:8] + "..."
+
+    id_short.short_description = "Result ID"
+
+    def file_size_display(self, obj):
+        """Display file size in human-readable format."""
+        if obj.file_size:
+            if obj.file_size < 1024:
+                return f"{obj.file_size} B"
+            elif obj.file_size < 1024 * 1024:
+                return f"{obj.file_size / 1024:.1f} KB"
+            else:
+                return f"{obj.file_size / (1024 * 1024):.1f} MB"
+        return "-"
+
+    file_size_display.short_description = "File Size"
+
+    def get_queryset(self, request):
+        """Optimize queryset."""
+        return super().get_queryset(request).select_related("task", "task__user")
+
+    actions = ["delete_expired"]
+
+    def delete_expired(self, request, queryset):
+        """Delete expired task results."""
+        deleted, _ = queryset.filter(expires_at__lt=timezone.now()).delete()
+        self.message_user(request, f"Deleted {deleted} expired result(s).")
+
+    delete_expired.short_description = "Delete expired results"
+
+
+@admin.register(LabGroupPermission)
+class LabGroupPermissionAdmin(admin.ModelAdmin):
+    """Admin interface for lab group permissions."""
+
+    list_display = ["lab_group", "user", "can_view", "can_invite", "can_manage", "can_process_jobs", "created_at"]
+    list_filter = ["can_view", "can_invite", "can_manage", "can_process_jobs", "created_at"]
+    search_fields = ["lab_group__name", "user__username", "user__email"]
+    readonly_fields = ["created_at", "updated_at"]
+    autocomplete_fields = ["lab_group", "user"]
+
+    fieldsets = (
+        ("Permission Details", {"fields": ("lab_group", "user")}),
+        ("Capabilities", {"fields": ("can_view", "can_invite", "can_manage", "can_process_jobs")}),
+        ("Audit", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
+    )
+
+    def get_queryset(self, request):
+        """Optimize queryset."""
+        return super().get_queryset(request).select_related("lab_group", "user")

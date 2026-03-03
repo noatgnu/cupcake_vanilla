@@ -208,8 +208,7 @@ class MetadataTableTemplateAdmin(SimpleHistoryAdmin):
     search_fields = ["name", "description"]
     ordering = ["-is_default", "name"]
     readonly_fields = ["created_at", "updated_at"]
-    filter_horizontal = ["user_columns"]
-    autocomplete_fields = ["owner", "lab_group"]
+    autocomplete_fields = ["owner", "lab_group", "user_columns"]
 
     def get_queryset(self, request):
         """Optimize queryset."""

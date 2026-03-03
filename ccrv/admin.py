@@ -31,7 +31,6 @@ class BaseResourceAdmin(SimpleHistoryAdmin):
     """Base admin class for AbstractResource models with common functionality."""
 
     readonly_fields = ["created_at", "updated_at", "remote_id", "remote_host"]
-    autocomplete_fields = ["owner", "lab_group"]
 
     def get_readonly_fields(self, request, obj=None):
         """Add unique_id to read-only fields if the model has it."""
@@ -67,7 +66,7 @@ class ProjectAdmin(BaseResourceAdmin):
     ]
     list_filter = ["visibility", "is_vaulted", "created_at", "updated_at", "lab_group", "remote_host"]
     search_fields = ["project_name", "project_description", "owner__username", "owner__first_name", "owner__last_name"]
-    filter_horizontal = ["sessions"]
+    autocomplete_fields = ["owner", "lab_group", "sessions"]
 
     fieldsets = (
         ("Project Information", {"fields": ("project_name", "project_description", "owner", "lab_group")}),
@@ -127,7 +126,7 @@ class ProtocolModelAdmin(BaseResourceAdmin):
         "owner__first_name",
         "owner__last_name",
     ]
-    filter_horizontal = ["editors", "viewers"]
+    autocomplete_fields = ["owner", "lab_group", "editors", "viewers"]
 
     fieldsets = (
         (
@@ -226,7 +225,7 @@ class SessionAdmin(BaseResourceAdmin):
         "owner__last_name",
         "projects__project_name",
     ]
-    filter_horizontal = ["protocols", "editors", "viewers"]
+    autocomplete_fields = ["owner", "lab_group", "protocols", "editors", "viewers"]
     readonly_fields = ["projects_info", "created_at", "updated_at"]
 
     fieldsets = (
