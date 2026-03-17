@@ -624,6 +624,13 @@ class MetadataColumnTemplateSerializer(serializers.ModelSerializer):
             "last_used_at",
             "can_edit",
             "can_delete",
+            "validators",
+            "input_type",
+            "units",
+            "possible_default_values",
+            "ontology_options",
+            "not_applicable",
+            "base_column",
         ]
         read_only_fields = [
             "owner",
