@@ -2145,6 +2145,10 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                     "usage_count": schema.usage_count,
                     "file_size": schema.file_size,
                     "created_at": schema.created_at.isoformat() if schema.created_at else None,
+                    "layer": schema.layer,
+                    "usable_alone": schema.usable_alone,
+                    "version": schema.version,
+                    "extends": schema.extends,
                 }
             )
 
