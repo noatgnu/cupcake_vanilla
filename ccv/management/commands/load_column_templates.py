@@ -358,6 +358,8 @@ class Command(BaseCommand):
                 not_applicable=allow_not_applicable,
             )
 
+            # Process all validators and set input type
+            self.configure_validators(template, column)
             # Process validators for ontology configuration
             self.configure_ontology_options(template, column)
 
@@ -417,6 +419,47 @@ class Command(BaseCommand):
             self.stdout.write("  No column references needed updating.")
 
         return updated_count
+
+    def configure_validators(self, template, column):
+        """Configure validators and input type based on column validators."""
+        validators_list = []
+
+        for validator in column.validators:
+            validator_data = {
+                "type": validator.validator_name,
+                "params": validator.params or {},
+            }
+            validators_list.append(validator_data)
+
+            if validator.validator_name == "values":
+                template.input_type = "select"
+                template.possible_default_values = validator.params.get("values", [])
+
+            elif validator.validator_name == "number_with_unit":
+                template.input_type = "number_with_unit"
+                template.units = validator.params.get("units", [])
+                template.possible_default_values = validator.params.get("examples", [])
+
+            elif validator.validator_name == "pattern":
+                template.input_type = "pattern"
+                template.custom_validation_rules["pattern"] = validator.params.get("pattern", "")
+                template.possible_default_values = validator.params.get("examples", [])
+
+            elif validator.validator_name == "semver":
+                template.input_type = "semver"
+                template.possible_default_values = validator.params.get("examples", [])
+
+            elif validator.validator_name == "accession":
+                template.input_type = "accession"
+                template.custom_validation_rules["accession_format"] = validator.params.get("format", "")
+                template.possible_default_values = validator.params.get("examples", [])
+
+            elif validator.validator_name == "identifier":
+                template.input_type = "identifier"
+                template.custom_validation_rules["special_values"] = validator.params.get("special_values", [])
+                template.possible_default_values = validator.params.get("examples", [])
+
+        template.validators = validators_list
 
     def configure_ontology_options(self, template, column):
         """Configure ontology options based on column validators."""

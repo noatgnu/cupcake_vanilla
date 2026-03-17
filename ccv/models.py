@@ -2424,7 +2424,7 @@ class Schema(models.Model):
 
                 schema_obj_pickle = pickletools.optimize(pickle.dumps(schema_obj))
 
-                display_name = schema_name.replace("-", " ").replace("_", " ").title()
+                display_name = schema_name.replace("-", " ").replace("_", " ")
 
                 description = (
                     template_meta.get("description") or schema_obj.description or f"Builtin schema: {display_name}"
@@ -2449,8 +2449,6 @@ class Schema(models.Model):
                 layer_value = template_meta.get("layer") or ""
                 requires_value = template_meta.get("requires") or []
                 excludes_value = template_meta.get("excludes") or {}
-
-                print(f"Schema '{schema_name}': layer='{layer_value}', extends='{extends}'")  # Debug
 
                 schema, created = cls.objects.get_or_create(
                     name=schema_name,
@@ -3820,6 +3818,22 @@ class MetadataColumnTemplate(AbstractResource):
         default=list,
         blank=True,
         help_text="List of possible default sdrf values for this column template",
+    )
+    validators = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of validators from sdrf-pipelines schema with their configurations",
+    )
+    input_type = models.CharField(
+        max_length=50,
+        blank=True,
+        default="text",
+        help_text="Input type hint for frontend rendering (text, select, number_with_unit, pattern, ontology)",
+    )
+    units = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of valid units for number_with_unit input type",
     )
 
     class Meta(AbstractResource.Meta):
