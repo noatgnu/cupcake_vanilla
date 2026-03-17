@@ -2534,6 +2534,71 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=["post"])
+    def sync_from_schemas(self, request, pk=None):
+        """
+        Synchronize template columns with the latest column template definitions from linked schemas.
+
+        This updates existing columns with the latest ontology settings, adds new columns
+        that exist in schemas but not in the template, and optionally removes columns
+        that no longer exist in the linked schemas.
+
+        Request body (all optional):
+        - add_new: bool (default: true) - Add columns that exist in schemas but not in template
+        - update_existing: bool (default: true) - Update existing columns with latest template settings
+        - remove_orphans: bool (default: false) - Remove columns that no longer exist in schemas
+
+        Returns:
+        - added: Number of columns added
+        - updated: Number of columns updated
+        - removed: Number of columns removed
+        - errors: List of any errors encountered
+        """
+        template = self.get_object()
+
+        if not template.can_edit(request.user):
+            return Response(
+                {"error": "Permission denied: cannot edit this template"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not template.schemas.exists():
+            return Response(
+                {"error": "This template has no linked schemas. Cannot sync."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        add_new = request.data.get("add_new", True)
+        update_existing = request.data.get("update_existing", True)
+        remove_orphans = request.data.get("remove_orphans", False)
+
+        try:
+            result = template.sync_columns_from_schemas(
+                add_new=add_new,
+                update_existing=update_existing,
+                remove_orphans=remove_orphans,
+            )
+
+            if "error" in result:
+                return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+            return Response(
+                {
+                    "message": "Template synchronized successfully",
+                    "added": result["added"],
+                    "updated": result["updated"],
+                    "removed": result["removed"],
+                    "errors": result.get("errors", []),
+                    "schemas": list(template.schemas.values_list("name", flat=True)),
+                }
+            )
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to sync template: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=["post"])
     def bulk_delete_columns(self, request, pk=None):
         """
         Delete multiple columns from this metadata table template.

@@ -19,6 +19,7 @@ from .models import (
     LabGroup,
     LabGroupInvitation,
     LabGroupPermission,
+    ManagementCommandExecution,
     RemoteHost,
     ResourcePermission,
     SiteConfig,
@@ -626,3 +627,185 @@ class LabGroupPermissionAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Optimize queryset."""
         return super().get_queryset(request).select_related("lab_group", "user")
+
+
+@admin.register(ManagementCommandExecution)
+class ManagementCommandExecutionAdmin(admin.ModelAdmin):
+    """Admin interface for running and tracking management commands."""
+
+    list_display = [
+        "id_short",
+        "command_display",
+        "status_display",
+        "execution_type",
+        "executed_by",
+        "duration_display",
+        "created_at",
+    ]
+    list_filter = ["command_name", "status", "created_at", "executed_by"]
+    search_fields = ["command_name", "output", "error_message", "job_id"]
+    readonly_fields = [
+        "id",
+        "status",
+        "job_id",
+        "output",
+        "error_message",
+        "executed_by",
+        "started_at",
+        "completed_at",
+        "created_at",
+    ]
+    ordering = ["-created_at"]
+    date_hierarchy = "created_at"
+
+    fieldsets = (
+        ("Command", {"fields": ("command_name", "command_args")}),
+        ("Execution Status", {"fields": ("status", "job_id", "executed_by", "started_at", "completed_at")}),
+        ("Output", {"fields": ("output",), "classes": ("collapse",)}),
+        ("Errors", {"fields": ("error_message",), "classes": ("collapse",)}),
+    )
+
+    def id_short(self, obj):
+        """Display shortened UUID."""
+        return str(obj.id)[:8] + "..."
+
+    id_short.short_description = "ID"
+
+    def command_display(self, obj):
+        """Display command with icon."""
+        return obj.get_command_name_display()
+
+    command_display.short_description = "Command"
+
+    def execution_type(self, obj):
+        """Display whether command runs sync or async."""
+        if obj.is_long_running:
+            return format_html('<span class="badge bg-warning text-dark">Async</span>')
+        return format_html('<span class="badge bg-info">Sync</span>')
+
+    execution_type.short_description = "Type"
+
+    def status_display(self, obj):
+        """Display status with color coding."""
+        colors = {
+            "PENDING": "secondary",
+            "QUEUED": "warning",
+            "RUNNING": "info",
+            "SUCCESS": "success",
+            "FAILURE": "danger",
+        }
+        color = colors.get(obj.status, "secondary")
+        icon = ""
+        if obj.status == "QUEUED":
+            icon = '<i class="bi bi-hourglass-split me-1"></i>'
+        elif obj.status == "RUNNING":
+            icon = '<i class="bi bi-arrow-repeat me-1"></i>'
+        return format_html('<span class="badge bg-{}">{}{}</span>', color, icon, obj.get_status_display())
+
+    status_display.short_description = "Status"
+
+    def duration_display(self, obj):
+        """Display execution duration."""
+        if obj.duration:
+            total_seconds = obj.duration.total_seconds()
+            if total_seconds < 60:
+                return f"{total_seconds:.1f}s"
+            elif total_seconds < 3600:
+                return f"{int(total_seconds // 60)}m {int(total_seconds % 60)}s"
+            return f"{int(total_seconds // 3600)}h {int((total_seconds % 3600) // 60)}m"
+        if obj.status in ["QUEUED", "RUNNING"]:
+            return "In progress..."
+        return "-"
+
+    duration_display.short_description = "Duration"
+
+    def get_queryset(self, request):
+        """Optimize queryset."""
+        return super().get_queryset(request).select_related("executed_by")
+
+    def save_model(self, request, obj, form, change):
+        """Run command when saving a new execution."""
+        if not change:
+            obj.executed_by = request.user
+            obj.save()
+            obj.run_command()
+        else:
+            super().save_model(request, obj, form, change)
+
+    def has_change_permission(self, request, obj=None):
+        """Prevent editing completed commands."""
+        if obj and obj.status in ["SUCCESS", "FAILURE"]:
+            return False
+        return super().has_change_permission(request, obj)
+
+    actions = [
+        "refresh_status",
+        "run_sync_schemas",
+        "run_load_column_templates",
+        "run_load_ontologies",
+        "run_cleanup_tasks",
+    ]
+
+    def refresh_status(self, request, queryset):
+        """Refresh status of queued/running commands."""
+        refreshed = 0
+        for execution in queryset.filter(status__in=["QUEUED", "RUNNING"]):
+            execution.refresh_status()
+            refreshed += 1
+        self.message_user(request, f"Refreshed status for {refreshed} execution(s).")
+
+    refresh_status.short_description = "Refresh status of selected executions"
+
+    def _run_command(self, request, command_name, args=None):
+        """Helper to create and run a command execution."""
+        execution = ManagementCommandExecution.objects.create(
+            command_name=command_name,
+            command_args=args or {},
+            executed_by=request.user,
+        )
+        execution.run_command()
+
+        if execution.status == "QUEUED":
+            self.message_user(
+                request,
+                f"{execution.get_command_name_display()} queued for background execution. "
+                f"Refresh to see status updates.",
+                level="WARNING",
+            )
+        elif execution.status == "SUCCESS":
+            self.message_user(
+                request, f"{execution.get_command_name_display()} completed successfully.", level="SUCCESS"
+            )
+        else:
+            self.message_user(
+                request,
+                f"{execution.get_command_name_display()} failed: {execution.error_message[:200]}",
+                level="ERROR",
+            )
+
+    def run_sync_schemas(self, request, queryset):
+        """Run sync_schemas command (runs synchronously - quick command)."""
+        self._run_command(request, "sync_schemas")
+
+    run_sync_schemas.short_description = "Run: Sync Schemas (quick)"
+
+    def run_load_column_templates(self, request, queryset):
+        """Run load_column_templates command (runs in background)."""
+        self._run_command(request, "load_column_templates", {"clear": True, "update_references": True})
+
+    run_load_column_templates.short_description = "Run: Load Column Templates (background)"
+
+    def run_load_ontologies(self, request, queryset):
+        """Run load_ontologies command (runs in background - long running)."""
+        self._run_command(request, "load_ontologies")
+
+    run_load_ontologies.short_description = "Run: Load All Ontologies (background)"
+
+    def run_cleanup_tasks(self, request, queryset):
+        """Run cleanup_expired_task_files command (runs synchronously - quick command)."""
+        self._run_command(request, "cleanup_expired_task_files")
+
+    run_cleanup_tasks.short_description = "Run: Cleanup Expired Task Files (quick)"
+
+    class Media:
+        css = {"all": ["admin/css/forms.css"]}

@@ -2271,8 +2271,8 @@ ontology = ["fastparquet", "pooch", "rdflib", "requests"]
 [package.source]
 type = "git"
 url = "https://github.com/bigbio/sdrf-pipelines.git"
-reference = "3089f07"
-resolved_reference = "3089f07e8ef71cc4a373deb9c8dd8eba240cae82"
+reference = "8c65265"
+resolved_reference = "8c652652f57126e88b82a8505a9178f7d6d31299"
 
 [[package]]
 name = "six"
@@ -2833,4 +2833,4 @@ brotli = ["brotli"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "ad7d15bf104560ee4d9a5c932c9c31ce27efc815411322dec6d9635f90f2ea1d"
+content-hash = "5a7ca936e9c9bc39b84348d3f2426d8ad8ced7788af832db093101b80e00bfeb"

@@ -745,6 +745,57 @@ class MetadataColumnTemplateAdmin(admin.ModelAdmin):
             ).distinct()
         return queryset
 
+    actions = ["activate_templates", "deactivate_templates", "reload_from_schema"]
+
+    def activate_templates(self, request, queryset):
+        """Activate selected templates."""
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f"Activated {updated} template(s).", level="SUCCESS")
+
+    activate_templates.short_description = "Activate selected templates"
+
+    def deactivate_templates(self, request, queryset):
+        """Deactivate selected templates."""
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f"Deactivated {updated} template(s).", level="SUCCESS")
+
+    deactivate_templates.short_description = "Deactivate selected templates"
+
+    def reload_from_schema(self, request, queryset):
+        """Reload column templates from their linked schemas."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        schema_names = set()
+        for template in queryset.select_related("schema"):
+            if template.schema:
+                schema_names.add(template.schema.name)
+
+        if not schema_names:
+            self.message_user(request, "Selected templates have no linked schemas.", level="WARNING")
+            return
+
+        stdout = StringIO()
+        try:
+            for schema_name in schema_names:
+                call_command(
+                    "load_column_templates",
+                    schema=schema_name,
+                    clear=True,
+                    update_references=True,
+                    stdout=stdout,
+                )
+            self.message_user(
+                request,
+                f"Reloaded column templates for {len(schema_names)} schema(s): {', '.join(sorted(schema_names))}",
+                level="SUCCESS",
+            )
+        except Exception as e:
+            self.message_user(request, f"Error reloading templates: {str(e)}", level="ERROR")
+
+    reload_from_schema.short_description = "Reload selected templates from schemas"
+
 
 @admin.register(MetadataColumnTemplateShare)
 class MetadataColumnTemplateShareAdmin(admin.ModelAdmin):
@@ -824,22 +875,37 @@ class SchemaAdmin(admin.ModelAdmin):
     list_display = [
         "name",
         "display_name",
+        "version",
+        "layer",
+        "usable_alone",
         "is_builtin",
         "is_active",
-        "is_public",
         "usage_count",
-        "file_size_kb",
-        "creator",
         "created_at",
     ]
-    list_filter = ["is_builtin", "is_active", "is_public", "tags", "created_at", "creator"]
-    search_fields = ["name", "display_name", "description"]
-    ordering = ["-is_builtin", "name"]
+    list_filter = ["is_builtin", "is_active", "is_public", "layer", "usable_alone", "tags", "created_at"]
+    search_fields = ["name", "display_name", "description", "extends"]
+    ordering = ["-is_builtin", "layer", "name"]
     readonly_fields = ["file_size", "file_hash", "usage_count", "created_at", "updated_at"]
 
     fieldsets = (
         ("Basic Information", {"fields": ("name", "display_name", "description")}),
         ("Schema File", {"fields": ("schema_file", "file_size", "file_hash")}),
+        (
+            "Template Metadata",
+            {
+                "fields": ("version", "extends", "usable_alone", "layer"),
+                "description": "Metadata from sdrf-pipelines manifest defining template relationships.",
+            },
+        ),
+        (
+            "Template Dependencies",
+            {
+                "fields": ("requires", "excludes"),
+                "classes": ("collapse",),
+                "description": "Required layers and excluded templates when combining schemas.",
+            },
+        ),
         ("Classification", {"fields": ("is_builtin", "tags")}),
         (
             "Availability Control",
@@ -870,7 +936,12 @@ class SchemaAdmin(admin.ModelAdmin):
             obj.creator = request.user
         super().save_model(request, obj, form, change)
 
-    actions = ["sync_builtin_schemas_action", "activate_schemas_action", "deactivate_schemas_action"]
+    actions = [
+        "sync_builtin_schemas_action",
+        "load_column_templates_action",
+        "activate_schemas_action",
+        "deactivate_schemas_action",
+    ]
 
     def sync_builtin_schemas_action(self, request, queryset):
         """Admin action to sync builtin schemas."""
@@ -888,6 +959,41 @@ class SchemaAdmin(admin.ModelAdmin):
             self.message_user(request, f"Error during schema sync: {str(e)}", level="ERROR")
 
     sync_builtin_schemas_action.short_description = "Sync builtin schemas from sdrf-pipelines"
+
+    def load_column_templates_action(self, request, queryset):
+        """Admin action to load column templates for selected schemas."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        schema_names = list(queryset.values_list("name", flat=True))
+
+        if not schema_names:
+            self.message_user(request, "No schemas selected.", level="WARNING")
+            return
+
+        stdout = StringIO()
+
+        try:
+            for schema_name in schema_names:
+                call_command(
+                    "load_column_templates",
+                    schema=schema_name,
+                    clear=True,
+                    update_references=True,
+                    stdout=stdout,
+                )
+            output = stdout.getvalue()
+            total_match = output.count("Created template:")
+            self.message_user(
+                request,
+                f"Loaded column templates for {len(schema_names)} schema(s). Created {total_match} templates.",
+                level="SUCCESS",
+            )
+        except Exception as e:
+            self.message_user(request, f"Error loading column templates: {str(e)}", level="ERROR")
+
+    load_column_templates_action.short_description = "Load column templates for selected schemas"
 
     def activate_schemas_action(self, request, queryset):
         """Admin action to activate selected schemas."""

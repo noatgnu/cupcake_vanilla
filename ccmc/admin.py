@@ -382,7 +382,7 @@ class MessageAdmin(admin.ModelAdmin):
 class WebRTCSessionAdmin(admin.ModelAdmin):
     list_display = [
         "id",
-        "session_name",
+        "name",
         "session_type",
         "session_status_display",
         "initiated_by",
@@ -395,7 +395,7 @@ class WebRTCSessionAdmin(admin.ModelAdmin):
         "session_status",
         "started_at",
     ]
-    search_fields = ["initiated_by__username", "session_name"]
+    search_fields = ["initiated_by__username", "name"]
     readonly_fields = ["started_at", "ended_at", "created_at", "updated_at"]
     autocomplete_fields = ["initiated_by"]
     date_hierarchy = "started_at"
@@ -406,7 +406,8 @@ class WebRTCSessionAdmin(admin.ModelAdmin):
             "Session Information",
             {
                 "fields": (
-                    "session_name",
+                    "name",
+                    "is_default",
                     "session_type",
                     "session_status",
                     "initiated_by",
@@ -420,13 +421,6 @@ class WebRTCSessionAdmin(admin.ModelAdmin):
                     "started_at",
                     "ended_at",
                 )
-            },
-        ),
-        (
-            "Configuration",
-            {
-                "fields": ("configuration",),
-                "classes": ("collapse",),
             },
         ),
         (

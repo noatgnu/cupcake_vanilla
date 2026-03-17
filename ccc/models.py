@@ -2081,3 +2081,139 @@ class TaskResult(models.Model):
                 pass
             self.file = None
             self.save(update_fields=["file"])
+
+
+class ManagementCommandExecution(models.Model):
+    """Track execution history of management commands triggered from admin."""
+
+    COMMAND_CHOICES = [
+        ("sync_schemas", "Sync Schemas"),
+        ("load_column_templates", "Load Column Templates"),
+        ("load_ontologies", "Load All Ontologies"),
+        ("load_species", "Load Species"),
+        ("load_tissue", "Load Tissue"),
+        ("load_human_disease", "Load Human Disease"),
+        ("load_subcellular_location", "Load Subcellular Location"),
+        ("load_ms_mod", "Load MS Modifications"),
+        ("load_ms_term", "Load MS Terms"),
+        ("cleanup_expired_task_files", "Cleanup Expired Task Files"),
+        ("check_workers", "Check Workers"),
+        ("cleanup_dead_workers", "Cleanup Dead Workers"),
+    ]
+
+    QUICK_COMMANDS = ["sync_schemas", "cleanup_expired_task_files", "check_workers", "cleanup_dead_workers"]
+
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("QUEUED", "Queued"),
+        ("RUNNING", "Running"),
+        ("SUCCESS", "Success"),
+        ("FAILURE", "Failure"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    command_name = models.CharField(max_length=100, choices=COMMAND_CHOICES)
+    command_args = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="PENDING")
+    output = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    executed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="command_executions")
+    job_id = models.CharField(max_length=100, blank=True, help_text="RQ job ID for async execution")
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Management Command Execution"
+        verbose_name_plural = "Management Command Executions"
+
+    def __str__(self):
+        return f"{self.get_command_name_display()} - {self.status} ({self.created_at})"
+
+    @property
+    def duration(self):
+        """Calculate execution duration."""
+        if self.started_at and self.completed_at:
+            return self.completed_at - self.started_at
+        return None
+
+    @property
+    def is_long_running(self):
+        """Check if this command is expected to take a long time."""
+        return self.command_name not in self.QUICK_COMMANDS
+
+    def run_command(self, force_sync=False):
+        """
+        Execute the management command.
+
+        For long-running commands, queues to background worker.
+        For quick commands, runs synchronously.
+
+        Args:
+            force_sync: Force synchronous execution even for long-running commands
+        """
+        if self.is_long_running and not force_sync:
+            self.run_async()
+        else:
+            self.run_sync()
+
+    def run_async(self):
+        """Queue command for background execution."""
+        from ccc.tasks import run_management_command_async
+
+        self.status = "QUEUED"
+        self.save(update_fields=["status"])
+
+        job = run_management_command_async.delay(str(self.id))
+        self.job_id = job.id
+        self.save(update_fields=["job_id"])
+
+    def run_sync(self):
+        """Execute the management command synchronously."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        self.status = "RUNNING"
+        self.started_at = timezone.now()
+        self.save(update_fields=["status", "started_at"])
+
+        stdout = StringIO()
+        stderr = StringIO()
+
+        try:
+            call_command(self.command_name, stdout=stdout, stderr=stderr, **self.command_args)
+            self.output = stdout.getvalue()
+            self.error_message = stderr.getvalue()
+            self.status = "SUCCESS"
+        except Exception as e:
+            self.error_message = f"{stderr.getvalue()}\n\nException: {str(e)}"
+            self.status = "FAILURE"
+        finally:
+            self.completed_at = timezone.now()
+            self.save(update_fields=["output", "error_message", "status", "completed_at"])
+
+    def refresh_status(self):
+        """Refresh status from RQ job if running async."""
+        if not self.job_id or self.status in ["SUCCESS", "FAILURE"]:
+            return
+
+        import django_rq
+
+        try:
+            queue = django_rq.get_queue("default")
+            job = queue.fetch_job(self.job_id)
+
+            if job is None:
+                return
+
+            if job.is_finished:
+                self.refresh_from_db()
+            elif job.is_failed:
+                self.status = "FAILURE"
+                self.error_message = str(job.exc_info) if job.exc_info else "Job failed"
+                self.completed_at = timezone.now()
+                self.save(update_fields=["status", "error_message", "completed_at"])
+        except Exception:
+            pass

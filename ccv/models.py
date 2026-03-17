@@ -2235,6 +2235,12 @@ class Schema(models.Model):
     Stores schema YAML files - both builtin (from sdrf-pipelines) and user-uploaded.
     """
 
+    LAYER_CHOICES = [
+        ("technology", "Technology"),
+        ("sample", "Sample"),
+        ("experiment", "Experiment"),
+    ]
+
     name = models.CharField(max_length=100, unique=True, help_text="Unique name for the schema")
     display_name = models.CharField(max_length=200, help_text="Human-readable display name")
     description = models.TextField(blank=True, help_text="Description of what this schema provides")
@@ -2245,6 +2251,20 @@ class Schema(models.Model):
     # Schema source
     is_builtin = models.BooleanField(
         default=False, help_text="Whether this schema comes from sdrf-pipelines builtin resources"
+    )
+
+    # Manifest metadata from sdrf-pipelines
+    version = models.CharField(max_length=20, blank=True, default="", help_text="Schema version string")
+    extends = models.CharField(max_length=100, blank=True, default="", help_text="Parent template this schema extends")
+    usable_alone = models.BooleanField(
+        default=True, help_text="Whether this schema can be used standalone without combining with others"
+    )
+    layer = models.CharField(
+        max_length=20, blank=True, default="", choices=LAYER_CHOICES, help_text="Template layer type"
+    )
+    requires = models.JSONField(default=list, blank=True, help_text="Required template layers when using this schema")
+    excludes = models.JSONField(
+        default=dict, blank=True, help_text="Templates to exclude when combining with this schema"
     )
 
     # Schema metadata
@@ -2424,7 +2444,12 @@ class Schema(models.Model):
                 usable_alone = template_meta.get("usable_alone", True)
                 is_active_default = schema_name == "ms-proteomics" or (usable_alone and schema_name == "base")
 
-                # Create or update schema
+                version = template_meta.get("latest", "")
+                extends = template_meta.get("extends") or ""
+                layer_value = template_meta.get("layer") or ""
+                requires_value = template_meta.get("requires") or []
+                excludes_value = template_meta.get("excludes") or {}
+
                 schema, created = cls.objects.get_or_create(
                     name=schema_name,
                     defaults={
@@ -2434,10 +2459,26 @@ class Schema(models.Model):
                         "is_active": is_active_default,
                         "is_public": True,
                         "tags": tags,
+                        "version": version,
+                        "extends": extends,
+                        "usable_alone": usable_alone,
+                        "layer": layer_value,
+                        "requires": requires_value,
+                        "excludes": excludes_value,
                     },
                 )
 
-                # Save YAML file content
+                if not created:
+                    schema.display_name = display_name
+                    schema.description = description
+                    schema.tags = tags
+                    schema.version = version
+                    schema.extends = extends
+                    schema.usable_alone = usable_alone
+                    schema.layer = layer_value
+                    schema.requires = requires_value
+                    schema.excludes = excludes_value
+
                 file_name = f"{schema_name}.pkl"
                 schema.schema_file.save(file_name, ContentFile(schema_obj_pickle), save=False)
                 schema.save()
@@ -2787,6 +2828,109 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
             # Clean up table if column creation fails
             metadata_table.delete()
             raise Exception(f"Failed to create table from template: {str(e)}")
+
+    def sync_columns_from_schemas(
+        self, add_new: bool = True, update_existing: bool = True, remove_orphans: bool = False
+    ):
+        """
+        Synchronize template columns with the latest MetadataColumnTemplate definitions from linked schemas.
+
+        Args:
+            add_new: Add columns that exist in schemas but not in template
+            update_existing: Update existing columns with latest template settings
+            remove_orphans: Remove columns that no longer exist in schemas
+
+        Returns:
+            dict: Summary of changes made (added, updated, removed counts)
+        """
+        if not self.schemas.exists():
+            return {"error": "No schemas linked to this template", "added": 0, "updated": 0, "removed": 0}
+
+        result = {"added": 0, "updated": 0, "removed": 0, "errors": []}
+
+        schema_objects = list(self.schemas.all().order_by("id"))
+
+        schema_column_templates = []
+        seen_column_names = set()
+
+        for schema_obj in schema_objects:
+            schema_templates = schema_obj.column_templates.filter(is_active=True).order_by("default_position", "id")
+            for col_template in schema_templates:
+                if col_template.column_name not in seen_column_names:
+                    schema_column_templates.append(col_template)
+                    seen_column_names.add(col_template.column_name)
+
+        schema_column_names = {t.column_name for t in schema_column_templates}
+
+        existing_columns = {col.name: col for col in self.user_columns.all()}
+        existing_column_names = set(existing_columns.keys())
+
+        if add_new:
+            new_column_names = schema_column_names - existing_column_names
+            max_position = max((col.column_position for col in existing_columns.values()), default=-1) + 1
+
+            for col_template in schema_column_templates:
+                if col_template.column_name in new_column_names:
+                    try:
+                        from ccv.models import MetadataTemplateColumn
+
+                        MetadataTemplateColumn.objects.create(
+                            metadata_table_template=self,
+                            name=col_template.column_name,
+                            type=col_template.column_type,
+                            column_position=max_position,
+                            value=col_template.default_value or "",
+                            template=col_template,
+                            ontology_type=col_template.ontology_type,
+                            ontology_options=col_template.ontology_options,
+                            custom_ontology_filters=col_template.custom_ontology_filters,
+                            mandatory=col_template.mandatory,
+                            not_applicable=col_template.not_applicable,
+                            not_available=col_template.not_available,
+                        )
+                        max_position += 1
+                        result["added"] += 1
+                    except Exception as e:
+                        result["errors"].append(f"Failed to add column {col_template.column_name}: {str(e)}")
+
+        if update_existing:
+            columns_to_update = schema_column_names & existing_column_names
+            template_by_name = {t.column_name: t for t in schema_column_templates}
+
+            for col_name in columns_to_update:
+                col_template = template_by_name.get(col_name)
+                existing_col = existing_columns.get(col_name)
+
+                if col_template and existing_col:
+                    try:
+                        existing_col.template = col_template
+                        existing_col.ontology_type = col_template.ontology_type
+                        existing_col.ontology_options = col_template.ontology_options
+                        existing_col.custom_ontology_filters = col_template.custom_ontology_filters
+                        existing_col.not_applicable = col_template.not_applicable
+                        existing_col.not_available = col_template.not_available
+                        existing_col.save()
+                        result["updated"] += 1
+                    except Exception as e:
+                        result["errors"].append(f"Failed to update column {col_name}: {str(e)}")
+
+        if remove_orphans:
+            orphan_column_names = existing_column_names - schema_column_names
+            for col_name in orphan_column_names:
+                try:
+                    existing_columns[col_name].delete()
+                    result["removed"] += 1
+                except Exception as e:
+                    result["errors"].append(f"Failed to remove column {col_name}: {str(e)}")
+
+        if add_new or remove_orphans:
+            schema_ids = list(self.schemas.values_list("id", flat=True))
+            try:
+                self.reorder_columns_by_schema(schema_ids=schema_ids)
+            except Exception as e:
+                result["errors"].append(f"Failed to reorder columns: {str(e)}")
+
+        return result
 
     def create_table_from_schemas(
         self,
