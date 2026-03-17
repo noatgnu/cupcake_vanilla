@@ -2450,6 +2450,8 @@ class Schema(models.Model):
                 requires_value = template_meta.get("requires") or []
                 excludes_value = template_meta.get("excludes") or {}
 
+                print(f"Schema '{schema_name}': layer='{layer_value}', extends='{extends}'")  # Debug
+
                 schema, created = cls.objects.get_or_create(
                     name=schema_name,
                     defaults={
