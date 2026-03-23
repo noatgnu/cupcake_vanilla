@@ -111,9 +111,10 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             chunked_upload_id=str(uploaded_file.id),
                         )
 
-                        # Update task with RQ job ID
-                        task_status.rq_job_id = job.id
-                        task_status.save(update_fields=["rq_job_id"])
+                        # Update task with RQ job ID (if job was returned)
+                        if job:
+                            task_status.rq_job_id = job.id
+                            task_status.save(update_fields=["rq_job_id"])
 
                     elif file_ext in [".tsv", ".txt", ".sdrf"]:
                         task_type = "IMPORT_SDRF"
@@ -140,9 +141,10 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             chunked_upload_id=str(uploaded_file.id),
                         )
 
-                        # Update task with RQ job ID
-                        task_status.rq_job_id = job.id
-                        task_status.save(update_fields=["rq_job_id"])
+                        # Update task with RQ job ID (if job was returned)
+                        if job:
+                            task_status.rq_job_id = job.id
+                            task_status.save(update_fields=["rq_job_id"])
 
                     else:
                         return Response(

@@ -914,11 +914,12 @@ class AuthenticationAPITestCase(APITestCase):
         response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("access_token", response.data)
-        self.assertIn("refresh_token", response.data)
-        self.assertIn("user", response.data)
-        self.assertEqual(response.data["user"]["username"], "testuser")
-        self.assertEqual(response.data["user"]["email"], "test@example.com")
+        res_json = response.json()
+        self.assertIn("access_token", res_json)
+        self.assertIn("refresh_token", res_json)
+        self.assertIn("user", res_json)
+        self.assertEqual(res_json["user"]["username"], "testuser")
+        self.assertEqual(res_json["user"]["email"], "test@example.com")
 
     def test_login_with_invalid_credentials(self):
         """Test login with invalid credentials."""
@@ -928,7 +929,8 @@ class AuthenticationAPITestCase(APITestCase):
         response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertIn("error", response.data)
+        res_json = response.json()
+        self.assertIn("error", res_json)
 
     def test_login_missing_credentials(self):
         """Test login with missing credentials."""
@@ -938,7 +940,8 @@ class AuthenticationAPITestCase(APITestCase):
         response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("error", response.data)
+        res_json = response.json()
+        self.assertIn("error", res_json)
 
     def test_logout_with_valid_token(self):
         """Test logout with valid refresh token using real JWT authentication."""
@@ -1791,8 +1794,9 @@ class SecurityTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
         # Error message should not reveal whether user exists
-        self.assertIn("Invalid credentials", response.data["error"])
-        self.assertNotIn("user does not exist", response.data["error"].lower())
+        res_json = response.json()
+        self.assertIn("Invalid credentials", res_json["error"])
+        self.assertNotIn("user does not exist", res_json["error"].lower())
 
 
 class ORCIDConfigurationTestCase(TestCase):
