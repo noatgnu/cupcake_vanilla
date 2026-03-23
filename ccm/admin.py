@@ -33,7 +33,7 @@ class InstrumentAdmin(admin.ModelAdmin):
         "enabled",
         "accepts_bookings",
         "bookings_count",
-        "jobs_count",
+        "instrument_jobs_count",
         "created_at",
     ]
     list_filter = ["enabled", "accepts_bookings", "is_vaulted", "created_at"]
@@ -78,7 +78,7 @@ class InstrumentAdmin(admin.ModelAdmin):
         return "0"
 
     @admin.display(description="Jobs")
-    def jobs_count(self, obj):
+    def instrument_jobs_count(self, obj):
         """Display count of jobs."""
         count = obj.instrument_jobs.count()
         if count > 0:
