@@ -1,6 +1,6 @@
 # Debian Buster i386 (32-bit) Dockerfile for CUPCAKE Vanilla
 # Using Debian Buster as it's the last Debian with i386 support
-FROM --platform=linux/386 python:3.11-bullseye
+FROM --platform=linux/386 python:3.12-bookworm
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1

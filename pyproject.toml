@@ -12,7 +12,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -124,37 +124,37 @@ exclude = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
-django = "^5.2.6"
-djangorestframework = "^3.14.0"
-django-filter = "^25.1"
+python = "^3.12"
+django = "^6.0.0"
+djangorestframework = "^3.17.0"
+django-filter = "^25.2"
 redis = "^6.4.0"
 django-redis = "^6.0.0"
-django-simple-history = "^3.4.0"
-psycopg2-binary = "^2.9.9"
-openpyxl = "^3.1.2"
-pandas = "^2.1.4"
+django-simple-history = "^3.11.0"
+psycopg2-binary = "^2.9.10"
+openpyxl = "^3.1.5"
+pandas = "^2.2.3"
 sdrf-pipelines = {git = "https://github.com/bigbio/sdrf-pipelines.git", rev = "a0e45b3"}
 drf-chunked-upload = "^0.6.0"
 pronto = "^2.5.7"
-requests = "^2.31.0"
+requests = "^2.32.0"
 djangorestframework-simplejwt = "^5.5.1"
 requests-oauthlib = "^2.0.0"
 python-social-auth = {extras = ["django"], version = "^0.3.6"}
-whitenoise = "^6.7.0"
-django-cors-headers = "^4.3.1"
+whitenoise = "^6.8.0"
+django-cors-headers = "^4.9.0"
 gunicorn = "23.0.0"
 uvicorn = {extras = ["standard"], version = "^0.38.0"}
 tqdm = "^4.67.1"
-channels = "^4.0.0"
-channels-redis = "^4.2.0"
+channels = "^4.3.2"
+channels-redis = "^4.2.1"
 websockets = "^15.0.1"
 cryptography = "^46.0.3"
 rq = "^2.5.0"
-django-rq = "^3.1"
+django-rq = "^4.0.0"
 beautifulsoup4="^4.13.5"
 webvtt-py = "^0.5.1"
-django-dbbackup = "^5.0.1"
+django-dbbackup = "^5.2.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.12.0"
@@ -176,7 +176,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 88
-target-version = ['py311']
+target-version = ['py312']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -220,7 +220,7 @@ exclude = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 check_untyped_defs = true
 ignore_missing_imports = true
 warn_unused_ignores = true
