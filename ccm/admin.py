@@ -59,6 +59,7 @@ class InstrumentAdmin(admin.ModelAdmin):
         ("Audit", {"fields": ("created_at", "updated_at"), "classes": ("collapse",)}),
     )
 
+    @admin.display(description="Image")
     def image_preview(self, obj):
         """Display thumbnail of instrument image in admin."""
         if obj.image and obj.image.startswith("data:image/"):
@@ -67,8 +68,7 @@ class InstrumentAdmin(admin.ModelAdmin):
             )
         return "No image"
 
-    image_preview.short_description = "Image"
-
+    @admin.display(description="Bookings")
     def bookings_count(self, obj):
         """Display count of bookings."""
         count = obj.instrument_usage.count()
@@ -77,17 +77,14 @@ class InstrumentAdmin(admin.ModelAdmin):
             return format_html('<a href="{}">{}</a>', url, count)
         return "0"
 
-    bookings_count.short_description = "Bookings"
-
+    @admin.display(description="Jobs")
     def jobs_count(self, obj):
         """Display count of jobs."""
-        count = obj.jobs.count()
+        count = obj.instrument_jobs.count()
         if count > 0:
             url = reverse("admin:ccm_instrumentjob_changelist") + f"?instrument__id__exact={obj.id}"
             return format_html('<a href="{}">{}</a>', url, count)
         return "0"
-
-    jobs_count.short_description = "Jobs"
 
     def get_queryset(self, request):
         """Optimize queryset."""
