@@ -26,12 +26,12 @@ class SDRFTemplateInheritanceTest(TestCase):
             admin_user = User.objects.create_superuser("admin", "admin@test.com", "password")
 
         # Step 3: Get schema object (from load_column_templates lines 100-114)
-        schema_obj = Schema.objects.get(name="minimum", is_builtin=True)
+        schema_obj = Schema.objects.get(name="base", is_builtin=True)
 
         # Step 4: Load schema definition (from load_column_templates line 150)
         from ccv.utils import get_specific_default_schema
 
-        schema = get_specific_default_schema("minimum")
+        schema = get_specific_default_schema("base")
 
         # Step 5: Create column templates (from load_column_templates lines 192-240)
         for column in schema.columns:
@@ -64,7 +64,7 @@ class SDRFTemplateInheritanceTest(TestCase):
                 is_system_template=True,
                 owner=admin_user,
                 category="Minimum Schema",
-                source_schema="minimum",
+                source_schema="base",
                 schema=schema_obj,
                 visibility="public",
             )

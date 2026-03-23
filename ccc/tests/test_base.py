@@ -911,7 +911,7 @@ class AuthenticationAPITestCase(APITestCase):
         url = reverse("auth-login")
         data = {"username": "testuser", "password": "testpass123"}
 
-        response = self.client.post(url, data)
+        response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("access_token", response.data)
@@ -925,7 +925,7 @@ class AuthenticationAPITestCase(APITestCase):
         url = reverse("auth-login")
         data = {"username": "testuser", "password": "wrongpass"}
 
-        response = self.client.post(url, data)
+        response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertIn("error", response.data)
@@ -935,7 +935,7 @@ class AuthenticationAPITestCase(APITestCase):
         url = reverse("auth-login")
         data = {"username": "testuser"}  # missing password
 
-        response = self.client.post(url, data)
+        response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
@@ -1787,7 +1787,7 @@ class SecurityTestCase(APITestCase):
         url = reverse("auth-login")
         data = {"username": "nonexistentuser", "password": "password"}
 
-        response = self.client.post(url, data)
+        response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
         # Error message should not reveal whether user exists

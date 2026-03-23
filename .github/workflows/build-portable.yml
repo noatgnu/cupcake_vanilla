@@ -4,14 +4,24 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python version to bundle'
+        required: true
+        default: '3.12'
+        type: choice
+        options:
+          - '3.11'
+          - '3.12'
 
 jobs:
   build:
     timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             arch: x86_64
             platform: x86_64-unknown-linux-gnu
             os_name: linux
@@ -33,7 +43,19 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Get latest Python 3.11 standalone build
+    - name: Determine Python version
+      id: python-version
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          PYTHON_VERSION="${{ github.event.inputs.python_version }}"
+        else
+          PYTHON_VERSION="3.12"
+        fi
+        echo "version=$PYTHON_VERSION" >> $GITHUB_OUTPUT
+        echo "Using Python $PYTHON_VERSION"
+
+    - name: Get latest Python standalone build
       id: get-python
       shell: bash
       env:
@@ -41,7 +63,8 @@ jobs:
       run: |
         set +e
         PLATFORM="${{ matrix.platform }}"
-        echo "Looking for platform: $PLATFORM"
+        PYTHON_VER="${{ steps.python-version.outputs.version }}"
+        echo "Looking for Python $PYTHON_VER for platform: $PLATFORM"
 
         echo "Fetching release data..."
         HTTP_CODE=$(curl -sL -w "%{http_code}" -o release.json \
@@ -66,12 +89,12 @@ jobs:
           exit 1
         fi
 
-        DOWNLOAD_URL=$(python3 -c "import json; data = json.load(open('release.json')); assets = data.get('assets', []); platform = '${PLATFORM}'; matches = [asset['browser_download_url'] for asset in assets if 'cpython-3.11' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and '_stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
+        DOWNLOAD_URL=$(python3 -c "import json; data = json.load(open('release.json')); assets = data.get('assets', []); platform = '${PLATFORM}'; python_ver = '${PYTHON_VER}'; matches = [asset['browser_download_url'] for asset in assets if f'cpython-{python_ver}' in asset.get('name', '') and platform in asset.get('name', '') and asset.get('name', '').endswith('install_only.tar.gz') and '_stripped' not in asset.get('name', '')]; print(matches[0] if matches else '')")
 
         if [ -z "$DOWNLOAD_URL" ]; then
-          echo "Error: Could not find Python 3.11 for platform $PLATFORM"
-          echo "Sample of available Python 3.11 assets:"
-          python3 -c "import json; data=json.load(open('release.json')); [print(asset['name']) for asset in data.get('assets', []) if 'cpython-3.11' in asset.get('name', '') and 'install_only' in asset.get('name', '')]" | head -10
+          echo "Error: Could not find Python $PYTHON_VER for platform $PLATFORM"
+          echo "Available Python $PYTHON_VER assets:"
+          python3 -c "import json; data=json.load(open('release.json')); [print(asset['name']) for asset in data.get('assets', []) if f'cpython-${PYTHON_VER}' in asset.get('name', '') and 'install_only' in asset.get('name', '')]" | head -10
           exit 1
         fi
 
@@ -110,7 +133,8 @@ jobs:
           VERSION="dev-$(date +%Y%m%d)"
         fi
 
-        DIST_NAME="cupcake_vanilla-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
+        PYTHON_VER="${{ steps.python-version.outputs.version }}"
+        DIST_NAME="cupcake_vanilla-${VERSION}-py${PYTHON_VER}-${{ matrix.os_name }}-${{ matrix.arch }}"
         DIST_DIR="dist/${DIST_NAME}"
 
         mkdir -p "${DIST_DIR}"
@@ -126,6 +150,9 @@ jobs:
         fi
         if [ -f "poetry.lock" ]; then
           cp poetry.lock "${DIST_DIR}/"
+        fi
+        if [ -f "requirements.txt" ]; then
+          cp requirements.txt "${DIST_DIR}/"
         fi
 
         cat > "${DIST_DIR}/run.sh" << 'EOF'
@@ -150,13 +177,13 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: cupcake_vanilla-${{ matrix.os }}-${{ matrix.arch }}
+        name: cupcake_vanilla-py${{ steps.python-version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}
         path: dist/*.tar.gz
         retention-days: 30
 
     - name: Upload to Release
       if: github.event_name == 'release'
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: dist/*.tar.gz
         tag_name: ${{ github.event.release.tag_name }}

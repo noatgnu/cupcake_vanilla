@@ -10,12 +10,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: [3.11]
+        python-version: ['3.11', '3.12']
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:16
         env:
           POSTGRES_PASSWORD: cupcake_vanilla_pass
           POSTGRES_USER: cupcake_vanilla
@@ -42,7 +43,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -55,10 +56,12 @@ jobs:
 
     - name: Load cached venv
       id: cached-poetry-dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: .venv
-        key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-${{ runner.os }}-${{ matrix.python-version }}-
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
@@ -72,29 +75,28 @@ jobs:
         poetry run pre-commit install
         poetry run pre-commit run --all-files
 
-
     - name: Run tests
       env:
         DATABASE_URL: postgresql://cupcake_vanilla:cupcake_vanilla_pass@localhost:5432/cupcake_vanilla_db
         REDIS_URL: redis://localhost:6379/0
         SECRET_KEY: test-secret-key
-        DEBUG: True
+        DEBUG: 'True'
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings
-        ENABLE_CUPCAKE_MACARON: true
-        ENABLE_CUPCAKE_MINT_CHOCOLATE: true
-        ENABLE_CUPCAKE_RED_VELVET: true
-        ENABLE_CUPCAKE_SALTED_CARAMEL: true
+        ENABLE_CUPCAKE_MACARON: 'true'
+        ENABLE_CUPCAKE_MINT_CHOCOLATE: 'true'
+        ENABLE_CUPCAKE_RED_VELVET: 'true'
+        ENABLE_CUPCAKE_SALTED_CARAMEL: 'true'
       run: |
         poetry run python manage.py migrate
         poetry run python manage.py collectstatic --noinput
         poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
 
-
   test-electron:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: [3.11]
+        python-version: ['3.11', '3.12']
 
     services:
       redis:
@@ -111,7 +113,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -124,10 +126,12 @@ jobs:
 
     - name: Load cached venv
       id: cached-poetry-dependencies-electron
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: .venv
-        key: venv-electron-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        key: venv-electron-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-electron-${{ runner.os }}-${{ matrix.python-version }}-
 
     - name: Install dependencies with Electron group
       if: steps.cached-poetry-dependencies-electron.outputs.cache-hit != 'true'
@@ -139,18 +143,54 @@ jobs:
     - name: Test Electron environment with SQLite Django backend and Redis
       env:
         DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_electron
-        ELECTRON_DEBUG: true
+        ELECTRON_DEBUG: 'true'
         SECRET_KEY: test-electron-secret-key
         ELECTRON_APP_DATA: /tmp/electron-test
         REDIS_HOST: localhost
-        REDIS_PORT: 6379
+        REDIS_PORT: '6379'
         REDIS_URL: redis://localhost:6379
-        ENABLE_CUPCAKE_MACARON: true
-        ENABLE_CUPCAKE_MINT_CHOCOLATE: true
-        ENABLE_CUPCAKE_RED_VELVET: true
-        ENABLE_CUPCAKE_SALTED_CARAMEL: true
+        ENABLE_CUPCAKE_MACARON: 'true'
+        ENABLE_CUPCAKE_MINT_CHOCOLATE: 'true'
+        ENABLE_CUPCAKE_RED_VELVET: 'true'
+        ENABLE_CUPCAKE_SALTED_CARAMEL: 'true'
       run: |
         poetry run python manage.py check --settings=cupcake_vanilla.settings_electron
         poetry run python manage.py migrate
         poetry run python manage.py collectstatic --noinput
         poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Load cached venv
+      id: cached-poetry-dependencies-lint
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-lint-${{ runner.os }}-3.12-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-lint-${{ runner.os }}-3.12-
+
+    - name: Install dependencies
+      if: steps.cached-poetry-dependencies-lint.outputs.cache-hit != 'true'
+      run: poetry install --no-interaction --no-root --only dev
+
+    - name: Run linters
+      run: |
+        poetry run black --check .
+        poetry run isort --check-only .
+        poetry run flake8 .

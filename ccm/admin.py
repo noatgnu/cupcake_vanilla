@@ -71,7 +71,7 @@ class InstrumentAdmin(admin.ModelAdmin):
 
     def bookings_count(self, obj):
         """Display count of bookings."""
-        count = obj.usages.count()
+        count = obj.instrument_usage.count()
         if count > 0:
             url = reverse("admin:ccm_instrumentusage_changelist") + f"?instrument__id__exact={obj.id}"
             return format_html('<a href="{}">{}</a>', url, count)

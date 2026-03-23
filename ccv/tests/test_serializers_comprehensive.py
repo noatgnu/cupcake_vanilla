@@ -975,6 +975,8 @@ class MetadataValidationSerializerTest(TestCase):
             "validate_structure",
             "include_pools",
             "async_processing",
+            "schema_names",
+            "skip_ontology",
         }
         actual_fields = set(fields.keys())
 
@@ -989,7 +991,7 @@ class MetadataValidationSerializerTest(TestCase):
 
         # Extra field should not be in validated data
         self.assertNotIn("extra_field", serializer.validated_data)
-        self.assertEqual(len(serializer.validated_data), 6)  # Updated for expanded serializer
+        self.assertEqual(len(serializer.validated_data), 8)
 
     def test_validation_serializer_empty_data(self):
         """Test validation serializer with empty data."""
