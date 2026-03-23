@@ -27,6 +27,8 @@ class SDRFTemplateInheritanceTest(TestCase):
 
         # Step 3: Get schema object (from load_column_templates lines 100-114)
         schema_obj = Schema.objects.get(name="sample-metadata", is_builtin=True)
+        schema_obj.is_active = True
+        schema_obj.save()
 
         # Step 4: Load schema definition (from load_column_templates line 150)
         from ccv.utils import get_specific_default_schema
