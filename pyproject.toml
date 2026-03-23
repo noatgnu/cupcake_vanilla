@@ -206,6 +206,7 @@ ensure_newline_before_comments = true
 known_django = ["django"]
 known_first_party = ["ccc", "ccv"]
 sections = ["FUTURE", "STDLIB", "DJANGO", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+skip_glob = ["**/migrations/*", ".venv/*", ".poetry/*"]
 
 [tool.flake8]
 max-line-length = 120
