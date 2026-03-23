@@ -304,9 +304,10 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             task_id=str(task.id),
         )
 
-        # Update task with job ID
-        task.rq_job_id = job.id
-        task.save(update_fields=["rq_job_id"])
+        # Update task with job ID (if job was returned)
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
 
         return Response(
             {"task_id": str(task.id), "message": "Excel export task queued successfully"},
@@ -350,13 +351,14 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             metadata_table_id=metadata_table.id,
             user_id=request.user.id,
             metadata_column_ids=data.get("metadata_column_ids"),
-            include_pools=data.get("include_pools", True),
+            include_pools=data.get("include_pools", False),
             task_id=str(task.id),
         )
 
         # Update task with job ID
-        task.rq_job_id = job.id
-        task.save(update_fields=["rq_job_id"])
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
 
         return Response(
             {"task_id": str(task.id), "message": "SDRF export task queued successfully"},
@@ -412,8 +414,9 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
         )
 
         # Update task with job ID
-        task.rq_job_id = job.id
-        task.save(update_fields=["rq_job_id"])
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
 
         return Response(
             {"task_id": str(task.id), "message": "Bulk SDRF export task queued successfully"},
@@ -471,8 +474,9 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
         )
 
         # Update task with job ID
-        task.rq_job_id = job.id
-        task.save(update_fields=["rq_job_id"])
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
 
         return Response(
             {"task_id": str(task.id), "message": "Bulk Excel templates export task queued successfully"},
@@ -538,8 +542,9 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
         )
 
         # Update task with job ID
-        task.rq_job_id = job.id
-        task.save(update_fields=["rq_job_id"])
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
 
         return Response(
             {"task_id": str(task.id), "message": "SDRF import task queued successfully"},
@@ -594,8 +599,9 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
         )
 
         # Update task with job ID
-        task.rq_job_id = job.id
-        task.save(update_fields=["rq_job_id"])
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
 
         return Response(
             {"task_id": str(task.id), "message": "Excel import task queued successfully"},
@@ -685,9 +691,10 @@ class AsyncValidationViewSet(viewsets.GenericViewSet):
             task_id=str(task.id),
         )
 
-        # Store RQ job ID
-        task.rq_job_id = job.id
-        task.save(update_fields=["rq_job_id"])
+        # Store RQ job ID (if job was returned)
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
 
         return Response(
             {"task_id": str(task.id), "message": "Metadata table validation task queued successfully"},

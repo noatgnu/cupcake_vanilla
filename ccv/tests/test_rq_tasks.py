@@ -141,8 +141,13 @@ class AsyncExportTestCase(RQTaskTestCase):
         response = other_client.post(url, json.dumps(data), content_type="application/json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_async_export_always_enabled(self):
+    @patch("ccv.tasks.export_excel_template_task.delay")
+    def test_async_export_always_enabled(self, mock_delay):
         """Test that async export is always available."""
+        mock_job = MagicMock()
+        mock_job.id = "test-job-id-always"
+        mock_delay.return_value = mock_job
+
         url = "/api/v1/async-export/excel_template/"
         data = {
             "metadata_table_id": self.table.id,
