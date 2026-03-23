@@ -2,6 +2,7 @@
 exclude: |
   (?x)^(
     \.venv/.*|
+    \.poetry/.*|
     venv/.*|
     env/.*|
     \.env/.*|

@@ -186,6 +186,7 @@ exclude = '''
   | \.mypy_cache
   | \.tox
   | \.venv
+  | \.poetry
   | _build
   | buck-out
   | build
