@@ -4764,6 +4764,82 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @action(detail=False, methods=["get"])
+    def grouped_by_column(self, request):
+        """
+        Get templates grouped by (column_name, column_type) with schema counts.
+
+        Query Parameters:
+        - search: Search term to filter by column_name (min 3 chars)
+        - is_system_template: Filter by system templates only
+        - limit: Max groups to return (default 10, max 100)
+        - offset: Pagination offset
+        """
+        from django.db.models import Count, Min
+
+        queryset = self.get_queryset()
+
+        is_system_template = request.query_params.get("is_system_template")
+        if is_system_template is not None:
+            queryset = queryset.filter(is_system_template=is_system_template.lower() == "true")
+
+        search = request.query_params.get("search", "")
+        if search and len(search) >= 3:
+            queryset = queryset.filter(column_name__icontains=search)
+
+        grouped = (
+            queryset.values("column_name", "column_type")
+            .annotate(schema_count=Count("id"), first_id=Min("id"))
+            .order_by("column_name", "column_type")
+        )
+
+        total_count = grouped.count()
+
+        try:
+            limit = min(int(request.query_params.get("limit", 10)), 100)
+            offset = int(request.query_params.get("offset", 0))
+        except (ValueError, TypeError):
+            limit = 10
+            offset = 0
+
+        grouped_list = list(grouped[offset : offset + limit])
+
+        results = []
+        for group in grouped_list:
+            templates_in_group = queryset.filter(column_name=group["column_name"], column_type=group["column_type"])
+
+            schemas = list(templates_in_group.values_list("source_schema", flat=True).distinct())
+            schemas = [s for s in schemas if s]
+
+            template_ids = list(templates_in_group.values_list("id", flat=True))
+
+            sample_template = templates_in_group.first()
+            sample_serializer = (
+                MetadataColumnTemplateSerializer(sample_template, context={"request": request})
+                if sample_template
+                else None
+            )
+
+            results.append(
+                {
+                    "column_name": group["column_name"],
+                    "column_type": group["column_type"],
+                    "schema_count": group["schema_count"],
+                    "schemas": schemas,
+                    "template_ids": template_ids,
+                    "sample_template": sample_serializer.data if sample_serializer else None,
+                }
+            )
+
+        return Response(
+            {
+                "count": total_count,
+                "next": f"?limit={limit}&offset={offset + limit}" if offset + limit < total_count else None,
+                "previous": f"?limit={limit}&offset={max(0, offset - limit)}" if offset > 0 else None,
+                "results": results,
+            }
+        )
+
 
 class MetadataColumnTemplateShareViewSet(FilterMixin, viewsets.ModelViewSet):
     """ViewSet for managing MetadataColumnTemplateShare objects."""
