@@ -109,6 +109,13 @@ class SDRFTemplateInheritanceTest(TestCase):
                         elif ontology == "mondo":
                             template.ontology_options.extend(["human_disease", "mondo"])
                             template.ontology_type = "human_disease"
+                        elif ontology == "uberon":
+                            template.ontology_options.extend(["tissue", "uberon"])
+                            template.ontology_type = "tissue"
+                        elif ontology == "bto":
+                            template.ontology_options.append("bto")
+                            if not template.ontology_type:
+                                template.ontology_type = "tissue"
                         elif ontology == "clo":
                             template.ontology_options.append("ms_unique_vocabularies")
                             custom_filter["ms_unique_vocabularies"] = {"term_type": "cell line"}
