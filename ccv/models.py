@@ -2442,7 +2442,7 @@ class Schema(models.Model):
                     tags.append("development")
 
                 usable_alone = template_meta.get("usable_alone", True)
-                is_active_default = schema_name == "ms-proteomics" or (usable_alone and schema_name == "base")
+                is_active_default = True
 
                 version = template_meta.get("latest", "")
                 extends = template_meta.get("extends") or ""

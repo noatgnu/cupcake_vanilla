@@ -318,7 +318,7 @@ CSRF_COOKIE_HTTPONLY = False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = False
 
-cors_origins = os.environ.get("CORS_ORIGIN_WHITELIST", "http://localhost:4200").split(",")
+cors_origins = os.environ.get("CORS_ORIGIN_WHITELIST", "http://localhost:4200,https://localhost:3000").split(",")
 
 cors_origins = [origin.strip() for origin in cors_origins if origin.strip()]
 cors_origins = list(dict.fromkeys(cors_origins))
