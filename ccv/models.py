@@ -4286,4 +4286,57 @@ class MetadataColumnTemplateShare(models.Model):
         return f"{self.template.name} shared with {self.user.username} ({self.permission_level})"
 
 
+class ExcelLaunchCode(models.Model):
+    """One-time launch code for opening a table in the Excel add-in."""
+
+    code = models.CharField(max_length=10, unique=True, db_index=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="excel_launch_codes",
+    )
+    table = models.ForeignKey(
+        MetadataTable,
+        on_delete=models.CASCADE,
+        related_name="excel_launch_codes",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claimed_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        app_label = "ccv"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["code"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
+
+    def __str__(self):
+        status = "claimed" if self.claimed_at else ("expired" if self.is_expired() else "valid")
+        return f"Launch code {self.code} for {self.table.name} ({status})"
+
+    def is_expired(self):
+        """Check if the code has expired."""
+        return timezone.now() > self.expires_at
+
+    def is_claimed(self):
+        """Check if the code has been claimed."""
+        return self.claimed_at is not None
+
+    def is_valid(self):
+        """Check if the code is still valid (not expired and not claimed)."""
+        return not self.is_expired() and not self.is_claimed()
+
+    @staticmethod
+    def generate_code(length=6):
+        """Generate a random alphanumeric code excluding ambiguous characters."""
+        import secrets
+
+        alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
 # Task tracking models are imported where needed
