@@ -14,12 +14,7 @@ from .async_views import (
     cleanup_expired_files,
 )
 from .chunked_upload import MetadataChunkedUploadView
-from .excel_launch_views import (
-    ExcelLaunchClaimView,
-    ExcelLaunchCreateView,
-    ExcelLaunchDeleteView,
-    ExcelLaunchPendingView,
-)
+from .excel_launch_views import ExcelLaunchClaimView, ExcelLaunchCreateView
 from .viewsets import (
     CellOntologyViewSet,
     ChEBICompoundViewSet,
@@ -109,8 +104,6 @@ urlpatterns.append(
 urlpatterns.extend(
     [
         path("excel-launch/", ExcelLaunchCreateView.as_view(), name="excel-launch-create"),
-        path("excel-launch/pending/", ExcelLaunchPendingView.as_view(), name="excel-launch-pending"),
-        path("excel-launch/<str:code>/claim/", ExcelLaunchClaimView.as_view(), name="excel-launch-claim"),
-        path("excel-launch/<str:code>/", ExcelLaunchDeleteView.as_view(), name="excel-launch-delete"),
+        path("excel-launch/claim/", ExcelLaunchClaimView.as_view(), name="excel-launch-claim"),
     ]
 )
