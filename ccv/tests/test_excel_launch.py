@@ -167,10 +167,9 @@ class ExcelLaunchAPITests(TestCase):
         self.assertIn("expired", response.data["detail"].lower())
 
     @patch("ccv.excel_launch_views.LaunchCodeClaimThrottle.allow_request", return_value=True)
-    def test_claim_code_deleted_user(self, mock_throttle):
-        """Code for deleted user should return 400."""
-        code = create_launch_code(self.user.id, self.table.id)
-        self.user.delete()
+    def test_claim_code_nonexistent_user(self, mock_throttle):
+        """Code referencing a non-existent user should return 400."""
+        code = create_launch_code(user_id=999999, table_id=self.table.id)
 
         response = self.client.post("/api/v1/excel-launch/claim/", {"code": code}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
