@@ -1546,3 +1546,35 @@ class SampleCountUpdateSerializer(serializers.Serializer):
     confirmed = serializers.BooleanField(
         default=False, help_text="User confirmation that they understand data will be removed"
     )
+
+
+class ExcelLaunchCreateSerializer(serializers.Serializer):
+    """Serializer for creating an Excel launch code."""
+
+    tableId = serializers.IntegerField(required=True)
+    tableName = serializers.CharField(required=False, allow_blank=True)
+
+
+class ExcelLaunchCodeSerializer(serializers.Serializer):
+    """Serializer for the Excel launch code response."""
+
+    code = serializers.CharField()
+    tableId = serializers.IntegerField()
+    tableName = serializers.CharField()
+    expiresIn = serializers.IntegerField()
+
+
+class ExcelLaunchClaimRequestSerializer(serializers.Serializer):
+    """Serializer for claiming an Excel launch code."""
+
+    code = serializers.CharField(required=True)
+
+
+class ExcelLaunchClaimResponseSerializer(serializers.Serializer):
+    """Serializer for the claim response containing JWT tokens and table info."""
+
+    accessToken = serializers.CharField()
+    refreshToken = serializers.CharField()
+    tableId = serializers.IntegerField()
+    tableName = serializers.CharField()
+    user = serializers.DictField()

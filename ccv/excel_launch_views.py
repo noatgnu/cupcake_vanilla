@@ -17,6 +17,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .excel_launch_utils import EXCEL_LAUNCH_MAX_AGE, create_launch_code, verify_launch_code
 from .models import MetadataTable
+from .serializers import ExcelLaunchClaimRequestSerializer, ExcelLaunchCreateSerializer
 
 User = get_user_model()
 
@@ -45,13 +46,11 @@ class ExcelLaunchCreateView(APIView):
 
     def post(self, request):
         """Create and return a signed launch code."""
-        table_id = request.data.get("tableId")
+        serializer = ExcelLaunchCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        if not table_id:
-            return Response(
-                {"detail": "tableId is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        table_id = serializer.validated_data["tableId"]
 
         try:
             table = MetadataTable.objects.get(id=table_id)
@@ -88,13 +87,11 @@ class ExcelLaunchClaimView(APIView):
 
     def post(self, request):
         """Verify a launch code and return JWT tokens."""
-        code = request.data.get("code", "").strip()
+        serializer = ExcelLaunchClaimRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        if not code:
-            return Response(
-                {"detail": "Launch code is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        code = serializer.validated_data["code"].strip()
 
         try:
             payload = verify_launch_code(code)
