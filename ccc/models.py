@@ -1871,9 +1871,10 @@ class AsyncTaskStatus(models.Model):
         self.status = "SUCCESS"
         self.completed_at = timezone.now()
         self.progress_current = self.progress_total
+        self.progress_description = ""
         if result_data:
             self.result = result_data
-        self.save(update_fields=["status", "completed_at", "progress_current", "result"])
+        self.save(update_fields=["status", "completed_at", "progress_current", "progress_description", "result"])
         self.send_websocket_update()
 
     def mark_failure(self, error_message, traceback_str=None):
