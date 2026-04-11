@@ -23,6 +23,7 @@ def import_sdrf_task(
     validate_ontologies: bool = True,
     task_id: str = None,
     chunked_upload_id: str = None,
+    override_sample_count: bool = False,
 ) -> Dict[str, Any]:
     r"""
     Async task for importing SDRF file with proper validation and pool creation.
@@ -50,6 +51,7 @@ def import_sdrf_task(
         validate_ontologies: Whether to validate ontology terms against vocabularies
         task_id: Optional UUID string for async task tracking
         chunked_upload_id: Optional chunked upload ID for cleanup after processing
+        override_sample_count: Whether to use the imported file's row count instead of the table's current count
 
     Returns:
         Dict containing success status, import statistics, and any errors
@@ -82,6 +84,7 @@ def import_sdrf_task(
             replace_existing=replace_existing,
             validate_ontologies=validate_ontologies,
             create_pools=True,
+            override_sample_count=override_sample_count,
         )
 
         # Update progress - finalizing
@@ -150,6 +153,7 @@ def import_excel_task(
     validate_ontologies: bool = True,
     task_id: str = None,
     chunked_upload_id: str = None,
+    override_sample_count: bool = False,
 ) -> Dict[str, Any]:
     """
     Async task for importing Excel file with multi-sheet pool data processing.
@@ -179,6 +183,7 @@ def import_excel_task(
         validate_ontologies: Whether to validate ontology terms against vocabularies
         task_id: Optional UUID string for async task tracking
         chunked_upload_id: Optional chunked upload ID for cleanup after processing
+        override_sample_count: Whether to use the imported file's row count instead of the table's current count
 
     Returns:
         Dict containing success status, import statistics including pools created
@@ -211,6 +216,7 @@ def import_excel_task(
             replace_existing=replace_existing,
             validate_ontologies=validate_ontologies,
             create_pools=True,
+            override_sample_count=override_sample_count,
         )
 
         # Update progress - finalizing

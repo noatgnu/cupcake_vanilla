@@ -565,6 +565,7 @@ def import_sdrf_data(
     replace_existing: bool = False,
     validate_ontologies: bool = True,
     create_pools: bool = True,
+    override_sample_count: bool = False,
 ) -> Dict[str, Any]:
     r"""
     Import SDRF (Sample and Data Relationship Format) data with intelligent parsing and pool creation.
@@ -650,8 +651,9 @@ def import_sdrf_data(
                     sn_data.append(data_rows[row_index])
                     del data_rows[row_index]
 
-        # Update sample count and extend/truncate data if needed
-        expected_sample_count = metadata_table.sample_count or len(data_rows)
+        expected_sample_count = (
+            len(data_rows) if override_sample_count else (metadata_table.sample_count or len(data_rows))
+        )
         if len(data_rows) != expected_sample_count:
             if len(data_rows) < expected_sample_count:
                 data_rows.extend(
@@ -660,13 +662,11 @@ def import_sdrf_data(
             else:
                 data_rows = data_rows[:expected_sample_count]
 
-        # Add SN= rows back for column processing, but track them separately
         pool_row_offset = len(data_rows)
         if pooled_column_index is not None and sn_data:
             data_rows.extend(sn_data)
             sn_rows = list(range(pool_row_offset, len(data_rows)))
 
-        # Update metadata table sample count (excluding pool definition rows)
         metadata_table.sample_count = expected_sample_count
         metadata_table.save(update_fields=["sample_count"])
 
@@ -984,6 +984,7 @@ def import_sdrf_data_bulk(
     replace_existing: bool = False,
     validate_ontologies: bool = True,
     create_pools: bool = True,
+    override_sample_count: bool = False,
 ) -> Dict[str, Any]:
     r"""
     Import SDRF data using bulk database operations for improved performance.
@@ -1067,7 +1068,9 @@ def import_sdrf_data_bulk(
                     sn_data.append(data_rows[row_index])
                     del data_rows[row_index]
 
-        expected_sample_count = metadata_table.sample_count or len(data_rows)
+        expected_sample_count = (
+            len(data_rows) if override_sample_count else (metadata_table.sample_count or len(data_rows))
+        )
         if len(data_rows) != expected_sample_count:
             if len(data_rows) < expected_sample_count:
                 data_rows.extend(
@@ -1386,6 +1389,7 @@ def import_excel_data(
     replace_existing: bool = False,
     validate_ontologies: bool = True,
     create_pools: bool = True,
+    override_sample_count: bool = False,
 ) -> Dict[str, Any]:
     """
     Import multi-sheet Excel data with comprehensive pool processing and metadata creation.
@@ -1535,8 +1539,9 @@ def import_excel_data(
             hidden_row = hidden_data[i] if i < len(hidden_data) and hidden_data else []
             all_data.append(main_row + hidden_row)
 
-        # Enforce sample count: truncate or extend data to match expected count
-        expected_sample_count = metadata_table.sample_count or len(all_data)
+        expected_sample_count = (
+            len(all_data) if override_sample_count else (metadata_table.sample_count or len(all_data))
+        )
         if len(all_data) != expected_sample_count:
             if len(all_data) < expected_sample_count:
                 num_cols = len(all_data[0]) if all_data else len(id_metadata_column_map)

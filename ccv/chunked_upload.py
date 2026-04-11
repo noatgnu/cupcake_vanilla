@@ -66,6 +66,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
             # Get processing parameters from request
             metadata_table_id = request.data.get("metadata_table_id")
             replace_existing = request.data.get("replace_existing", False)
+            override_sample_count = request.data.get("override_sample_count", False)
 
             if metadata_table_id:
                 # Get target metadata table
@@ -109,6 +110,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             replace_existing=replace_existing,
                             task_id=str(task_status.id),
                             chunked_upload_id=str(uploaded_file.id),
+                            override_sample_count=override_sample_count,
                         )
 
                         # Update task with RQ job ID (if job was returned)
@@ -139,6 +141,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             replace_existing=replace_existing,
                             task_id=str(task_status.id),
                             chunked_upload_id=str(uploaded_file.id),
+                            override_sample_count=override_sample_count,
                         )
 
                         # Update task with RQ job ID (if job was returned)
