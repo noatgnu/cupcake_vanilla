@@ -11,7 +11,7 @@ from django_rq import job
 from ccc.models import AsyncTaskStatus
 from ccv.models import MetadataTable
 
-from .import_utils import import_excel_data, import_sdrf_data
+from .import_utils import import_excel_data, import_sdrf_data_bulk
 
 
 @job("default", timeout=3600)
@@ -75,7 +75,7 @@ def import_sdrf_task(
         if task:
             task.update_progress(20, 100, "Processing SDRF file content...")
 
-        result = import_sdrf_data(
+        result = import_sdrf_data_bulk(
             file_content=file_content,
             metadata_table=metadata_table,
             user=user,
