@@ -839,3 +839,217 @@ class SDRFValidationIntegrationTest(TestCase, QuickTestDataMixin):
             self.assertIn("warnings", result)
         except ImportError:
             self.skipTest("sdrf-pipelines not available for validation")
+
+
+class SDRFBulkImportTest(TestCase):
+    """Tests comparing bulk import against standard import for result parity."""
+
+    def setUp(self):
+        self.user = UserFactory.create_user()
+        self.lab_group = LabGroupFactory.create_lab_group()
+
+    def _make_table(self):
+        """Create a fresh table with sample_count=0 so the import derives it from file content."""
+        return MetadataTableFactory.create_basic_table(user=self.user, lab_group=self.lab_group, sample_count=0)
+
+    BASIC_SDRF = (
+        "source name\tcharacteristics[organism]\tcharacteristics[organism part]\t"
+        "characteristics[disease]\tassay name\ttechnology type\n"
+        "HCC-001\thomo sapiens\tliver\thepatocellular carcinoma\trun 1\t"
+        "proteomic profiling by mass spectrometry\n"
+        "HCC-002\thomo sapiens\tliver\thepatocellular carcinoma\trun 2\t"
+        "proteomic profiling by mass spectrometry\n"
+        "Normal-001\thomo sapiens\tliver\tnormal\trun 3\t"
+        "proteomic profiling by mass spectrometry\n"
+    )
+
+    POOLED_SN_SDRF = (
+        "source name\tcharacteristics[organism]\tcharacteristics[pooled sample]\n"
+        "D-HEp3 #1\thomo sapiens\tpooled\n"
+        "D-HEp3 #2\thomo sapiens\tpooled\n"
+        "T-HEp3 #1\thomo sapiens\tnot pooled\n"
+        "D-HEp3 Pool\thomo sapiens\tSN=D-HEp3 #1,D-HEp3 #2\n"
+    )
+
+    POOLED_ROWS_SDRF = (
+        "source name\tcharacteristics[organism]\tcharacteristics[pooled sample]\n"
+        "Sample-A\thomo sapiens\tpooled\n"
+        "Sample-B\thomo sapiens\tpooled\n"
+        "Sample-C\thomo sapiens\tnot pooled\n"
+    )
+
+    def _run_standard(self, content, table, **kwargs):
+        """Run standard import_sdrf_data and return result."""
+        from ccv.tasks.import_utils import import_sdrf_data
+
+        return import_sdrf_data(content, table, self.user, replace_existing=True, **kwargs)
+
+    def _run_bulk(self, content, table, **kwargs):
+        """Run import_sdrf_data_bulk and return result."""
+        from ccv.tasks.import_utils import import_sdrf_data_bulk
+
+        return import_sdrf_data_bulk(content, table, self.user, replace_existing=True, **kwargs)
+
+    def test_basic_import_column_count_parity(self):
+        """Bulk import creates the same number of columns as standard import."""
+        t1 = self._make_table()
+        t2 = self._make_table()
+
+        r1 = self._run_standard(self.BASIC_SDRF, t1, create_pools=False)
+        r2 = self._run_bulk(self.BASIC_SDRF, t2, create_pools=False)
+
+        self.assertEqual(r1["columns_created"], r2["columns_created"])
+        self.assertEqual(t1.columns.count(), t2.columns.count())
+
+    def test_basic_import_values_parity(self):
+        """Bulk import produces the same column values as standard import."""
+        t1 = self._make_table()
+        t2 = self._make_table()
+
+        self._run_standard(self.BASIC_SDRF, t1, create_pools=False)
+        self._run_bulk(self.BASIC_SDRF, t2, create_pools=False)
+
+        cols1 = {c.name: c for c in t1.columns.all()}
+        cols2 = {c.name: c for c in t2.columns.all()}
+
+        self.assertEqual(set(cols1.keys()), set(cols2.keys()))
+        for name in cols1:
+            self.assertEqual(cols1[name].value, cols2[name].value, f"Value mismatch for column '{name}'")
+            self.assertEqual(cols1[name].modifiers, cols2[name].modifiers, f"Modifiers mismatch for column '{name}'")
+
+    def test_basic_import_sample_count_parity(self):
+        """Bulk import sets the same sample_count as standard import."""
+        t1 = self._make_table()
+        t2 = self._make_table()
+
+        r1 = self._run_standard(self.BASIC_SDRF, t1, create_pools=False)
+        r2 = self._run_bulk(self.BASIC_SDRF, t2, create_pools=False)
+
+        self.assertEqual(r1["sample_count"], r2["sample_count"])
+
+    def test_modifiers_computed_correctly_bulk(self):
+        """Bulk import computes modifiers for heterogeneous values."""
+        content = "source name\tcharacteristics[disease]\n" "S1\tnormal\n" "S2\tnormal\n" "S3\tcancer\n"
+        table = self._make_table()
+        self._run_bulk(content, table, create_pools=False)
+
+        disease_col = table.columns.get(name="characteristics[disease]")
+        self.assertEqual(disease_col.value, "normal")
+        self.assertIsNotNone(disease_col.modifiers)
+        self.assertEqual(len(disease_col.modifiers), 1)
+        self.assertEqual(disease_col.modifiers[0]["value"], "cancer")
+
+    def test_pooled_rows_import_parity(self):
+        """Bulk import handles pooled rows the same way as standard import."""
+        t1 = self._make_table()
+        t2 = self._make_table()
+
+        r1 = self._run_standard(self.POOLED_ROWS_SDRF, t1, create_pools=True)
+        r2 = self._run_bulk(self.POOLED_ROWS_SDRF, t2, create_pools=True)
+
+        self.assertEqual(r1["pools_created"], r2["pools_created"])
+        self.assertEqual(t1.sample_pools.count(), t2.sample_pools.count())
+
+    def test_sn_pool_created_bulk(self):
+        """Bulk import creates a pool from SN= rows."""
+        table = self._make_table()
+        result = self._run_bulk(self.POOLED_SN_SDRF, table, create_pools=True)
+
+        self.assertTrue(result["success"])
+        self.assertGreater(result["pools_created"], 0)
+
+        pool = table.sample_pools.first()
+        self.assertIsNotNone(pool)
+        self.assertTrue(pool.is_reference)
+
+    def test_sn_pool_parity_with_standard(self):
+        """Bulk import creates pools with the same membership as standard import."""
+        t1 = self._make_table()
+        t2 = self._make_table()
+
+        self._run_standard(self.POOLED_SN_SDRF, t1, create_pools=True)
+        self._run_bulk(self.POOLED_SN_SDRF, t2, create_pools=True)
+
+        pools1 = {p.pool_name: p for p in t1.sample_pools.all()}
+        pools2 = {p.pool_name: p for p in t2.sample_pools.all()}
+
+        self.assertEqual(set(pools1.keys()), set(pools2.keys()))
+        for name in pools1:
+            p1 = pools1[name]
+            p2 = pools2[name]
+            self.assertEqual(sorted(p1.pooled_only_samples), sorted(p2.pooled_only_samples))
+            self.assertEqual(sorted(p1.pooled_and_independent_samples), sorted(p2.pooled_and_independent_samples))
+            self.assertEqual(p1.is_reference, p2.is_reference)
+
+    def test_pool_metadata_columns_created_bulk(self):
+        """Bulk import creates metadata columns on the pool."""
+        table = self._make_table()
+        self._run_bulk(self.POOLED_SN_SDRF, table, create_pools=True)
+
+        pool = table.sample_pools.first()
+        self.assertIsNotNone(pool)
+        self.assertGreater(pool.metadata_columns.count(), 0)
+
+    def test_pool_metadata_columns_parity(self):
+        """Pool metadata column count matches between bulk and standard import."""
+        t1 = self._make_table()
+        t2 = self._make_table()
+
+        self._run_standard(self.POOLED_SN_SDRF, t1, create_pools=True)
+        self._run_bulk(self.POOLED_SN_SDRF, t2, create_pools=True)
+
+        pools1 = list(t1.sample_pools.all())
+        pools2 = list(t2.sample_pools.all())
+
+        self.assertEqual(len(pools1), len(pools2))
+        for p1, p2 in zip(
+            sorted(pools1, key=lambda p: p.pool_name),
+            sorted(pools2, key=lambda p: p.pool_name),
+        ):
+            self.assertEqual(
+                p1.metadata_columns.count(),
+                p2.metadata_columns.count(),
+                f"Metadata column count mismatch for pool '{p1.pool_name}'",
+            )
+
+    def test_bulk_import_result_structure(self):
+        """Bulk import returns expected result keys."""
+        table = self._make_table()
+        result = self._run_bulk(self.BASIC_SDRF, table, create_pools=False)
+
+        self.assertTrue(result["success"])
+        self.assertIn("columns_created", result)
+        self.assertIn("columns_updated", result)
+        self.assertIn("sample_count", result)
+        self.assertIn("pools_created", result)
+        self.assertIn("pools_updated", result)
+        self.assertIn("warnings", result)
+
+    def test_fixture_pxd019185_bulk_import(self):
+        """Bulk import produces same column and pool count as standard for PXD019185 fixture."""
+        content = read_fixture_content("PXD019185_PXD018883.sdrf.tsv")
+        if not content:
+            self.skipTest("PXD019185_PXD018883.sdrf.tsv fixture not found")
+
+        t1 = self._make_table()
+        t2 = self._make_table()
+
+        r1 = self._run_standard(content, t1, create_pools=True)
+        r2 = self._run_bulk(content, t2, create_pools=True)
+
+        self.assertEqual(r1["columns_created"], r2["columns_created"])
+        self.assertEqual(r1["sample_count"], r2["sample_count"])
+        self.assertEqual(t1.sample_pools.count(), t2.sample_pools.count())
+
+    def test_fixture_pdc000126_bulk_import(self):
+        """Bulk import handles large PDC000126 fixture without error."""
+        content = read_fixture_content("PDC000126.sdrf.tsv")
+        if not content:
+            self.skipTest("PDC000126.sdrf.tsv fixture not found")
+
+        table = self._make_table()
+        result = self._run_bulk(content, table, create_pools=True)
+
+        self.assertTrue(result["success"])
+        self.assertGreater(result["columns_created"], 0)
+        self.assertGreater(result["sample_count"], 0)

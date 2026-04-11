@@ -11,6 +11,7 @@ from collections import Counter
 from typing import Any, Dict
 
 from django.db import transaction
+from django.db.models.signals import post_save
 
 from openpyxl import load_workbook
 
@@ -900,6 +901,471 @@ def import_sdrf_data(
                 created_pools_list = list(metadata_table.sample_pools.all())
                 pools_created = len(created_pools_list)
                 pools_updated = 0  # For simplicity, consider all as created
+
+        return {
+            "success": True,
+            "message": "SDRF data imported successfully",
+            "columns_created": len(created_columns),
+            "columns_updated": columns_updated,
+            "sample_count": metadata_table.sample_count,
+            "pools_created": pools_created,
+            "pools_updated": pools_updated,
+            "warnings": [],
+        }
+
+
+def _build_pool_metadata_columns_in_memory(pool_data, metadata_columns):
+    """
+    Build MetadataColumn objects for a pool from import data without saving to database.
+
+    Args:
+        pool_data: Dictionary containing pool import data
+        metadata_columns: List of parent table metadata columns
+
+    Returns:
+        List of unsaved MetadataColumn instances for this pool
+    """
+    row = pool_data.get("metadata_row")
+    pool_name = pool_data["pool_name"]
+    sdrf_value = pool_data["sdrf_value"]
+    has_sn_pattern = sdrf_value.startswith("SN=")
+    all_data_rows = pool_data.get("all_data_rows", [])
+    pooled_sample_indices = pool_data["pooled_only_samples"] + pool_data["pooled_and_independent_samples"]
+
+    unsaved_columns = []
+    for col_index, metadata_column in enumerate(metadata_columns):
+        if "pooled sample" in metadata_column.name.lower():
+            col = MetadataColumn(
+                name=metadata_column.name,
+                type=metadata_column.type,
+                value=sdrf_value,
+                mandatory=metadata_column.mandatory,
+                hidden=metadata_column.hidden,
+                not_applicable=metadata_column.not_applicable,
+                not_available=metadata_column.not_available,
+            )
+        elif "source name" in metadata_column.name.lower():
+            col = MetadataColumn(
+                name=metadata_column.name,
+                type=metadata_column.type,
+                value=pool_name,
+                mandatory=metadata_column.mandatory,
+                hidden=metadata_column.hidden,
+                not_applicable=metadata_column.not_applicable,
+                not_available=metadata_column.not_available,
+            )
+        else:
+            if has_sn_pattern and row:
+                pool_value = row[col_index] if col_index < len(row) else ""
+            else:
+                pool_value = _calculate_most_common_value_for_column(
+                    all_data_rows, pooled_sample_indices, col_index, metadata_column
+                )
+
+            col = MetadataColumn(
+                name=metadata_column.name,
+                type=metadata_column.type,
+                value=pool_value or "not available",
+                mandatory=metadata_column.mandatory,
+                hidden=metadata_column.hidden,
+                not_applicable=metadata_column.not_applicable,
+                not_available=metadata_column.not_available,
+            )
+
+        unsaved_columns.append(col)
+
+    return unsaved_columns
+
+
+def import_sdrf_data_bulk(
+    file_content: str,
+    metadata_table,
+    user,
+    replace_existing: bool = False,
+    validate_ontologies: bool = True,
+    create_pools: bool = True,
+) -> Dict[str, Any]:
+    r"""
+    Import SDRF data using bulk database operations for improved performance.
+
+    Functionally equivalent to import_sdrf_data() but builds all MetadataColumn
+    and SamplePool objects in memory before inserting them in batches, reducing
+    the number of round-trips to the database.
+
+    Signals are temporarily disconnected during bulk inserts and the equivalent
+    logic is executed once over the full result set after all objects are saved.
+
+    Example:
+        >>> content = (
+        ...     "source name\tcharacteristics[organism]\tcharacteristics[pooled sample]\n"
+        ...     "D-HEp3 #1\thomo sapiens\tpooled\n"
+        ...     "D-HEp3 #2\thomo sapiens\tpooled\n"
+        ... )
+        >>> result = import_sdrf_data_bulk(
+        ...     file_content=content,
+        ...     metadata_table=table,
+        ...     user=user,
+        ...     create_pools=True,
+        ... )
+        >>> result['columns_created']
+        3
+
+    Args:
+        file_content: Tab-separated SDRF file content as string
+        metadata_table: MetadataTable instance to import data into
+        user: User performing the import operation
+        replace_existing: Whether to replace existing data or merge
+        validate_ontologies: Whether to validate ontology terms against vocabularies
+        create_pools: Whether to create sample pools from SN= patterns
+
+    Returns:
+        Dictionary containing success status, statistics, and any warnings
+    """
+    from ccv.signals import sync_hidden_property_to_pool_columns, update_pooled_sample_columns_on_pool_save
+    from ccv.utils import update_pooled_sample_column_for_table
+
+    with transaction.atomic():
+        lines = file_content.strip().split("\n")
+        if not lines:
+            raise ValueError("Empty file content")
+
+        headers = lines[0].split("\t")
+        data_rows = [line.split("\t") for line in lines[1:]]
+
+        pooled_column_index = None
+        pooled_rows = []
+        sn_rows = []
+
+        for i, header in enumerate(headers):
+            header_lower = header.lower()
+            if "pooled sample" in header_lower or "pooled_sample" in header_lower:
+                pooled_column_index = i
+                break
+
+        if pooled_column_index is not None:
+            for row_index, row in enumerate(data_rows):
+                if pooled_column_index < len(row):
+                    pooled_value = row[pooled_column_index].strip()
+                    if pooled_value.startswith("SN="):
+                        sn_rows.append(row_index)
+                    elif pooled_value.lower() == "pooled":
+                        pooled_rows.append(row_index)
+
+        if not metadata_table.can_edit(user):
+            raise PermissionError("Permission denied: cannot edit this metadata table")
+
+        table_template = _get_table_template(metadata_table)
+
+        if replace_existing:
+            metadata_table.columns.all().delete()
+            metadata_table.sample_pools.all().delete()
+
+        sn_data = []
+        if pooled_column_index is not None and sn_rows:
+            for row_index in sorted(sn_rows, reverse=True):
+                if row_index < len(data_rows):
+                    sn_data.append(data_rows[row_index])
+                    del data_rows[row_index]
+
+        expected_sample_count = metadata_table.sample_count or len(data_rows)
+        if len(data_rows) != expected_sample_count:
+            if len(data_rows) < expected_sample_count:
+                data_rows.extend(
+                    [["" for i in range(len(headers))] for j in range(expected_sample_count - len(data_rows))]
+                )
+            else:
+                data_rows = data_rows[:expected_sample_count]
+
+        pool_row_offset = len(data_rows)
+        if pooled_column_index is not None and sn_data:
+            data_rows.extend(sn_data)
+            sn_rows = list(range(pool_row_offset, len(data_rows)))
+
+        metadata_table.sample_count = expected_sample_count
+        metadata_table.save(update_fields=["sample_count"])
+
+        created_columns = []
+        column_name_usage = {}
+
+        for i, header in enumerate(headers):
+            header_lower = header.lower()
+            if "[" in header_lower and "]" in header_lower:
+                metadata_type = header_lower.split("[")[0].strip()
+                name = header_lower.strip()
+            else:
+                name = header_lower.strip()
+                if name == "source name":
+                    metadata_type = "source_name"
+                else:
+                    metadata_type = "special"
+
+            if name not in column_name_usage:
+                column_name_usage[name] = 0
+            column_name_usage[name] += 1
+
+            metadata_column = _find_or_create_matching_column(
+                name, metadata_type, metadata_table, table_template, i, column_name_usage[name]
+            )
+
+            created_columns.append(metadata_column)
+
+        post_save.disconnect(sync_hidden_property_to_pool_columns, sender=MetadataColumn)
+        try:
+            columns_to_update = []
+            columns_updated = 0
+            for i, metadata_column in enumerate(created_columns):
+                metadata_value_map = {}
+
+                for j, row in enumerate(data_rows):
+                    if i < len(row) and row[i]:
+                        cell_value = row[i].strip()
+
+                        if cell_value == "":
+                            continue
+                        if cell_value == "not applicable":
+                            metadata_column.not_applicable = True
+                            continue
+                        if cell_value == "not available":
+                            metadata_column.not_available = True
+                            continue
+
+                        value = metadata_column.convert_sdrf_to_metadata(cell_value)
+
+                        if value not in metadata_value_map:
+                            metadata_value_map[value] = []
+                        metadata_value_map[value].append(j)
+
+                max_count = 0
+                max_value = None
+                for value in metadata_value_map:
+                    if len(metadata_value_map[value]) > max_count:
+                        max_count = len(metadata_value_map[value])
+                        max_value = value
+
+                if max_value:
+                    metadata_column.value = max_value
+
+                modifiers = []
+                for value in metadata_value_map:
+                    if value != max_value:
+                        modifier = {"samples": [], "value": value}
+                        samples = metadata_value_map[value]
+                        samples.sort()
+                        start = samples[0]
+                        end = samples[0]
+                        for i2 in range(1, len(samples)):
+                            if samples[i2] == end + 1:
+                                end = samples[i2]
+                            else:
+                                if start == end:
+                                    modifier["samples"].append(str(start + 1))
+                                else:
+                                    modifier["samples"].append(f"{start + 1}-{end + 1}")
+                                start = samples[i2]
+                                end = samples[i2]
+                        if start == end:
+                            modifier["samples"].append(str(start + 1))
+                        else:
+                            modifier["samples"].append(f"{start + 1}-{end + 1}")
+                        if len(modifier["samples"]) == 1:
+                            modifier["samples"] = modifier["samples"][0]
+                        else:
+                            modifier["samples"] = ",".join(modifier["samples"])
+                        modifiers.append(modifier)
+
+                if modifiers:
+                    metadata_column.modifiers = modifiers
+
+                columns_to_update.append(metadata_column)
+                columns_updated += 1
+
+            MetadataColumn.objects.bulk_update(
+                columns_to_update,
+                ["value", "modifiers", "not_applicable", "not_available"],
+            )
+        finally:
+            post_save.connect(sync_hidden_property_to_pool_columns, sender=MetadataColumn)
+
+        if created_columns:
+            try:
+                schema_ids = set()
+                for column in created_columns:
+                    if column.template and hasattr(column.template, "schema") and column.template.schema:
+                        schema_ids.add(column.template.schema.id)
+
+                if schema_ids:
+                    metadata_table.reorder_columns_by_schema(schema_ids=list(schema_ids))
+                else:
+                    if hasattr(metadata_table, "basic_column_reordering"):
+                        metadata_table.basic_column_reordering()
+            except Exception:
+                pass
+
+        pools_created = 0
+        pools_updated = 0
+        if create_pools and pooled_column_index is not None:
+            source_name_column_index = None
+            for idx, header in enumerate(headers):
+                header_lower = header.lower()
+                if "source name" in header_lower or "source_name" in header_lower:
+                    source_name_column_index = idx
+                    break
+
+            import_pools_data = []
+
+            if sn_rows and sn_data:
+                for pool_index, row in enumerate(sn_data):
+                    if pooled_column_index < len(row):
+                        sdrf_value = row[pooled_column_index].strip()
+
+                        if sdrf_value.startswith("SN="):
+                            source_names = sdrf_value[3:].split(",")
+                            source_names = [name.strip() for name in source_names]
+
+                            pool_name = (
+                                row[source_name_column_index]
+                                if source_name_column_index is not None and source_name_column_index < len(row)
+                                else f"Pool {pool_index + 1}"
+                            )
+
+                            pooled_only_samples = []
+                            pooled_and_independent_samples = []
+
+                            for sample_index, sample_row in enumerate(data_rows):
+                                if source_name_column_index is not None and source_name_column_index < len(sample_row):
+                                    sample_source_name = sample_row[source_name_column_index].strip()
+                                    if sample_source_name in source_names:
+                                        sample_pooled_value = ""
+                                        if pooled_column_index < len(sample_row):
+                                            sample_pooled_value = sample_row[pooled_column_index].strip().lower()
+
+                                        if (
+                                            sample_pooled_value == "not pooled"
+                                            or sample_pooled_value == ""
+                                            or sample_pooled_value == "independent"
+                                        ):
+                                            pooled_and_independent_samples.append(sample_index + 1)
+                                        else:
+                                            pooled_only_samples.append(sample_index + 1)
+
+                            import_pools_data.append(
+                                {
+                                    "pool_name": pool_name,
+                                    "pooled_only_samples": pooled_only_samples,
+                                    "pooled_and_independent_samples": pooled_and_independent_samples,
+                                    "is_reference": True,
+                                    "metadata_row": row,
+                                    "sdrf_value": sdrf_value,
+                                    "all_data_rows": data_rows,
+                                }
+                            )
+
+            elif pooled_rows:
+                pooled_source_names = []
+                pooled_only_samples = []
+
+                for row_index in pooled_rows:
+                    if (
+                        source_name_column_index is not None
+                        and row_index < len(data_rows)
+                        and source_name_column_index < len(data_rows[row_index])
+                    ):
+                        source_name = data_rows[row_index][source_name_column_index].strip()
+                        if source_name:
+                            pooled_source_names.append(source_name)
+                            pooled_only_samples.append(row_index + 1)
+
+                if pooled_source_names:
+                    sdrf_value = "SN=" + ",".join(pooled_source_names)
+                    pool_name = "Pool 1"
+                    template_row = data_rows[pooled_rows[0]]
+
+                    import_pools_data.append(
+                        {
+                            "pool_name": pool_name,
+                            "pooled_only_samples": pooled_only_samples,
+                            "pooled_and_independent_samples": [],
+                            "is_reference": False,
+                            "metadata_row": template_row,
+                            "sdrf_value": sdrf_value,
+                            "all_data_rows": data_rows,
+                        }
+                    )
+
+            if import_pools_data:
+                existing_pools = SamplePool.objects.filter(metadata_table=metadata_table)
+                existing_pool_names = {pool.pool_name: pool for pool in existing_pools}
+                import_pool_names = {pd["pool_name"] for pd in import_pools_data}
+
+                pools_to_create = []
+                pools_to_update = []
+                pool_data_for_bulk = []
+
+                for pool_data in import_pools_data:
+                    pool_name = pool_data["pool_name"]
+                    if pool_name in existing_pool_names:
+                        existing_pool = existing_pool_names[pool_name]
+                        existing_pool.pooled_only_samples = pool_data["pooled_only_samples"]
+                        existing_pool.pooled_and_independent_samples = pool_data["pooled_and_independent_samples"]
+                        existing_pool.is_reference = pool_data["is_reference"]
+                        existing_pool.clean()
+                        pools_to_update.append((existing_pool, pool_data))
+                    else:
+                        new_pool = SamplePool(
+                            pool_name=pool_name,
+                            pooled_only_samples=pool_data["pooled_only_samples"],
+                            pooled_and_independent_samples=pool_data["pooled_and_independent_samples"],
+                            is_reference=pool_data["is_reference"],
+                            metadata_table=metadata_table,
+                            created_by=user,
+                        )
+                        new_pool.clean()
+                        pools_to_create.append((new_pool, pool_data))
+                        pool_data_for_bulk.append(new_pool)
+
+                post_save.disconnect(update_pooled_sample_columns_on_pool_save, sender=SamplePool)
+                try:
+                    SamplePool.objects.bulk_create(pool_data_for_bulk)
+
+                    for existing_pool, _ in pools_to_update:
+                        existing_pool.save(
+                            update_fields=["pooled_only_samples", "pooled_and_independent_samples", "is_reference"]
+                        )
+                finally:
+                    post_save.connect(update_pooled_sample_columns_on_pool_save, sender=SamplePool)
+
+                ThroughModel = SamplePool.metadata_columns.through
+
+                through_entries = []
+                for pool_obj, pool_data in pools_to_create:
+                    unsaved_cols = _build_pool_metadata_columns_in_memory(pool_data, created_columns)
+                    saved_cols = MetadataColumn.objects.bulk_create(unsaved_cols)
+                    for col in saved_cols:
+                        through_entries.append(ThroughModel(samplepool_id=pool_obj.pk, metadatacolumn_id=col.pk))
+
+                for existing_pool, pool_data in pools_to_update:
+                    existing_pool.metadata_columns.clear()
+                    unsaved_cols = _build_pool_metadata_columns_in_memory(pool_data, created_columns)
+                    saved_cols = MetadataColumn.objects.bulk_create(unsaved_cols)
+                    for col in saved_cols:
+                        through_entries.append(ThroughModel(samplepool_id=existing_pool.pk, metadatacolumn_id=col.pk))
+
+                if through_entries:
+                    ThroughModel.objects.bulk_create(through_entries)
+
+                pools_to_delete = [
+                    pool for pool_name, pool in existing_pool_names.items() if pool_name not in import_pool_names
+                ]
+                for pool in pools_to_delete:
+                    pool.delete()
+
+                try:
+                    update_pooled_sample_column_for_table(metadata_table)
+                except Exception:
+                    pass
+
+                created_pools_list = list(metadata_table.sample_pools.all())
+                pools_created = len(created_pools_list)
 
         return {
             "success": True,
