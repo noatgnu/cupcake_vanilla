@@ -7,6 +7,7 @@ and scientific metadata conventions.
 
 import os
 import random
+import uuid
 from typing import Dict, List
 
 from django.contrib.auth import get_user_model
@@ -408,7 +409,7 @@ class SamplePoolFactory:
     def create_pool(metadata_table: MetadataTable, **kwargs) -> SamplePool:
         """Create a sample pool with realistic data."""
         defaults = {
-            "pool_name": f"Pool_{random.randint(1, 999)}",
+            "pool_name": f"Pool_{uuid.uuid4().hex[:8]}",
             "pool_description": "Sample pool for testing",
             "pooled_only_samples": [1, 2],
             "pooled_and_independent_samples": [],
