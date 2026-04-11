@@ -36,6 +36,7 @@ RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
 RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
 
 # Install dependencies
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 RUN npm ci
 
 # Fix permissions for build scripts

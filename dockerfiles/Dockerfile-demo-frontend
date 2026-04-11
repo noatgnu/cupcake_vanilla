@@ -19,6 +19,7 @@ RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
 
 RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
 
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 RUN npm ci
 
 RUN npm run build
