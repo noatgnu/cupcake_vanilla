@@ -28,8 +28,10 @@ from rest_framework.response import Response
 from ccc.models import LabGroup, ResourceRole, ResourceVisibility
 
 from .models import (
+    BTOTerm,
     CellOntology,
     ChEBICompound,
+    DiseaseOntologyTerm,
     FavouriteMetadataOption,
     HumanDisease,
     MetadataColumn,
@@ -51,8 +53,10 @@ from .models import (
 )
 from .permissions import MetadataColumnAccessPermission, MetadataTableAccessPermission
 from .serializers import (
+    BTOTermSerializer,
     CellOntologySerializer,
     ChEBICompoundSerializer,
+    DiseaseOntologyTermSerializer,
     FavouriteMetadataOptionSerializer,
     HumanDiseaseSerializer,
     MetadataCollectionSerializer,
@@ -5230,6 +5234,79 @@ class CellOntologyViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({"results": serializer.data})
 
 
+class BTOTermViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for BRENDA Tissue Ontology (BTO) terms."""
+
+    queryset = BTOTerm.objects.filter(obsolete=False)
+    serializer_class = BTOTermSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["name", "definition", "synonyms", "identifier"]
+    ordering_fields = ["name", "identifier", "created_at"]
+    ordering = ["name"]
+
+    @action(detail=False, methods=["get"])
+    def suggest(self, request):
+        """Get BTO term suggestions for typeahead."""
+        search_term = request.GET.get("q", "").strip()
+        try:
+            limit = min(int(request.query_params.get("limit", 10)), 10)
+        except (ValueError, TypeError):
+            limit = 10
+
+        if not search_term:
+            return Response({"results": []})
+
+        queryset = self.get_queryset().filter(name__icontains=search_term)[:limit]
+        suggestions = [
+            {
+                "identifier": t.identifier,
+                "name": t.name,
+                "definition": t.definition or "",
+                "synonyms": [s.strip() for s in t.synonyms.split(";") if s.strip()] if t.synonyms else [],
+                "match_type": "fuzzy",
+            }
+            for t in queryset
+        ]
+        return Response({"results": suggestions})
+
+
+class DiseaseOntologyTermViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for Disease Ontology (DOID) terms."""
+
+    queryset = DiseaseOntologyTerm.objects.filter(obsolete=False)
+    serializer_class = DiseaseOntologyTermSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = ["name", "definition", "synonyms", "identifier"]
+    ordering_fields = ["name", "identifier", "created_at"]
+    ordering = ["name"]
+
+    @action(detail=False, methods=["get"])
+    def suggest(self, request):
+        """Get DOID term suggestions for typeahead."""
+        search_term = request.GET.get("q", "").strip()
+        try:
+            limit = min(int(request.query_params.get("limit", 10)), 10)
+        except (ValueError, TypeError):
+            limit = 10
+
+        if not search_term:
+            return Response({"results": []})
+
+        queryset = self.get_queryset().filter(name__icontains=search_term)[:limit]
+        suggestions = [
+            {
+                "identifier": t.identifier,
+                "name": t.name,
+                "definition": t.definition or "",
+                "synonyms": [s.strip() for s in t.synonyms.split(";") if s.strip()] if t.synonyms else [],
+                "xrefs": [s.strip() for s in t.xrefs.split(";") if s.strip()] if t.xrefs else [],
+                "match_type": "fuzzy",
+            }
+            for t in queryset
+        ]
+        return Response({"results": suggestions})
+
+
 class OntologySearchViewSet(viewsets.ViewSet):
     """Unified ontology search for SDRF validation."""
 
@@ -5263,6 +5340,8 @@ class OntologySearchViewSet(viewsets.ViewSet):
                     "uberon": UberonAnatomy,
                     "cell_ontology": CellOntology,
                     "psi_ms": PSIMSOntology,
+                    "bto": BTOTerm,
+                    "doid": DiseaseOntologyTerm,
                 }
                 return ontology_mapping.get(self.ontology_type)
 

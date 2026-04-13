@@ -4241,6 +4241,55 @@ class CellOntology(models.Model):
         return f"{self.name} ({self.identifier}) [{cell_type}]"
 
 
+class BTOTerm(models.Model):
+    """Tissue and cell type terms from the BRENDA Tissue Ontology (BTO)."""
+
+    identifier = models.CharField(max_length=255, primary_key=True)  # BTO:XXXXXXX
+    name = models.CharField(max_length=255)
+    definition = models.TextField(blank=True, null=True)
+    synonyms = models.TextField(blank=True, null=True)  # Semicolon-separated
+    xrefs = models.TextField(blank=True, null=True)  # Cross-references
+    parent_terms = models.TextField(blank=True, null=True)  # is_a relationships
+    part_of = models.TextField(blank=True, null=True)  # part_of relationships
+    obsolete = models.BooleanField(default=False)
+    replacement_term = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccv"
+        ordering = ["name"]
+        verbose_name = "BTO Term"
+        verbose_name_plural = "BTO Terms"
+
+    def __str__(self):
+        return f"{self.name} ({self.identifier})"
+
+
+class DiseaseOntologyTerm(models.Model):
+    """Disease terms from the Disease Ontology (DOID)."""
+
+    identifier = models.CharField(max_length=255, primary_key=True)  # DOID:XXXXXXX
+    name = models.CharField(max_length=255)
+    definition = models.TextField(blank=True, null=True)
+    synonyms = models.TextField(blank=True, null=True)  # Semicolon-separated
+    xrefs = models.TextField(blank=True, null=True)  # Cross-references (e.g. OMIM, MeSH, ICD)
+    parent_terms = models.TextField(blank=True, null=True)  # is_a relationships
+    obsolete = models.BooleanField(default=False)
+    replacement_term = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccv"
+        ordering = ["name"]
+        verbose_name = "Disease Ontology Term"
+        verbose_name_plural = "Disease Ontology Terms"
+
+    def __str__(self):
+        return f"{self.name} ({self.identifier})"
+
+
 class MetadataColumnTemplateShare(models.Model):
     """
     Through model for sharing templates between users.

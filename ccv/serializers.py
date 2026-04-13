@@ -7,8 +7,10 @@ from rest_framework import serializers
 from ccc.models import AsyncTaskStatus
 
 from .models import (
+    BTOTerm,
     CellOntology,
     ChEBICompound,
+    DiseaseOntologyTerm,
     FavouriteMetadataOption,
     HumanDisease,
     MetadataColumn,
@@ -985,6 +987,91 @@ class CellOntologySerializer(serializers.ModelSerializer):
     def get_cell_type_display(self, obj):
         """Return human-readable cell type."""
         return "Cell Line" if obj.cell_line else "Cell Type"
+
+
+class BTOTermSerializer(serializers.ModelSerializer):
+    """Serializer for BRENDA Tissue Ontology (BTO) terms."""
+
+    synonyms_list = serializers.SerializerMethodField()
+    parent_terms_list = serializers.SerializerMethodField()
+    part_of_list = serializers.SerializerMethodField()
+    xrefs_list = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BTOTerm
+        fields = [
+            "identifier",
+            "name",
+            "definition",
+            "synonyms",
+            "synonyms_list",
+            "xrefs",
+            "xrefs_list",
+            "parent_terms",
+            "parent_terms_list",
+            "part_of",
+            "part_of_list",
+            "obsolete",
+            "replacement_term",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_synonyms_list(self, obj):
+        """Return synonyms as a list."""
+        return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
+
+    def get_parent_terms_list(self, obj):
+        """Return parent terms as a list."""
+        return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
+
+    def get_part_of_list(self, obj):
+        """Return part_of relationships as a list."""
+        return [s.strip() for s in obj.part_of.split(";") if s.strip()] if obj.part_of else []
+
+    def get_xrefs_list(self, obj):
+        """Return cross-references as a list."""
+        return [s.strip() for s in obj.xrefs.split(";") if s.strip()] if obj.xrefs else []
+
+
+class DiseaseOntologyTermSerializer(serializers.ModelSerializer):
+    """Serializer for Disease Ontology (DOID) terms."""
+
+    synonyms_list = serializers.SerializerMethodField()
+    parent_terms_list = serializers.SerializerMethodField()
+    xrefs_list = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DiseaseOntologyTerm
+        fields = [
+            "identifier",
+            "name",
+            "definition",
+            "synonyms",
+            "synonyms_list",
+            "xrefs",
+            "xrefs_list",
+            "parent_terms",
+            "parent_terms_list",
+            "obsolete",
+            "replacement_term",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_synonyms_list(self, obj):
+        """Return synonyms as a list."""
+        return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
+
+    def get_parent_terms_list(self, obj):
+        """Return parent terms as a list."""
+        return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
+
+    def get_xrefs_list(self, obj):
+        """Return cross-references as a list."""
+        return [s.strip() for s in obj.xrefs.split(";") if s.strip()] if obj.xrefs else []
 
 
 # ===================================================================

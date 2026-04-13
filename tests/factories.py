@@ -14,6 +14,8 @@ from django.contrib.auth import get_user_model
 
 from ccc.models import LabGroup
 from ccv.models import (
+    BTOTerm,
+    DiseaseOntologyTerm,
     FavouriteMetadataOption,
     HumanDisease,
     MetadataColumn,
@@ -585,6 +587,59 @@ class OntologyFactory:
 
         unimod, created = Unimod.objects.get_or_create(accession=defaults["accession"], defaults=defaults)
         return unimod
+
+    @staticmethod
+    def create_bto(**kwargs) -> BTOTerm:
+        """Create a BTO tissue term record."""
+        bto_data = [
+            ("BTO:0000567", "liver", "The liver is a large, reddish-brown, glandular organ."),
+            ("BTO:0000970", "lung", "The lung is the essential respiration organ."),
+            ("BTO:0000142", "brain", "The brain is the center of the nervous system."),
+        ]
+
+        identifier, name, definition = random.choice(bto_data)
+
+        defaults = {
+            "identifier": identifier,
+            "name": name,
+            "definition": definition,
+            "synonyms": "",
+            "xrefs": "",
+            "parent_terms": "",
+            "part_of": "",
+            "obsolete": False,
+        }
+        defaults.update(kwargs)
+
+        bto_term, created = BTOTerm.objects.get_or_create(identifier=defaults["identifier"], defaults=defaults)
+        return bto_term
+
+    @staticmethod
+    def create_doid(**kwargs) -> DiseaseOntologyTerm:
+        """Create a Disease Ontology (DOID) term record."""
+        doid_data = [
+            ("DOID:9351", "diabetes mellitus", "A metabolic disorder characterized by hyperglycemia."),
+            ("DOID:1612", "breast cancer", "A thoracic cancer that originates in the mammary gland."),
+            ("DOID:1324", "lung cancer", "A thoracic cancer that is located in the lung."),
+        ]
+
+        identifier, name, definition = random.choice(doid_data)
+
+        defaults = {
+            "identifier": identifier,
+            "name": name,
+            "definition": definition,
+            "synonyms": "",
+            "xrefs": "",
+            "parent_terms": "",
+            "obsolete": False,
+        }
+        defaults.update(kwargs)
+
+        doid_term, created = DiseaseOntologyTerm.objects.get_or_create(
+            identifier=defaults["identifier"], defaults=defaults
+        )
+        return doid_term
 
 
 class FavouriteMetadataOptionFactory:

@@ -11,7 +11,7 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from ccv.models import HumanDisease, MSUniqueVocabularies, Species
+from ccv.models import BTOTerm, DiseaseOntologyTerm, HumanDisease, MSUniqueVocabularies, Species
 from tests.factories import (
     MetadataColumnFactory,
     MetadataTableFactory,
@@ -682,3 +682,148 @@ class OntologyIntegrationValidationTest(TestCase, QuickTestDataMixin):
                 self.assertEqual(ms_enrichment["term_type"], "instrument")
                 self.assertIn("6110", ms_enrichment["term_name"])
                 self.assertIn("mass spectrometer", ms_enrichment["definition"].lower())
+
+
+class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
+    """Test BTO and DOID ontology API endpoints."""
+
+    def setUp(self):
+        self.user = UserFactory.create_user()
+        self.client.force_authenticate(user=self.user)
+
+    def test_bto_list_endpoint(self):
+        """Test BTO term list endpoint returns results."""
+        from django.urls import reverse
+
+        OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
+        OntologyFactory.create_bto(identifier="BTO:0000970", name="lung")
+
+        url = reverse("ccv:btoterm-list")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertGreaterEqual(data["count"], 2)
+
+    def test_bto_search(self):
+        """Test BTO term search by name."""
+        from django.urls import reverse
+
+        OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
+
+        url = reverse("ccv:btoterm-list")
+        response = self.client.get(url, {"search": "liver"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        results = data.get("results", [])
+        liver_found = any("liver" in r["name"].lower() for r in results)
+        self.assertTrue(liver_found)
+
+    def test_bto_suggest_action(self):
+        """Test BTO suggest action endpoint."""
+        from django.urls import reverse
+
+        OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
+
+        url = reverse("ccv:btoterm-suggest")
+        response = self.client.get(url, {"q": "liver"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_doid_list_endpoint(self):
+        """Test DOID term list endpoint returns results."""
+        from django.urls import reverse
+
+        OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
+        OntologyFactory.create_doid(identifier="DOID:1612", name="breast cancer")
+
+        url = reverse("ccv:doidterm-list")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertGreaterEqual(data["count"], 2)
+
+    def test_doid_search(self):
+        """Test DOID term search by name."""
+        from django.urls import reverse
+
+        OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
+
+        url = reverse("ccv:doidterm-list")
+        response = self.client.get(url, {"search": "diabetes"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        results = data.get("results", [])
+        diabetes_found = any("diabetes" in r["name"].lower() for r in results)
+        self.assertTrue(diabetes_found)
+
+    def test_doid_suggest_action(self):
+        """Test DOID suggest action endpoint."""
+        from django.urls import reverse
+
+        OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
+
+        url = reverse("ccv:doidterm-suggest")
+        response = self.client.get(url, {"q": "diabetes"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_ontology_search_includes_bto(self):
+        """Test that the unified ontology search endpoint covers BTO."""
+        from django.urls import reverse
+
+        OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
+
+        url = reverse("ccv:ontologysearch-suggest")
+        response = self.client.get(url, {"q": "liver", "type": "bto"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_ontology_search_includes_doid(self):
+        """Test that the unified ontology search endpoint covers DOID."""
+        from django.urls import reverse
+
+        OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
+
+        url = reverse("ccv:ontologysearch-suggest")
+        response = self.client.get(url, {"q": "diabetes", "type": "doid"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_bto_model_fields(self):
+        """Test BTOTerm model stores all expected fields."""
+        bto = BTOTerm.objects.create(
+            identifier="BTO:0000001",
+            name="test tissue",
+            definition="A test tissue definition.",
+            synonyms="test syn",
+            xrefs="Wikipedia:Test",
+            parent_terms="BTO:0000000",
+            part_of="BTO:0000000",
+            obsolete=False,
+        )
+
+        self.assertEqual(bto.identifier, "BTO:0000001")
+        self.assertEqual(bto.name, "test tissue")
+        self.assertFalse(bto.obsolete)
+        self.assertIn("test syn", bto.synonyms)
+
+    def test_doid_model_fields(self):
+        """Test DiseaseOntologyTerm model stores all expected fields."""
+        doid = DiseaseOntologyTerm.objects.create(
+            identifier="DOID:0000001",
+            name="test disease",
+            definition="A test disease definition.",
+            synonyms="test syn",
+            xrefs="MeSH:D000001",
+            parent_terms="DOID:4",
+            obsolete=False,
+        )
+
+        self.assertEqual(doid.identifier, "DOID:0000001")
+        self.assertEqual(doid.name, "test disease")
+        self.assertFalse(doid.obsolete)
+        self.assertIn("test syn", doid.synonyms)

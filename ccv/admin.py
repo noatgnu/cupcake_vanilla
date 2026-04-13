@@ -10,8 +10,10 @@ from django.utils.html import format_html
 from simple_history.admin import SimpleHistoryAdmin
 
 from .models import (
+    BTOTerm,
     CellOntology,
     ChEBICompound,
+    DiseaseOntologyTerm,
     FavouriteMetadataOption,
     HumanDisease,
     MetadataColumn,
@@ -1016,6 +1018,44 @@ class SchemaAdmin(admin.ModelAdmin):
         )
 
     deactivate_schemas_action.short_description = "Deactivate selected schemas"
+
+
+@admin.register(BTOTerm)
+class BTOTermAdmin(admin.ModelAdmin):
+    """Admin interface for BRENDA Tissue Ontology (BTO) terms."""
+
+    list_display = ["identifier", "name", "obsolete", "definition_preview", "created_at"]
+    list_filter = ["obsolete", "created_at"]
+    search_fields = ["identifier", "name", "synonyms", "definition"]
+    readonly_fields = ["identifier", "created_at", "updated_at"]
+    ordering = ["name"]
+
+    def definition_preview(self, obj):
+        """Show truncated definition."""
+        if obj.definition:
+            return obj.definition[:100] + "..." if len(obj.definition) > 100 else obj.definition
+        return ""
+
+    definition_preview.short_description = "Definition"
+
+
+@admin.register(DiseaseOntologyTerm)
+class DiseaseOntologyTermAdmin(admin.ModelAdmin):
+    """Admin interface for Disease Ontology (DOID) terms."""
+
+    list_display = ["identifier", "name", "obsolete", "definition_preview", "created_at"]
+    list_filter = ["obsolete", "created_at"]
+    search_fields = ["identifier", "name", "synonyms", "definition", "xrefs"]
+    readonly_fields = ["identifier", "created_at", "updated_at"]
+    ordering = ["name"]
+
+    def definition_preview(self, obj):
+        """Show truncated definition."""
+        if obj.definition:
+            return obj.definition[:100] + "..." if len(obj.definition) > 100 else obj.definition
+        return ""
+
+    definition_preview.short_description = "Definition"
 
 
 # Admin site customization

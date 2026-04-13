@@ -33,7 +33,7 @@ from django.core.management.base import BaseCommand
 import requests
 from tqdm import tqdm
 
-from ccv.models import CellOntology, MondoDisease, PSIMSOntology, UberonAnatomy
+from ccv.models import BTOTerm, CellOntology, DiseaseOntologyTerm, MondoDisease, PSIMSOntology, UberonAnatomy
 
 
 class OBOParser:
@@ -120,7 +120,7 @@ class Command(BaseCommand):
             "--ontology",
             type=str,
             default="all",
-            choices=["all", "mondo", "uberon", "ncbi", "chebi", "psims", "cell"],
+            choices=["all", "mondo", "uberon", "ncbi", "chebi", "psims", "cell", "bto", "doid"],
             help="Ontology to load",
         )
         parser.add_argument(
@@ -184,6 +184,16 @@ class Command(BaseCommand):
 
         if ontology in ["all", "cell"]:
             created, updated = self.load_cell_ontology(update_existing, limit)
+            total_created += created
+            total_updated += updated
+
+        if ontology in ["all", "bto"]:
+            created, updated = self.load_bto(update_existing, limit)
+            total_created += created
+            total_updated += updated
+
+        if ontology in ["all", "doid"]:
+            created, updated = self.load_doid(update_existing, limit)
             total_created += created
             total_updated += updated
 
@@ -1215,4 +1225,151 @@ class Command(BaseCommand):
 
         except Exception as e:
             self.stdout.write(f"Error processing {name}: {e}")
+            return False, False
+
+    def load_bto(self, update_existing=False, limit=10000):
+        """Load BRENDA Tissue Ontology (BTO)."""
+        self.stdout.write("Loading BRENDA Tissue Ontology (BTO)...")
+
+        bto_url = "http://purl.obolibrary.org/obo/bto.obo"
+
+        try:
+            response = requests.get(bto_url, timeout=120)
+            response.raise_for_status()
+
+            parser = OBOParser()
+            terms = parser.parse_obo_content(response.text)
+
+            bto_terms = [term for term in terms if term.get("id", "").startswith("BTO:")]
+            if limit is not None:
+                bto_terms = bto_terms[:limit]
+
+            created_count = 0
+            updated_count = 0
+
+            with tqdm(total=len(bto_terms), desc="Loading BTO terms", unit="terms") as pbar:
+                for term_data in bto_terms:
+                    created, updated = self._process_bto_term(term_data, update_existing)
+                    if created:
+                        created_count += 1
+                    if updated:
+                        updated_count += 1
+                    pbar.update(1)
+                    pbar.set_postfix({"created": created_count, "updated": updated_count})
+
+            self.stdout.write(f"BTO: {created_count} created, {updated_count} updated")
+            return created_count, updated_count
+
+        except requests.RequestException as e:
+            self.stdout.write(self.style.ERROR(f"Error downloading BTO: {e}"))
+            return 0, 0
+
+    def _process_bto_term(self, term_data, update_existing):
+        """Process a single BTO term."""
+        if term_data.get("obsolete", False):
+            return False, False
+
+        identifier = term_data.get("id", "")
+        name = term_data.get("name", "")
+
+        if not name or not identifier:
+            return False, False
+
+        data = {
+            "identifier": identifier,
+            "name": name,
+            "definition": term_data.get("definition", ""),
+            "synonyms": ";".join(term_data.get("synonyms", [])),
+            "xrefs": ";".join(term_data.get("xrefs", [])),
+            "parent_terms": ";".join(term_data.get("is_a", [])),
+            "part_of": ";".join(term_data.get("part_of", [])),
+            "replacement_term": term_data.get("replaced_by", ""),
+        }
+
+        try:
+            obj, created = BTOTerm.objects.get_or_create(identifier=identifier, defaults=data)
+
+            if not created and update_existing:
+                for key, value in data.items():
+                    setattr(obj, key, value)
+                obj.save()
+                return False, True
+
+            return created, False
+
+        except Exception as e:
+            self.stdout.write(f"Error processing BTO {name}: {e}")
+            return False, False
+
+    def load_doid(self, update_existing=False, limit=10000):
+        """Load Disease Ontology (DOID)."""
+        self.stdout.write("Loading Disease Ontology (DOID)...")
+
+        doid_url = "http://purl.obolibrary.org/obo/doid.obo"
+
+        try:
+            response = requests.get(doid_url, timeout=120)
+            response.raise_for_status()
+
+            parser = OBOParser()
+            terms = parser.parse_obo_content(response.text)
+
+            doid_terms = [term for term in terms if term.get("id", "").startswith("DOID:")]
+            if limit is not None:
+                doid_terms = doid_terms[:limit]
+
+            created_count = 0
+            updated_count = 0
+
+            with tqdm(total=len(doid_terms), desc="Loading DOID terms", unit="terms") as pbar:
+                for term_data in doid_terms:
+                    created, updated = self._process_doid_term(term_data, update_existing)
+                    if created:
+                        created_count += 1
+                    if updated:
+                        updated_count += 1
+                    pbar.update(1)
+                    pbar.set_postfix({"created": created_count, "updated": updated_count})
+
+            self.stdout.write(f"DOID: {created_count} created, {updated_count} updated")
+            return created_count, updated_count
+
+        except requests.RequestException as e:
+            self.stdout.write(self.style.ERROR(f"Error downloading DOID: {e}"))
+            return 0, 0
+
+    def _process_doid_term(self, term_data, update_existing):
+        """Process a single DOID term."""
+        if term_data.get("obsolete", False):
+            return False, False
+
+        identifier = term_data.get("id", "")
+        name = term_data.get("name", "")
+
+        if not name or not identifier:
+            return False, False
+
+        data = {
+            "identifier": identifier,
+            "name": name,
+            "definition": term_data.get("definition", ""),
+            "synonyms": ";".join(term_data.get("synonyms", [])),
+            "xrefs": ";".join(term_data.get("xrefs", [])),
+            "parent_terms": ";".join(term_data.get("is_a", [])),
+            "replacement_term": term_data.get("replaced_by", ""),
+        }
+
+        try:
+            obj, created = DiseaseOntologyTerm.objects.get_or_create(identifier=identifier, defaults=data)
+
+            if not created and update_existing:
+                for key, value in data.items():
+                    setattr(obj, key, value)
+                obj.save()
+                return False, True
+
+            return created, False
+
+        except Exception as e:
+            self.stdout.write(f"Error processing DOID {name}: {e}")
             return False, False

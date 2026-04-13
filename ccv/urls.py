@@ -16,8 +16,10 @@ from .async_views import (
 from .chunked_upload import MetadataChunkedUploadView
 from .excel_launch_views import ExcelLaunchClaimView, ExcelLaunchCreateView
 from .viewsets import (
+    BTOTermViewSet,
     CellOntologyViewSet,
     ChEBICompoundViewSet,
+    DiseaseOntologyTermViewSet,
     FavouriteMetadataOptionViewSet,
     HumanDiseaseViewSet,
     MetadataColumnTemplateShareViewSet,
@@ -65,6 +67,8 @@ router.register(r"ontology/ncbi-taxonomy", NCBITaxonomyViewSet, basename="ncbita
 router.register(r"ontology/chebi-compounds", ChEBICompoundViewSet, basename="chebicompound")
 router.register(r"ontology/psims", PSIMSOntologyViewSet, basename="psimsontology")
 router.register(r"ontology/cell-types", CellOntologyViewSet, basename="cellontology")
+router.register(r"ontology/bto", BTOTermViewSet, basename="btoterm")
+router.register(r"ontology/doid", DiseaseOntologyTermViewSet, basename="doidterm")
 router.register(r"ontology/search", OntologySearchViewSet, basename="ontologysearch")
 router.register(r"schemas", SchemaViewSet, basename="schema")
 router.register(r"sdrf-defaults", SDRFDefaultsViewSet, basename="sdrfdefaults")
