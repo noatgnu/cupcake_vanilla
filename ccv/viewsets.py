@@ -5441,6 +5441,18 @@ class OntologySearchViewSet(viewsets.ViewSet):
                         for field in search_fields:
                             search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
 
+                    elif self.ontology_type == "bto":
+                        search_fields = ["identifier", "name", "synonyms", "definition"]
+                        queryset = queryset.filter(obsolete=False)
+                        for field in search_fields:
+                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
+
+                    elif self.ontology_type == "doid":
+                        search_fields = ["identifier", "name", "synonyms", "definition"]
+                        queryset = queryset.filter(obsolete=False)
+                        for field in search_fields:
+                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
+
                     # Apply search queries
                     if search_queries:
                         combined_query = search_queries[0]

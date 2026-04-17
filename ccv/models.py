@@ -1418,6 +1418,8 @@ class MetadataColumn(models.Model):
             "uberon": UberonAnatomy,
             "cell_ontology": CellOntology,
             "psi_ms": PSIMSOntology,
+            "bto": BTOTerm,
+            "doid": DiseaseOntologyTerm,
         }
         return ontology_mapping.get(self.ontology_type)
 
@@ -1446,13 +1448,15 @@ class MetadataColumn(models.Model):
 
         # Apply custom ontology filters first
         if self.custom_ontology_filters:
-            for field, filter_value in self.custom_ontology_filters.items():
+            actual_filters = self.custom_ontology_filters.get(self.ontology_type, self.custom_ontology_filters)
+            for field, filter_value in actual_filters.items():
                 if field == self.ontology_type:
-                    if isinstance(filter_value, dict):
-                        # Handle complex filter values like {'icontains': 'value'} or {'exact': 'value'}
-                        for lookup, value in filter_value.items():
-                            filter_kwargs = {f"{lookup}__{case_insensitive_search_type}": value}
-                            queryset = queryset.filter(**filter_kwargs)
+                    continue
+                if isinstance(filter_value, dict):
+                    for lookup, value in filter_value.items():
+                        queryset = queryset.filter(**{f"{field}__{lookup}": value})
+                else:
+                    queryset = queryset.filter(**{field: filter_value})
 
         # Apply search filtering based on search_type and model type
         if search_term:
@@ -1516,6 +1520,18 @@ class MetadataColumn(models.Model):
 
             elif self.ontology_type == "psi_ms":
                 search_fields = ["identifier", "name", "definition", "synonyms"]
+                for field in search_fields:
+                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
+
+            elif self.ontology_type == "bto":
+                search_fields = ["identifier", "name", "synonyms", "definition"]
+                queryset = queryset.filter(obsolete=False)
+                for field in search_fields:
+                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
+
+            elif self.ontology_type == "doid":
+                search_fields = ["identifier", "name", "synonyms", "definition"]
+                queryset = queryset.filter(obsolete=False)
                 for field in search_fields:
                     search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
 
@@ -4045,6 +4061,8 @@ class MetadataColumnTemplate(AbstractResource):
             "uberon": UberonAnatomy,
             "cell_ontology": CellOntology,
             "psi_ms": PSIMSOntology,
+            "bto": BTOTerm,
+            "doid": DiseaseOntologyTerm,
         }
         return ontology_mapping.get(self.ontology_type)
 

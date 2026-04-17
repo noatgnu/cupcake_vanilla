@@ -1419,6 +1419,45 @@ class OntologySuggestionSerializer(serializers.Serializer):
                 },
             }
 
+        elif ontology_type == "bto":
+            return {
+                "id": data.get("identifier", ""),  # BTO:XXXXXXX
+                "value": data.get("identifier", ""),
+                "display_name": data.get("name", ""),
+                "description": data.get("definition", "") or data.get("synonyms", "") or "",
+                "ontology_type": ontology_type,
+                "full_data": {
+                    "identifier": data.get("identifier", ""),
+                    "name": data.get("name", ""),
+                    "definition": data.get("definition", ""),
+                    "synonyms": data.get("synonyms", ""),
+                    "xrefs": data.get("xrefs", ""),
+                    "parent_terms": data.get("parent_terms", ""),
+                    "part_of": data.get("part_of", ""),
+                    "obsolete": data.get("obsolete", False),
+                    "replacement_term": data.get("replacement_term", ""),
+                },
+            }
+
+        elif ontology_type == "doid":
+            return {
+                "id": data.get("identifier", ""),  # DOID:XXXXXXX
+                "value": data.get("identifier", ""),
+                "display_name": data.get("name", ""),
+                "description": data.get("definition", "") or data.get("synonyms", "") or "",
+                "ontology_type": ontology_type,
+                "full_data": {
+                    "identifier": data.get("identifier", ""),
+                    "name": data.get("name", ""),
+                    "definition": data.get("definition", ""),
+                    "synonyms": data.get("synonyms", ""),
+                    "xrefs": data.get("xrefs", ""),
+                    "parent_terms": data.get("parent_terms", ""),
+                    "obsolete": data.get("obsolete", False),
+                    "replacement_term": data.get("replacement_term", ""),
+                },
+            }
+
         else:
             # Generic fallback
             return {

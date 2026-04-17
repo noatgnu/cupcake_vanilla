@@ -254,9 +254,9 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "cupcake_vanilla.settings"
+DJANGO_SETTINGS_MODULE = "cupcake_vanilla.settings_test"
 python_files = ["tests.py", "test_*.py", "*_tests.py"]
-addopts = "--cov=ccc --cov=ccv --cov-report=html --cov-report=term-missing"
+addopts = "--cov=ccc --cov=ccv --cov-report=html --cov-report=term-missing --import-mode=importlib"
 testpaths = [".", "ccc", "ccv", "tests"]
 
 [tool.coverage.run]

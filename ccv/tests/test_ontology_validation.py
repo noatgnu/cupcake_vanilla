@@ -7,6 +7,7 @@ realistic scientific data patterns from SDRF fixtures.
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
 
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -335,7 +336,6 @@ class OntologyAPIValidationTest(APITestCase, QuickTestDataMixin):
 
     def test_species_search_api(self):
         """Test species search API for ontology validation."""
-        from django.urls import reverse
 
         # Use correct URL from router
         url = reverse("ccv:species-list")  # Resolves to /api/v1/ontology/species/
@@ -353,7 +353,6 @@ class OntologyAPIValidationTest(APITestCase, QuickTestDataMixin):
 
     def test_tissue_search_api(self):
         """Test tissue search API for validation."""
-        from django.urls import reverse
 
         # Use correct URL from router
         url = reverse("ccv:tissue-list")  # Resolves to /api/v1/ontology/tissues/
@@ -371,7 +370,6 @@ class OntologyAPIValidationTest(APITestCase, QuickTestDataMixin):
 
     def test_ontology_suggestion_api(self):
         """Test species search API with search parameter."""
-        from django.urls import reverse
 
         # Test organism search using basic species list endpoint with search
         url = reverse("ccv:species-list")
@@ -395,7 +393,6 @@ class OntologyAPIValidationTest(APITestCase, QuickTestDataMixin):
 
     def test_ms_terms_validation_api(self):
         """Test MS terms API for instrument/method validation."""
-        from django.urls import reverse
 
         # Create MS terms for testing
         OntologyFactory.create_ms_term(accession="MS:1002732", name="Orbitrap Fusion Lumos", term_type="instrument")
@@ -417,7 +414,6 @@ class OntologyAPIValidationTest(APITestCase, QuickTestDataMixin):
 
     def test_unimod_search_api(self):
         """Test Unimod search API for modification validation."""
-        from django.urls import reverse
 
         # Create Unimod modifications
         OntologyFactory.create_unimod(accession="UNIMOD:35", name="Oxidation", definition="Oxidation of methionine")
@@ -684,6 +680,158 @@ class OntologyIntegrationValidationTest(TestCase, QuickTestDataMixin):
                 self.assertIn("mass spectrometer", ms_enrichment["definition"].lower())
 
 
+class OntologySearchTypeTest(APITestCase):
+    """Verify icontains, istartswith, and exact search types work on both endpoints."""
+
+    def setUp(self):
+        self.user = UserFactory.create_user()
+        self.client.force_authenticate(user=self.user)
+
+        self.bto_liver_tissue = OntologyFactory.create_bto(identifier="BTO:0000001", name="liver tissue")
+        self.bto_lung_tissue = OntologyFactory.create_bto(identifier="BTO:0000002", name="lung tissue")
+        self.bto_liver_cells = OntologyFactory.create_bto(identifier="BTO:0000003", name="liver cells")
+        BTOTerm.objects.filter(identifier__in=["BTO:0000001", "BTO:0000002", "BTO:0000003"]).update(obsolete=False)
+
+        self.table = MetadataTableFactory.create_basic_table(user=self.user)
+        self.column = MetadataColumnFactory.create_column(
+            metadata_table=self.table,
+            name="characteristics",
+            type="organism part",
+            ontology_type="bto",
+        )
+
+    def _column_suggest_url(self):
+        return reverse("ccv:metadatacolumn-ontology-suggestions")
+
+    def _generic_suggest_url(self):
+        return reverse("ccv:ontologysearch-suggest")
+
+    def test_column_endpoint_icontains_finds_mid_string(self):
+        """Records are returned when the term appears anywhere in the name."""
+        response = self.client.get(
+            self._column_suggest_url(),
+            {"column_id": self.column.id, "search": "ssue", "search_type": "icontains"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        names = [s["display_name"] for s in data["suggestions"]]
+        self.assertIn("liver tissue", names)
+        self.assertIn("lung tissue", names)
+        self.assertNotIn("liver cells", names)
+
+    def test_column_endpoint_istartswith_matches_only_prefix(self):
+        """Only records whose name begins with the term are returned."""
+        response = self.client.get(
+            self._column_suggest_url(),
+            {"column_id": self.column.id, "search": "liver", "search_type": "istartswith"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        names = [s["display_name"] for s in data["suggestions"]]
+        self.assertIn("liver tissue", names)
+        self.assertIn("liver cells", names)
+        self.assertNotIn("lung tissue", names)
+
+    def test_column_endpoint_exact_matches_only_full_name(self):
+        """Only the record whose name matches exactly is returned."""
+        response = self.client.get(
+            self._column_suggest_url(),
+            {"column_id": self.column.id, "search": "liver tissue", "search_type": "exact"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        names = [s["display_name"] for s in data["suggestions"]]
+        self.assertIn("liver tissue", names)
+        self.assertNotIn("lung tissue", names)
+        self.assertNotIn("liver cells", names)
+
+    def test_column_endpoint_exact_no_partial_match(self):
+        """Partial term with exact search type returns no results."""
+        response = self.client.get(
+            self._column_suggest_url(),
+            {"column_id": self.column.id, "search": "liver", "search_type": "exact"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["count"], 0)
+
+    def test_column_endpoint_invalid_search_type_returns_400(self):
+        """An unsupported search_type value returns HTTP 400."""
+        response = self.client.get(
+            self._column_suggest_url(),
+            {"column_id": self.column.id, "search": "liver", "search_type": "fuzzy"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_generic_endpoint_contains_finds_mid_string(self):
+        """match=contains on the generic endpoint returns mid-string matches."""
+        response = self.client.get(
+            self._generic_suggest_url(),
+            {"q": "ssue", "type": "bto", "match": "contains"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        names = [r["display_name"] for r in data["suggestions"]]
+        self.assertIn("liver tissue", names)
+        self.assertIn("lung tissue", names)
+        self.assertNotIn("liver cells", names)
+
+    def test_generic_endpoint_startswith_matches_only_prefix(self):
+        """match=startswith on the generic endpoint excludes non-prefix matches."""
+        response = self.client.get(
+            self._generic_suggest_url(),
+            {"q": "liver", "type": "bto", "match": "startswith"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        names = [r["display_name"] for r in data["suggestions"]]
+        self.assertIn("liver tissue", names)
+        self.assertIn("liver cells", names)
+        self.assertNotIn("lung tissue", names)
+
+    def test_generic_endpoint_invalid_match_type_returns_400(self):
+        """An unsupported match value on the generic endpoint returns HTTP 400."""
+        response = self.client.get(
+            self._generic_suggest_url(),
+            {"q": "liver", "type": "bto", "match": "fuzzy"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_icontains_and_contains_return_same_records(self):
+        """Column-specific icontains and generic contains produce consistent record sets."""
+        col_response = self.client.get(
+            self._column_suggest_url(),
+            {"column_id": self.column.id, "search": "liver", "search_type": "icontains"},
+        )
+        gen_response = self.client.get(
+            self._generic_suggest_url(),
+            {"q": "liver", "type": "bto", "match": "contains"},
+        )
+        self.assertEqual(col_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(gen_response.status_code, status.HTTP_200_OK)
+
+        col_names = sorted(s["display_name"] for s in col_response.json()["suggestions"])
+        gen_names = sorted(r["display_name"] for r in gen_response.json()["suggestions"])
+        self.assertEqual(col_names, gen_names)
+
+    def test_istartswith_and_startswith_return_same_records(self):
+        """Column-specific istartswith and generic startswith produce consistent record sets."""
+        col_response = self.client.get(
+            self._column_suggest_url(),
+            {"column_id": self.column.id, "search": "liver", "search_type": "istartswith"},
+        )
+        gen_response = self.client.get(
+            self._generic_suggest_url(),
+            {"q": "liver", "type": "bto", "match": "startswith"},
+        )
+        self.assertEqual(col_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(gen_response.status_code, status.HTTP_200_OK)
+
+        col_names = sorted(s["display_name"] for s in col_response.json()["suggestions"])
+        gen_names = sorted(r["display_name"] for r in gen_response.json()["suggestions"])
+        self.assertEqual(col_names, gen_names)
+
+
 class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
     """Test BTO and DOID ontology API endpoints."""
 
@@ -693,7 +841,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_bto_list_endpoint(self):
         """Test BTO term list endpoint returns results."""
-        from django.urls import reverse
 
         OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
         OntologyFactory.create_bto(identifier="BTO:0000970", name="lung")
@@ -707,7 +854,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_bto_search(self):
         """Test BTO term search by name."""
-        from django.urls import reverse
 
         OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
 
@@ -722,7 +868,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_bto_suggest_action(self):
         """Test BTO suggest action endpoint."""
-        from django.urls import reverse
 
         OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
 
@@ -733,7 +878,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_doid_list_endpoint(self):
         """Test DOID term list endpoint returns results."""
-        from django.urls import reverse
 
         OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
         OntologyFactory.create_doid(identifier="DOID:1612", name="breast cancer")
@@ -747,7 +891,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_doid_search(self):
         """Test DOID term search by name."""
-        from django.urls import reverse
 
         OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
 
@@ -762,7 +905,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_doid_suggest_action(self):
         """Test DOID suggest action endpoint."""
-        from django.urls import reverse
 
         OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
 
@@ -773,7 +915,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_ontology_search_includes_bto(self):
         """Test that the unified ontology search endpoint covers BTO."""
-        from django.urls import reverse
 
         OntologyFactory.create_bto(identifier="BTO:0000567", name="liver")
 
@@ -784,7 +925,6 @@ class BTOAndDOIDAPITest(APITestCase, QuickTestDataMixin):
 
     def test_ontology_search_includes_doid(self):
         """Test that the unified ontology search endpoint covers DOID."""
-        from django.urls import reverse
 
         OntologyFactory.create_doid(identifier="DOID:9351", name="diabetes mellitus")
 

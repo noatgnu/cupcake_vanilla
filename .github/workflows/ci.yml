@@ -142,22 +142,14 @@ jobs:
 
     - name: Test Wails environment with SQLite Django backend and Redis
       env:
-        DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings_wails
         WAILS_DEBUG: 'true'
         SECRET_KEY: test-wails-secret-key
         WAILS_APP_DATA: /tmp/wails-test
         REDIS_HOST: localhost
         REDIS_PORT: '6379'
         REDIS_URL: redis://localhost:6379
-        ENABLE_CUPCAKE_MACARON: 'true'
-        ENABLE_CUPCAKE_MINT_CHOCOLATE: 'true'
-        ENABLE_CUPCAKE_RED_VELVET: 'true'
-        ENABLE_CUPCAKE_SALTED_CARAMEL: 'true'
       run: |
-        poetry run python manage.py check --settings=cupcake_vanilla.settings_wails
-        poetry run python manage.py migrate
-        poetry run python manage.py collectstatic --noinput
-        poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
+        poetry run pytest
 
   lint:
     runs-on: ubuntu-latest
