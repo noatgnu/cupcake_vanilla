@@ -67,6 +67,64 @@ class MetadataChunkedUploadView(ChunkedUploadView):
             metadata_table_id = request.data.get("metadata_table_id")
             replace_existing = request.data.get("replace_existing", False)
             override_sample_count = request.data.get("override_sample_count", False)
+            validate_only = request.data.get("validate_only", False)
+
+            filename = uploaded_file.filename or uploaded_file.file.name
+            file_ext = os.path.splitext(filename.lower())[1]
+
+            if validate_only:
+                if file_ext not in [".tsv", ".txt"]:
+                    return Response(
+                        {
+                            "error": f"Unsupported file type for validation: {file_ext}. Only .tsv and .txt are supported."
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                from ccc.models import AsyncTaskStatus
+                from ccv.tasks.validation_tasks import validate_sdrf_file_task
+
+                schema_names_raw = request.data.get("schema_names", "default")
+                if isinstance(schema_names_raw, str):
+                    schema_names = [s.strip() for s in schema_names_raw.split(",") if s.strip()]
+                else:
+                    schema_names = list(schema_names_raw)
+
+                validation_options = {
+                    "schema_names": schema_names or ["default"],
+                    "skip_ontology": request.data.get("skip_ontology", False),
+                    "use_ols_cache_only": request.data.get("use_ols_cache_only", False),
+                }
+
+                task_status = AsyncTaskStatus.objects.create(
+                    task_type="VALIDATE_SDRF_FILE",
+                    user=request.user,
+                    parameters={
+                        "filename": filename,
+                        "file_size": uploaded_file.file.size,
+                        "validation_options": validation_options,
+                    },
+                )
+
+                with open(uploaded_file.file.path, "rt", encoding="utf-8") as f:
+                    file_content = f.read()
+
+                job = validate_sdrf_file_task.delay(
+                    file_content=file_content,
+                    user_id=request.user.id,
+                    validation_options=validation_options,
+                    task_id=str(task_status.id),
+                    chunked_upload_id=str(uploaded_file.id),
+                )
+
+                if job:
+                    task_status.rq_job_id = job.id
+                    task_status.save(update_fields=["rq_job_id"])
+
+                return Response(
+                    {"task_id": str(task_status.id), "message": "SDRF validation task queued successfully"},
+                    status=status.HTTP_202_ACCEPTED,
+                )
 
             if metadata_table_id:
                 # Get target metadata table
@@ -79,11 +137,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             {"error": "Permission denied: cannot edit this metadata table"},
                             status=status.HTTP_403_FORBIDDEN,
                         )
-                    # Process file based on type
-                    filename = uploaded_file.filename or uploaded_file.file.name
-                    file_ext = os.path.splitext(filename.lower())[1]
-
-                    # Create async task status for tracking
                     from ccc.models import AsyncTaskStatus
                     from ccv.tasks.import_tasks import import_excel_task, import_sdrf_task
 

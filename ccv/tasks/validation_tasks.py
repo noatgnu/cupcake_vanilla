@@ -11,7 +11,7 @@ from django_rq import job
 from ccc.models import AsyncTaskStatus
 from ccv.models import MetadataTable
 
-from .validation_utils import validate_metadata_table
+from .validation_utils import validate_metadata_table, validate_sdrf_file_content
 
 
 def validate_metadata_table_sync(
@@ -131,3 +131,76 @@ def validate_metadata_table_task(
                 pass
 
         return {"success": False, "error": str(e), "traceback": traceback.format_exc(), "task_id": task_id}
+
+
+@job("default", timeout=1800)
+def validate_sdrf_file_task(
+    file_content: str,
+    user_id: int,
+    validation_options: Dict[str, Any] = None,
+    task_id: str = None,
+    chunked_upload_id: str = None,
+) -> Dict[str, Any]:
+    """
+    Async task for validating an SDRF file without importing it.
+
+    Args:
+        file_content: Raw SDRF file content as a string
+        user_id: ID of the user performing validation
+        validation_options: Optional validation configuration
+        task_id: Optional task identifier for tracking
+        chunked_upload_id: Optional chunked upload ID to clean up after validation
+
+    Returns:
+        Dict with validation results
+    """
+    try:
+        if task_id:
+            try:
+                task = AsyncTaskStatus.objects.get(id=task_id)
+                task.mark_started()
+            except AsyncTaskStatus.DoesNotExist:
+                pass
+
+        result = validate_sdrf_file_content(
+            file_content=file_content,
+            validation_options=validation_options or {},
+        )
+
+        if task_id:
+            try:
+                task = AsyncTaskStatus.objects.get(id=task_id)
+                task.mark_success(result)
+            except AsyncTaskStatus.DoesNotExist:
+                pass
+
+        if chunked_upload_id:
+            try:
+                from ccv.models import MetadataFileUpload
+
+                MetadataFileUpload.objects.filter(id=chunked_upload_id).delete()
+            except Exception:
+                pass
+
+        result["task_id"] = task_id
+        return result
+
+    except Exception as e:
+        error_tb = traceback.format_exc()
+
+        if task_id:
+            try:
+                task = AsyncTaskStatus.objects.get(id=task_id)
+                task.mark_failure(str(e), error_tb)
+            except AsyncTaskStatus.DoesNotExist:
+                pass
+
+        if chunked_upload_id:
+            try:
+                from ccv.models import MetadataFileUpload
+
+                MetadataFileUpload.objects.filter(id=chunked_upload_id).delete()
+            except Exception:
+                pass
+
+        return {"success": False, "error": str(e), "traceback": error_tb, "task_id": task_id}

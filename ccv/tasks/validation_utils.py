@@ -72,6 +72,81 @@ def _validate_against_schema(
     return schema_result
 
 
+def validate_sdrf_file_content(file_content: str, validation_options: Dict[str, Any] = None) -> Dict[str, Any]:
+    """
+    Validate raw SDRF file content without persisting anything to the database.
+
+    Args:
+        file_content: Raw tab-separated SDRF file content as a string
+        validation_options: Optional dict with keys:
+            - schema_names: List of schema names (default: ["default"])
+            - use_ols_cache_only: Use only cached OLS data (default: False)
+            - skip_ontology: Skip ontology validation (default: False)
+
+    Returns:
+        Dict with validation results including per-schema breakdown
+    """
+    if validation_options is None:
+        validation_options = {}
+
+    schema_names = validation_options.get("schema_names", ["default"]) or ["default"]
+    use_ols_cache_only = validation_options.get("use_ols_cache_only", False)
+    skip_ontology = validation_options.get("skip_ontology", False)
+
+    from django.utils import timezone
+
+    result = {
+        "success": True,
+        "validation_timestamp": timezone.now().isoformat(),
+        "schema_results": [],
+        "errors": [],
+        "warnings": [],
+        "summary": {
+            "total_schemas": len(schema_names),
+            "passed_schemas": 0,
+            "failed_schemas": 0,
+        },
+    }
+
+    try:
+        sdrf_df = read_sdrf(io.StringIO(file_content))
+        registry = SchemaRegistry()
+        validator = SchemaValidator(registry)
+
+        all_errors = []
+        all_warnings = []
+        passed_count = 0
+
+        for schema_name in schema_names:
+            schema_result = _validate_against_schema(
+                validator=validator,
+                sdrf_df=sdrf_df,
+                schema_name=schema_name,
+                use_ols_cache_only=use_ols_cache_only,
+                skip_ontology=skip_ontology,
+            )
+            result["schema_results"].append(schema_result)
+
+            if schema_result["success"]:
+                passed_count += 1
+            else:
+                all_errors.extend([f"[{schema_name}] {e}" for e in schema_result["errors"]])
+
+            all_warnings.extend([f"[{schema_name}] {w}" for w in schema_result["warnings"]])
+
+        result["summary"]["passed_schemas"] = passed_count
+        result["summary"]["failed_schemas"] = len(schema_names) - passed_count
+        result["errors"] = all_errors
+        result["warnings"] = all_warnings
+        result["success"] = passed_count == len(schema_names)
+
+    except Exception as e:
+        result["success"] = False
+        result["errors"].append(f"Validation failed: {str(e)}")
+
+    return result
+
+
 def validate_metadata_table(
     metadata_table: MetadataTable, user: User, validation_options: Dict[str, Any] = None
 ) -> Dict[str, Any]:
