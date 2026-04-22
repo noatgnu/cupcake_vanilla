@@ -10,6 +10,8 @@ import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from ccv.models import MetadataColumn, MetadataTable
+
 from .communication import is_ccmc_available, send_maintenance_alert, send_notification
 from .models import Instrument, InstrumentJobAnnotation, InstrumentUsage, MaintenanceLog, ReagentAction, StoredReagent
 
@@ -97,8 +99,6 @@ def instrument_usage_notification(sender, instance, created, **kwargs):
 def create_instrument_metadata_table(sender, instance, created, **kwargs):
     """Automatically create a metadata table for new instruments to store specifications."""
     if created and not instance.metadata_table:
-        from ccv.models import MetadataTable
-
         try:
             metadata_table = MetadataTable.objects.create(
                 name=f"{instance.instrument_name} Specifications",
@@ -135,8 +135,6 @@ def create_instrument_default_folders(sender, instance, created, **kwargs):
 def create_stored_reagent_metadata_table(sender, instance, created, **kwargs):
     """Automatically create a metadata table for new stored reagents to store specifications."""
     if created and not instance.metadata_table:
-        from ccv.models import MetadataTable
-
         try:
             reagent_name = instance.reagent.name if instance.reagent else "Unknown Reagent"
             storage_name = instance.storage_object.object_name if instance.storage_object else "Unknown Storage"
@@ -233,8 +231,6 @@ def merge_instrument_metadata_on_booking(sender, instance, created, **kwargs):
                     columns_merged += 1
                     logger.info(f"Merged instrument metadata column '{inst_col.name}' " f"into job {instrument_job.id}")
             else:
-                from ccv.models import MetadataColumn
-
                 MetadataColumn.objects.create(
                     metadata_table=instrument_job.metadata_table,
                     name=inst_col.name,

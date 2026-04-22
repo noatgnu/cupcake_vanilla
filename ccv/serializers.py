@@ -1148,6 +1148,29 @@ class SchemaSerializer(serializers.ModelSerializer):
         return None
 
 
+class SchemaColumnSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for schema column info used for ontology-aware field hints."""
+
+    class Meta:
+        model = MetadataColumnTemplate
+        fields = [
+            "id",
+            "column_name",
+            "column_type",
+            "name",
+            "ontology_type",
+            "ontology_options",
+            "custom_ontology_filters",
+            "enable_typeahead",
+            "input_type",
+            "possible_default_values",
+            "units",
+            "not_applicable",
+            "not_available",
+            "validators",
+        ]
+
+
 class OntologySuggestionSerializer(serializers.Serializer):
     """Serializer for ontology suggestions with correct field mappings per ontology type."""
 

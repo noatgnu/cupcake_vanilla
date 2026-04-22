@@ -10,7 +10,7 @@ from django.urls import reverse
 
 from rest_framework import serializers
 
-from ccc.models import RemoteHost
+from ccc.models import AsyncTaskStatus, RemoteHost, SiteConfig
 from ccm.models import Reagent
 from ccm.serializers import ReagentSerializer
 
@@ -70,7 +70,6 @@ def queue_annotation_transcription(annotation, auto_transcribe=True):
         return
 
     try:
-        from ccc.models import AsyncTaskStatus, SiteConfig
         from ccrv.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
 
         file_path = annotation.file.path

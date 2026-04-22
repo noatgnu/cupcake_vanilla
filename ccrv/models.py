@@ -17,6 +17,7 @@ from simple_history.models import HistoricalRecords
 
 from ccc.models import AbstractResource
 from ccm.models import Reagent
+from ccv.models import MetadataColumn, MetadataTable
 
 
 class Project(AbstractResource):
@@ -1609,8 +1610,6 @@ class SessionAnnotation(models.Model):
         Create a metadata table for this session annotation if it doesn't exist.
         """
         if not self.metadata_table:
-            from ccv.models import MetadataTable
-
             self.metadata_table = MetadataTable.objects.create(
                 name=f"SessionAnnotation-{self.session.name}-{self.annotation.id}",
                 description=f"Metadata table for session annotation: {self.session.name}",
@@ -1680,8 +1679,6 @@ class SessionAnnotation(models.Model):
         if not self.metadata_table:
             raise ValueError("No metadata table found for this session annotation")
 
-        from ccv.models import MetadataColumn
-
         try:
             column = MetadataColumn.objects.get(id=column_id, metadata_table=self.metadata_table)
             column.delete()
@@ -1697,8 +1694,6 @@ class SessionAnnotation(models.Model):
             QuerySet: All metadata columns ordered by position
         """
         if not self.metadata_table:
-            from ccv.models import MetadataColumn
-
             return MetadataColumn.objects.none()
 
         return self.metadata_table.columns.all().order_by("column_position", "id")
@@ -1719,8 +1714,6 @@ class SessionAnnotation(models.Model):
         """
         if not self.metadata_table:
             raise ValueError("No metadata table found for this session annotation")
-
-        from ccv.models import MetadataColumn
 
         try:
             column = MetadataColumn.objects.get(id=column_id, metadata_table=self.metadata_table)

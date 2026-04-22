@@ -999,8 +999,6 @@ class StoredReagentViewSet(BaseViewSet):
             )
 
         try:
-            from ccv.models import MetadataColumn
-
             column = get_object_or_404(MetadataColumn, id=column_id, metadata_table=stored_reagent.metadata_table)
 
             column_name = column.name
@@ -1030,8 +1028,6 @@ class StoredReagentViewSet(BaseViewSet):
             return Response({"error": "column_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            from ccv.models import MetadataColumn
-
             column = get_object_or_404(MetadataColumn, id=column_id, metadata_table=stored_reagent.metadata_table)
 
             column.value = new_value

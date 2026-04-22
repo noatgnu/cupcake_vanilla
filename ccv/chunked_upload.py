@@ -14,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from ccc.chunked_upload import BaseChunkedUpload
+from ccc.models import AsyncTaskStatus
 
 from .models import MetadataColumn, MetadataTable, SamplePool
 from .utils import detect_pooled_samples
@@ -81,7 +82,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                from ccc.models import AsyncTaskStatus
                 from ccv.tasks.validation_tasks import validate_sdrf_file_task
 
                 schema_names_raw = request.data.get("schema_names", "default")
@@ -137,7 +137,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             {"error": "Permission denied: cannot edit this metadata table"},
                             status=status.HTTP_403_FORBIDDEN,
                         )
-                    from ccc.models import AsyncTaskStatus
                     from ccv.tasks.import_tasks import import_excel_task, import_sdrf_task
 
                     if file_ext in [".xlsx", ".xls"]:

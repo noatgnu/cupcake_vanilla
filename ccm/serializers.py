@@ -13,7 +13,7 @@ from django.urls import reverse
 
 from rest_framework import serializers
 
-from ccc.models import Annotation, LabGroupPermission
+from ccc.models import Annotation, AsyncTaskStatus, LabGroupPermission, SiteConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,6 @@ def queue_annotation_transcription(annotation, auto_transcribe=True):
         return
 
     try:
-        from ccc.models import AsyncTaskStatus, SiteConfig
         from ccm.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
 
         file_path = annotation.file.path

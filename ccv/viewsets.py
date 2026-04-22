@@ -73,6 +73,7 @@ from .serializers import (
     OntologySuggestionSerializer,
     PSIMSOntologySerializer,
     SamplePoolSerializer,
+    SchemaColumnSerializer,
     SchemaSerializer,
     SpeciesSerializer,
     SubcellularLocationSerializer,
@@ -5699,6 +5700,24 @@ class SchemaViewSet(FilterMixin, viewsets.ReadOnlyModelViewSet):
         """Get list of available schemas for creating templates."""
         schemas = self.get_queryset()
         serializer = self.get_serializer(schemas, many=True, context={"request": request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get"])
+    def columns(self, request, pk=None):
+        """
+        Return column-level ontology configuration for all system templates belonging to this schema.
+
+        Provides the ontology type, search options, allowed values, and input hints
+        needed to perform intelligent ontology lookup for columns that have not yet
+        been imported into the backend.
+        """
+        schema = self.get_object()
+        templates = MetadataColumnTemplate.objects.filter(
+            schema=schema,
+            is_system_template=True,
+            is_active=True,
+        ).order_by("column_name")
+        serializer = SchemaColumnSerializer(templates, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=["post"], permission_classes=[IsAdminUser])
