@@ -1700,17 +1700,17 @@ class SampleCountUpdateSerializer(serializers.Serializer):
 class ExcelLaunchCreateSerializer(serializers.Serializer):
     """Serializer for creating an Excel launch code."""
 
-    tableId = serializers.IntegerField(required=True)
-    tableName = serializers.CharField(required=False, allow_blank=True)
+    table_id = serializers.IntegerField(required=True)
+    table_name = serializers.CharField(required=False, allow_blank=True)
 
 
 class ExcelLaunchCodeSerializer(serializers.Serializer):
     """Serializer for the Excel launch code response."""
 
     code = serializers.CharField()
-    tableId = serializers.IntegerField()
-    tableName = serializers.CharField()
-    expiresIn = serializers.IntegerField()
+    table_id = serializers.IntegerField()
+    table_name = serializers.CharField()
+    expires_in = serializers.IntegerField()
 
 
 class ExcelLaunchClaimRequestSerializer(serializers.Serializer):
@@ -1722,8 +1722,8 @@ class ExcelLaunchClaimRequestSerializer(serializers.Serializer):
 class ExcelLaunchClaimResponseSerializer(serializers.Serializer):
     """Serializer for the claim response containing JWT tokens and table info."""
 
-    accessToken = serializers.CharField()
-    refreshToken = serializers.CharField()
-    tableId = serializers.IntegerField()
-    tableName = serializers.CharField()
+    access_token = serializers.CharField()
+    refresh_token = serializers.CharField()
+    table_id = serializers.IntegerField()
+    table_name = serializers.CharField()
     user = serializers.DictField()

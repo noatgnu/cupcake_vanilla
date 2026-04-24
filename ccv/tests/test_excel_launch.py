@@ -94,21 +94,21 @@ class ExcelLaunchAPITests(TestCase):
     def test_create_launch_code_authenticated(self):
         """Authenticated user can create launch code for accessible table."""
         self.client.force_authenticate(user=self.user)
-        response = self.client.post("/api/v1/excel-launch/", {"tableId": self.table.id}, format="json")
+        response = self.client.post("/api/v1/excel-launch/", {"table_id": self.table.id}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("code", response.data)
-        self.assertEqual(response.data["tableId"], self.table.id)
-        self.assertEqual(response.data["tableName"], self.table.name)
-        self.assertEqual(response.data["expiresIn"], EXCEL_LAUNCH_MAX_AGE)
+        self.assertEqual(response.data["table_id"], self.table.id)
+        self.assertEqual(response.data["table_name"], self.table.name)
+        self.assertEqual(response.data["expires_in"], EXCEL_LAUNCH_MAX_AGE)
 
     def test_create_launch_code_unauthenticated(self):
         """Unauthenticated request should return 401."""
-        response = self.client.post("/api/v1/excel-launch/", {"tableId": self.table.id}, format="json")
+        response = self.client.post("/api/v1/excel-launch/", {"table_id": self.table.id}, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_create_launch_code_missing_table_id(self):
-        """Missing tableId should return 400."""
+        """Missing table_id should return 400."""
         self.client.force_authenticate(user=self.user)
         response = self.client.post("/api/v1/excel-launch/", {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -116,7 +116,7 @@ class ExcelLaunchAPITests(TestCase):
     def test_create_launch_code_invalid_table(self):
         """Non-existent table should return 404."""
         self.client.force_authenticate(user=self.user)
-        response = self.client.post("/api/v1/excel-launch/", {"tableId": 99999}, format="json")
+        response = self.client.post("/api/v1/excel-launch/", {"table_id": 99999}, format="json")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_create_launch_code_no_access(self):
@@ -124,7 +124,7 @@ class ExcelLaunchAPITests(TestCase):
         other_user = User.objects.create_user(username="otheruser", password="testpass")
         self.client.force_authenticate(user=other_user)
 
-        response = self.client.post("/api/v1/excel-launch/", {"tableId": self.table.id}, format="json")
+        response = self.client.post("/api/v1/excel-launch/", {"table_id": self.table.id}, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @patch("ccv.excel_launch_views.LaunchCodeClaimThrottle.allow_request", return_value=True)
@@ -135,10 +135,10 @@ class ExcelLaunchAPITests(TestCase):
         response = self.client.post("/api/v1/excel-launch/claim/", {"code": code}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("accessToken", response.data)
-        self.assertIn("refreshToken", response.data)
-        self.assertEqual(response.data["tableId"], self.table.id)
-        self.assertEqual(response.data["tableName"], self.table.name)
+        self.assertIn("access_token", response.data)
+        self.assertIn("refresh_token", response.data)
+        self.assertEqual(response.data["table_id"], self.table.id)
+        self.assertEqual(response.data["table_name"], self.table.name)
         self.assertEqual(response.data["user"]["id"], self.user.id)
         self.assertEqual(response.data["user"]["username"], self.user.username)
 
@@ -150,7 +150,7 @@ class ExcelLaunchAPITests(TestCase):
 
     @patch("ccv.excel_launch_views.LaunchCodeClaimThrottle.allow_request", return_value=True)
     def test_claim_invalid_code(self, mock_throttle):
-        """Invalid code should return 400."""
+        """Invalid code should raise 400."""
         response = self.client.post("/api/v1/excel-launch/claim/", {"code": "INVALID_CODE"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
