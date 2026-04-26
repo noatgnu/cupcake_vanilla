@@ -656,16 +656,18 @@ class MetadataTable(BaseMetadataTable):
                 if schema_col_lower in column_map[section] and schema_col_lower not in processed_columns:
                     columns = column_map[section][schema_col_lower]
                     for column in columns:
-                        column.column_position = current_position
-                        column.save(update_fields=["column_position"])
+                        if column.column_position != current_position:
+                            column.column_position = current_position
+                            column.save(update_fields=["column_position"])
                         current_position += 1
                     processed_columns.add(schema_col_lower)
             # Then, process remaining columns in this section not in schema
             for col_name, columns in column_map[section].items():
                 if col_name not in processed_columns:
                     for column in columns:
-                        column.column_position = current_position
-                        column.save(update_fields=["column_position"])
+                        if column.column_position != current_position:
+                            column.column_position = current_position
+                            column.save(update_fields=["column_position"])
                         current_position += 1
 
         return True
@@ -2731,16 +2733,18 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                 if schema_col_lower in column_map[section] and schema_col_lower not in processed_columns:
                     columns = column_map[section][schema_col_lower]
                     for column in columns:
-                        column.column_position = current_position
-                        column.save(update_fields=["column_position"])
+                        if column.column_position != current_position:
+                            column.column_position = current_position
+                            column.save(update_fields=["column_position"])
                         current_position += 1
                     processed_columns.add(schema_col_lower)
             # Then, process remaining columns in this section not in schema
             for col_name, columns in column_map[section].items():
                 if col_name not in processed_columns:
                     for column in columns:
-                        column.column_position = current_position
-                        column.save(update_fields=["column_position"])
+                        if column.column_position != current_position:
+                            column.column_position = current_position
+                            column.save(update_fields=["column_position"])
                         current_position += 1
 
         return True
