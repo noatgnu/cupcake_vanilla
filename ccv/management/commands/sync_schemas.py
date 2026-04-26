@@ -152,6 +152,6 @@ class Command(BaseCommand):
                     if Schema.objects.filter(name=new_name).exists():
                         Schema.objects.filter(name=new_name).delete()
                     schema.name = new_name
-                    schema.display_name = new_name.replace("-", " ").replace("_", " ").title()
+                    schema.display_name = new_name.replace("-", " ").replace("_", " ")
                     schema.save()
                     self.stdout.write(self.style.SUCCESS(f"  Renamed '{old_name}' -> '{new_name}'"))

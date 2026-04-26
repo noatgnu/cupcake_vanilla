@@ -350,7 +350,7 @@ class Command(BaseCommand):
                 base_column=True,
                 is_system_template=True,
                 owner=admin_user,
-                category=f"{schema_name.title()} Schema",
+                category=f"{schema_name} Schema",
                 source_schema=schema_name,
                 schema=schema_obj,  # Link to Schema object
                 visibility="public",

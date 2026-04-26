@@ -731,8 +731,11 @@ def import_sdrf_data(
                     max_count = len(metadata_value_map[value])
                     max_value = value
 
+            update_fields = []
+
             if max_value:
                 metadata_column.value = max_value
+                update_fields.append("value")
 
             # Calculate modifiers for other values (exact original CUPCAKE logic)
             modifiers = []
@@ -765,11 +768,15 @@ def import_sdrf_data(
                     modifiers.append(modifier)
 
             if modifiers:
-                # Store modifiers as native JSON object
                 metadata_column.modifiers = modifiers
+                update_fields.append("modifiers")
 
-            metadata_column.save()
-            columns_updated += 1
+            if metadata_column.not_applicable or metadata_column.not_available:
+                update_fields.extend(["not_applicable", "not_available"])
+
+            if update_fields:
+                metadata_column.save(update_fields=update_fields)
+                columns_updated += 1
 
         # Reorder table columns after creation (same approach as Excel import)
         if created_columns:
