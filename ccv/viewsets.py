@@ -164,6 +164,23 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         if is_locked is not None:
             queryset = queryset.filter(is_locked=is_locked.lower() == "true")
 
+        column_name = self.request.query_params.get("column_name")
+        column_value = self.request.query_params.get("column_value")
+        column_type = self.request.query_params.get("column_type")
+        column_match = self.request.query_params.get("column_match", "contains")
+        exact = column_match == "exact"
+
+        if column_name:
+            lookup = "columns__name__iexact" if exact else "columns__name__icontains"
+            queryset = queryset.filter(**{lookup: column_name})
+        if column_value:
+            lookup = "columns__value__iexact" if exact else "columns__value__icontains"
+            queryset = queryset.filter(**{lookup: column_value})
+        if column_type:
+            queryset = queryset.filter(columns__type__iexact=column_type)
+        if column_name or column_value or column_type:
+            queryset = queryset.distinct()
+
         return queryset.order_by("-created_at", "name")
 
     @action(detail=True, methods=["post"])
