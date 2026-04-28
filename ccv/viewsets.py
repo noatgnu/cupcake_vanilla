@@ -56,6 +56,7 @@ from .serializers import (
     BTOTermSerializer,
     CellOntologySerializer,
     ChEBICompoundSerializer,
+    ColumnOverrideImportSerializer,
     DiseaseOntologyTermSerializer,
     FavouriteMetadataOptionSerializer,
     HumanDiseaseSerializer,
@@ -77,11 +78,19 @@ from .serializers import (
     SchemaSerializer,
     SpeciesSerializer,
     SubcellularLocationSerializer,
+    SuggestColumnMappingSerializer,
     TissueSerializer,
     UberonAnatomySerializer,
     UnimodSerializer,
 )
-from .tasks.import_utils import synchronize_pools_with_import_data
+from .tasks.import_utils import (
+    apply_column_override,
+    compute_column_override_diff,
+    parse_override_file,
+    suggest_mapping_by_name,
+    suggest_mapping_by_position,
+    synchronize_pools_with_import_data,
+)
 from .utils import (
     AutofillSpecValidator,
     SampleVariationGenerator,
@@ -1076,6 +1085,149 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             return Response({"error": f"Autofill failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="suggest_column_mapping")
+    def suggest_column_mapping(self, request, pk=None):
+        """
+        Parse the uploaded file and return its headers, the table's existing columns,
+        and a suggested mapping produced by the chosen algorithm.
+
+        The suggestion is a starting point only.  The client must present the mapping
+        to the user for manual review before calling ``preview_column_override``.
+
+        Algorithms:
+          - ``name``: match file header to table column by exact name (case-insensitive).
+            Duplicate names on either side are left unmatched so the user resolves them.
+          - ``position``: pair file column at index *i* with the table column at
+            position *i* (sorted by ``column_position``).
+          - ``none``: return all file columns unmatched; user maps everything manually.
+        """
+        table = self.get_object()
+
+        if not table.can_edit(request.user):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+        if table.is_locked:
+            return Response({"error": "Table is locked"}, status=status.HTTP_423_LOCKED)
+
+        serializer = SuggestColumnMappingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        uploaded = data["file"]
+        name_lower = uploaded.name.lower() if uploaded.name else ""
+        file_type = "excel" if name_lower.endswith((".xlsx", ".xls")) else "tsv"
+
+        try:
+            content = uploaded.read()
+            parsed = parse_override_file(content, file_type)
+            headers = parsed["headers"]
+
+            existing_columns = list(table.columns.order_by("column_position"))
+
+            algorithm = data["algorithm"]
+            if algorithm == "name":
+                suggested_mapping = suggest_mapping_by_name(headers, existing_columns)
+            elif algorithm == "position":
+                suggested_mapping = suggest_mapping_by_position(headers, existing_columns)
+            else:
+                suggested_mapping = [{"fileColIndex": i, "columnId": None} for i in range(len(headers))]
+
+            return Response(
+                {
+                    "fileHeaders": [{"fileColIndex": i, "header": h} for i, h in enumerate(headers)],
+                    "tableColumns": [
+                        {"columnId": col.id, "columnName": col.name, "columnPosition": col.column_position}
+                        for col in existing_columns
+                    ],
+                    "suggestedMapping": suggested_mapping,
+                    "fileRowCount": len(parsed["rows"]),
+                    "tableSampleCount": table.sample_count or 0,
+                }
+            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="preview_column_override")
+    def preview_column_override(self, request, pk=None):
+        """
+        Compute what would change on this table if the user-confirmed mapping were applied.
+
+        Accepts the same file plus an explicit ``column_mapping`` JSON field containing
+        the user's final pairing.  Entries with ``columnId=null`` will create new
+        columns; file columns omitted from the mapping are ignored.  No writes are
+        performed.
+        """
+        table = self.get_object()
+
+        if not table.can_edit(request.user):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+        if table.is_locked:
+            return Response({"error": "Table is locked"}, status=status.HTTP_423_LOCKED)
+
+        serializer = ColumnOverrideImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        uploaded = data["file"]
+        name_lower = uploaded.name.lower() if uploaded.name else ""
+        file_type = "excel" if name_lower.endswith((".xlsx", ".xls")) else "tsv"
+
+        try:
+            content = uploaded.read()
+            parsed = parse_override_file(content, file_type)
+            diff = compute_column_override_diff(
+                metadata_table=table,
+                parsed=parsed,
+                column_mapping=data["column_mapping"],
+                update_value=data["update_value"],
+                update_modifiers=data["update_modifiers"],
+                normalize_ontology=False,
+            )
+            return Response(diff)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="commit_column_override")
+    def commit_column_override(self, request, pk=None):
+        """
+        Re-parse the file and apply the user-confirmed column mapping in one transaction.
+
+        The file is always re-parsed server-side so that all modifier data is derived
+        from the authoritative file content, not from client-supplied values.
+        """
+        table = self.get_object()
+
+        if not table.can_edit(request.user):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+        if table.is_locked:
+            return Response({"error": "Table is locked"}, status=status.HTTP_423_LOCKED)
+
+        serializer = ColumnOverrideImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        uploaded = data["file"]
+        name_lower = uploaded.name.lower() if uploaded.name else ""
+        file_type = "excel" if name_lower.endswith((".xlsx", ".xls")) else "tsv"
+
+        try:
+            content = uploaded.read()
+            parsed = parse_override_file(content, file_type)
+            diff = compute_column_override_diff(
+                metadata_table=table,
+                parsed=parsed,
+                column_mapping=data["column_mapping"],
+                update_value=data["update_value"],
+                update_modifiers=data["update_modifiers"],
+                normalize_ontology=data["normalize_ontology"],
+            )
+
+            with transaction.atomic():
+                summary = apply_column_override(table, diff)
+
+            return Response({"message": "Column override applied", **summary}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):

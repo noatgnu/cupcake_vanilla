@@ -1767,3 +1767,349 @@ def import_excel_data(
             "has_pool_data": len(pool_object_map_data) > 0,
             "warnings": [],
         }
+
+
+def parse_override_file(content, file_type: str) -> dict:
+    """
+    Parse an uploaded file into a normalized headers + rows structure.
+
+    Handles TSV/SDRF files (tab-separated) and Excel workbooks. For Excel,
+    reads the first worksheet; column headers are taken from row 1.
+
+    Args:
+        content: File content — str or bytes for TSV, bytes for Excel.
+        file_type: One of ``"tsv"`` or ``"excel"``.
+
+    Returns:
+        ``{"headers": [str, ...], "rows": [[str, ...], ...]}``
+    """
+    if file_type == "excel":
+        wb = load_workbook(filename=io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        raw_rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+        if not raw_rows:
+            return {"headers": [], "rows": []}
+        headers = [str(cell).strip().lower() if cell is not None else "" for cell in raw_rows[0]]
+        data_rows = [[str(cell).strip() if cell is not None else "" for cell in row] for row in raw_rows[1:]]
+    else:
+        if isinstance(content, bytes):
+            content = content.decode("utf-8")
+        lines = content.strip().split("\n")
+        if not lines:
+            return {"headers": [], "rows": []}
+        headers = [h.strip().lower() for h in lines[0].split("\t")]
+        data_rows = [line.split("\t") for line in lines[1:] if line.strip()]
+
+    return {"headers": headers, "rows": data_rows}
+
+
+def _compute_value_and_modifiers(rows, col_index: int, sample_count: int, metadata_column, normalize_ontology: bool):
+    """
+    Derive the default value and per-sample modifiers for one column from parsed rows.
+
+    Mirrors the logic in ``import_sdrf_data`` but operates on a pre-parsed rows
+    list rather than the raw file content so it can be shared between the preview
+    and commit paths.
+
+    Args:
+        rows: List of row lists (one per data sample, already trimmed to sample_count).
+        col_index: Index of this column in each row.
+        sample_count: Number of samples on the target table.
+        metadata_column: ``MetadataColumn`` instance used for ontology conversion and
+            not-applicable / not-available flag detection.
+        normalize_ontology: Whether to call ``convert_sdrf_to_metadata`` for ontology
+            term normalisation.
+
+    Returns:
+        ``(value, modifiers, not_applicable, not_available)``
+    """
+    metadata_value_map = {}
+    not_applicable = False
+    not_available = False
+
+    for j, row in enumerate(rows):
+        if col_index >= len(row):
+            continue
+        cell_value = row[col_index].strip() if row[col_index] else ""
+        if not cell_value:
+            continue
+        if cell_value == "not applicable":
+            not_applicable = True
+            continue
+        if cell_value == "not available":
+            not_available = True
+            continue
+
+        if normalize_ontology:
+            value = metadata_column.convert_sdrf_to_metadata(cell_value)
+        else:
+            value = cell_value
+
+        if value not in metadata_value_map:
+            metadata_value_map[value] = []
+        metadata_value_map[value].append(j)
+
+    max_value = None
+    max_count = 0
+    for v, indices in metadata_value_map.items():
+        if len(indices) > max_count:
+            max_count = len(indices)
+            max_value = v
+
+    modifiers = []
+    for v, indices in metadata_value_map.items():
+        if v == max_value:
+            continue
+        modifier = {"samples": [], "value": v}
+        indices.sort()
+        start = indices[0]
+        end = indices[0]
+        for idx in range(1, len(indices)):
+            if indices[idx] == end + 1:
+                end = indices[idx]
+            else:
+                if start == end:
+                    modifier["samples"].append(str(start + 1))
+                else:
+                    modifier["samples"].append(f"{start + 1}-{end + 1}")
+                start = indices[idx]
+                end = indices[idx]
+        if start == end:
+            modifier["samples"].append(str(start + 1))
+        else:
+            modifier["samples"].append(f"{start + 1}-{end + 1}")
+        modifier["samples"] = ",".join(modifier["samples"])
+        modifiers.append(modifier)
+
+    return max_value, modifiers, not_applicable, not_available
+
+
+def suggest_mapping_by_name(headers: list, existing_columns) -> list:
+    """
+    Suggest column mapping by matching file headers to table columns by name.
+
+    Only produces a match when the header name is unique in the file AND unique
+    among table columns.  Any duplicate name on either side is left unmatched
+    (``columnId`` set to ``None``) so the user must resolve it manually.
+
+    Args:
+        headers: List of lowercased header strings from the file.
+        existing_columns: Iterable of ``MetadataColumn`` instances on the target table.
+
+    Returns:
+        List of ``{"fileColIndex": int, "columnId": int | None}`` entries, one per header.
+    """
+    header_counts = Counter(h.lower() for h in headers)
+
+    col_name_map: dict = {}
+    for col in existing_columns:
+        key = col.name.lower()
+        if key not in col_name_map:
+            col_name_map[key] = []
+        col_name_map[key].append(col)
+
+    mapping = []
+    for i, header in enumerate(headers):
+        key = header.lower()
+        candidates = col_name_map.get(key, [])
+        if header_counts[key] == 1 and len(candidates) == 1:
+            mapping.append({"fileColIndex": i, "columnId": candidates[0].id})
+        else:
+            mapping.append({"fileColIndex": i, "columnId": None})
+    return mapping
+
+
+def suggest_mapping_by_position(headers: list, existing_columns) -> list:
+    """
+    Suggest column mapping by aligning file columns to table columns by position index.
+
+    File column at index ``i`` is paired with the table column that has the ``i``-th
+    smallest ``column_position``.  File columns beyond the table's column count are
+    left unmatched.
+
+    Args:
+        headers: List of header strings from the file.
+        existing_columns: Iterable of ``MetadataColumn`` instances on the target table.
+
+    Returns:
+        List of ``{"fileColIndex": int, "columnId": int | None}`` entries, one per header.
+    """
+    sorted_cols = sorted(existing_columns, key=lambda c: c.column_position)
+    mapping = []
+    for i in range(len(headers)):
+        column_id = sorted_cols[i].id if i < len(sorted_cols) else None
+        mapping.append({"fileColIndex": i, "columnId": column_id})
+    return mapping
+
+
+def compute_column_override_diff(
+    metadata_table,
+    parsed: dict,
+    column_mapping: list,
+    update_value: bool,
+    update_modifiers: bool,
+    normalize_ontology: bool = False,
+) -> dict:
+    """
+    Compute what would change when applying an explicit column mapping to a table.
+
+    No database writes are performed.  ``column_mapping`` is a list of
+    ``{"fileColIndex": int, "columnId": int | None}`` entries.  When
+    ``columnId`` is ``None`` the corresponding file column will create a new
+    column on the table; entries omitted from the mapping are ignored entirely.
+
+    Args:
+        metadata_table: Target ``MetadataTable`` instance.
+        parsed: Output of ``parse_override_file``.
+        column_mapping: Explicit user-confirmed mapping produced by the frontend.
+        update_value: Whether to include the new default value in the diff.
+        update_modifiers: Whether to include new per-sample modifiers in the diff.
+        normalize_ontology: Whether to normalise ontology terms during value
+            computation (expensive — recommended ``False`` for preview).
+
+    Returns:
+        Dict with keys ``columnsMatched``, ``columnsToAdd``, ``warnings``,
+        ``sampleCountMismatch``, and ``fileRowCount``.
+    """
+    headers = parsed["headers"]
+    rows = parsed["rows"]
+    file_row_count = len(rows)
+    sample_count = metadata_table.sample_count or file_row_count
+    warnings = []
+
+    sample_count_mismatch = file_row_count != sample_count
+    if sample_count_mismatch:
+        if file_row_count < sample_count:
+            warnings.append(
+                f"File has {file_row_count} rows; table has {sample_count} samples — "
+                f"trailing {sample_count - file_row_count} samples keep existing values."
+            )
+        else:
+            warnings.append(
+                f"File has {file_row_count} rows; table has {sample_count} samples — "
+                f"extra {file_row_count - sample_count} file rows are ignored."
+            )
+
+    effective_rows = rows[:sample_count]
+    existing_column_map = {col.id: col for col in metadata_table.columns.all()}
+
+    columns_matched = []
+    columns_to_add = []
+
+    for entry in column_mapping:
+        file_col_index = entry["fileColIndex"]
+        column_id = entry.get("columnId")
+
+        if file_col_index >= len(headers):
+            continue
+
+        file_header = headers[file_col_index]
+
+        if column_id is not None:
+            col = existing_column_map.get(column_id)
+            if col is None:
+                warnings.append(f"Column ID {column_id} not found on table, skipping.")
+                continue
+
+            new_value, new_modifiers, _, _ = _compute_value_and_modifiers(
+                effective_rows, file_col_index, sample_count, col, normalize_ontology
+            )
+
+            columns_matched.append(
+                {
+                    "columnId": col.id,
+                    "columnName": col.name,
+                    "fileHeader": file_header,
+                    "fileColIndex": file_col_index,
+                    "currentValue": col.value,
+                    "newValue": new_value if update_value else None,
+                    "currentModifiers": col.modifiers or [],
+                    "newModifiers": new_modifiers if update_modifiers else [],
+                    "rowsChanged": sum(
+                        1 for r in effective_rows if file_col_index < len(r) and (r[file_col_index] or "").strip()
+                    ),
+                }
+            )
+        else:
+            col_type = file_header.split("[")[0].strip() if "[" in file_header else "special"
+            dummy = MetadataColumn(name=file_header, type=col_type, value="", modifiers=[])
+            new_value, new_modifiers, _, _ = _compute_value_and_modifiers(
+                effective_rows, file_col_index, sample_count, dummy, normalize_ontology
+            )
+            columns_to_add.append(
+                {
+                    "fileHeader": file_header,
+                    "fileColIndex": file_col_index,
+                    "columnType": col_type,
+                    "newValue": new_value if update_value else None,
+                    "newModifiers": new_modifiers if update_modifiers else [],
+                    "warning": f"'{file_header}' does not exist on this table and will be created.",
+                }
+            )
+
+    return {
+        "columnsMatched": columns_matched,
+        "columnsToAdd": columns_to_add,
+        "warnings": warnings,
+        "sampleCountMismatch": sample_count_mismatch,
+        "fileRowCount": file_row_count,
+    }
+
+
+def apply_column_override(metadata_table, diff: dict) -> dict:
+    """
+    Apply a previously computed column override diff to the database.
+
+    Must be called inside a ``transaction.atomic()`` block by the caller.
+
+    Args:
+        metadata_table: Target ``MetadataTable`` instance.
+        diff: Output of ``compute_column_override_diff``.
+
+    Returns:
+        Summary dict with ``columnsUpdated``, ``columnsAdded``, ``warnings``,
+        and ``updatedColumns``.
+    """
+    columns_updated = 0
+    columns_added = 0
+    updated_columns = []
+
+    for entry in diff["columnsMatched"]:
+        try:
+            col = MetadataColumn.objects.get(id=entry["columnId"])
+        except MetadataColumn.DoesNotExist:
+            continue
+
+        update_fields = []
+        if entry["newValue"] is not None and entry["newValue"] != col.value:
+            col.value = entry["newValue"]
+            update_fields.append("value")
+        if entry["newModifiers"] != col.modifiers:
+            col.modifiers = entry["newModifiers"]
+            update_fields.append("modifiers")
+
+        if update_fields:
+            col.save(update_fields=update_fields)
+            columns_updated += 1
+            updated_columns.append({"id": col.id, "name": col.name})
+
+    next_position = metadata_table.columns.count()
+    for item in diff["columnsToAdd"]:
+        MetadataColumn.objects.create(
+            name=item["fileHeader"],
+            type=item["columnType"],
+            value=item["newValue"] or "",
+            modifiers=item["newModifiers"],
+            column_position=next_position,
+            metadata_table=metadata_table,
+        )
+        next_position += 1
+        columns_added += 1
+
+    return {
+        "columnsUpdated": columns_updated,
+        "columnsAdded": columns_added,
+        "warnings": diff["warnings"],
+        "updatedColumns": updated_columns,
+    }

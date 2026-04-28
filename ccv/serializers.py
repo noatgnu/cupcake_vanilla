@@ -423,6 +423,23 @@ class MetadataImportSerializer(serializers.Serializer):
         return value
 
 
+class SuggestColumnMappingSerializer(serializers.Serializer):
+    """Serializer for column mapping suggestion requests."""
+
+    file = serializers.FileField()
+    algorithm = serializers.ChoiceField(choices=["name", "position", "none"], default="name")
+
+
+class ColumnOverrideImportSerializer(serializers.Serializer):
+    """Serializer for column override preview and commit requests."""
+
+    file = serializers.FileField()
+    column_mapping = serializers.JSONField()
+    update_value = serializers.BooleanField(default=True)
+    update_modifiers = serializers.BooleanField(default=True)
+    normalize_ontology = serializers.BooleanField(default=True)
+
+
 class ChunkedImportSerializer(serializers.Serializer):
     """Serializer for chunked import requests."""
 
