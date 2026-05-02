@@ -123,7 +123,7 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         For list views, only shows metadata tables with source_app='ccv'.
         For detail views (accessing by ID), allows access to CCM tables too.
         """
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().select_related("owner", "lab_group")
 
         # For list views, only show CCV metadata tables
         # For detail views, allow access to CCM tables through permission classes
@@ -1270,7 +1270,7 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
         if hidden is not None:
             queryset = queryset.filter(hidden=hidden.lower() == "true")
 
-        return queryset.order_by("column_position", "name")
+        return queryset.select_related("metadata_table", "template").order_by("column_position", "name")
 
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):

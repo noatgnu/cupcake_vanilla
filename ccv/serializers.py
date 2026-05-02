@@ -82,7 +82,7 @@ class MetadataTableSerializer(serializers.ModelSerializer):
 
     def get_columns(self, obj):
         """Get the columns for this metadata table."""
-        columns = obj.columns.all().order_by("column_position")
+        columns = obj.columns.select_related("template").order_by("column_position")
         return MetadataColumnSerializer(columns, many=True, context=self.context).data
 
     def get_sample_pools(self, obj):
@@ -254,7 +254,7 @@ class SamplePoolSerializer(serializers.ModelSerializer):
 
     def get_metadata_columns(self, obj):
         """Get the metadata columns for this sample pool."""
-        columns = obj.metadata_columns.all().order_by("column_position")
+        columns = obj.metadata_columns.select_related("template").order_by("column_position")
         return MetadataColumnSerializer(columns, many=True, context=self.context).data
 
     def validate_pooled_only_samples(self, value):

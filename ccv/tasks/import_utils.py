@@ -700,9 +700,9 @@ def import_sdrf_data(
 
         columns_updated = 0
         for i, metadata_column in enumerate(created_columns):
-            metadata_value_map = {}
+            metadata_value_map: dict[str, list[int]] = {}
 
-            # Process each data row for this column (original CUPCAKE approach)
+            raw_indices: dict[str, list[int]] = {}
             for j, row in enumerate(data_rows):
                 if i < len(row) and row[i]:
                     cell_value = row[i].strip()
@@ -716,12 +716,11 @@ def import_sdrf_data(
                         metadata_column.not_available = True
                         continue
 
-                    # Use the MetadataColumn instance method for proper SDRF conversion with ontology lookup
-                    value = metadata_column.convert_sdrf_to_metadata(cell_value)
+                    raw_indices.setdefault(cell_value, []).append(j)
 
-                    if value not in metadata_value_map:
-                        metadata_value_map[value] = []
-                    metadata_value_map[value].append(j)
+            for raw_value, indices in raw_indices.items():
+                converted = metadata_column.convert_sdrf_to_metadata(raw_value)
+                metadata_value_map.setdefault(converted, []).extend(indices)
 
             # Set the most common value as default (original CUPCAKE logic)
             max_count = 0
@@ -1124,8 +1123,9 @@ def import_sdrf_data_bulk(
             columns_to_update = []
             columns_updated = 0
             for i, metadata_column in enumerate(created_columns):
-                metadata_value_map = {}
+                metadata_value_map: dict[str, list[int]] = {}
 
+                raw_indices: dict[str, list[int]] = {}
                 for j, row in enumerate(data_rows):
                     if i < len(row) and row[i]:
                         cell_value = row[i].strip()
@@ -1139,11 +1139,11 @@ def import_sdrf_data_bulk(
                             metadata_column.not_available = True
                             continue
 
-                        value = metadata_column.convert_sdrf_to_metadata(cell_value)
+                        raw_indices.setdefault(cell_value, []).append(j)
 
-                        if value not in metadata_value_map:
-                            metadata_value_map[value] = []
-                        metadata_value_map[value].append(j)
+                for raw_value, indices in raw_indices.items():
+                    converted = metadata_column.convert_sdrf_to_metadata(raw_value)
+                    metadata_value_map.setdefault(converted, []).extend(indices)
 
                 max_count = 0
                 max_value = None
