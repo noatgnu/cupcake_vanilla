@@ -14,6 +14,7 @@ from django.db import models
 import yaml
 
 from ccv.models import MetadataColumnTemplate, Schema
+from ccv.ontology_registry import registry
 from ccv.utils import SchemaRegistry, get_specific_default_schema
 
 
@@ -462,63 +463,31 @@ class Command(BaseCommand):
         template.validators = validators_list
 
     def configure_ontology_options(self, template, column):
-        """Configure ontology options based on column validators."""
+        """Configure ontology options based on column validators using the ontology registry."""
         if "organism part" in template.column_name.lower():
             template.ontology_options = ["tissue", "uberon"]
             template.ontology_type = "tissue"
 
         for validator in column.validators:
-            if validator.validator_name == "ontology":
-                custom_filter = {}
-                template.enable_typeahead = True
-                template.ontology_options = []
-                template.possible_default_values = validator.params.get("examples", [])
-                for ontology in validator.params.get("ontologies", []):
-                    if ontology == "ncbitaxon":
-                        template.ontology_options.extend(["ncbi_taxonomy", "species"])
-                        template.ontology_type = "species"
-                    elif ontology == "cl":
-                        template.ontology_options.append("cell_ontology")
-                        template.ontology_type = "cell_ontology"
-                    elif ontology == "pride":
-                        template.ontology_options.append("ms_unique_vocabularies")
-                        custom_filter["ms_unique_vocabularies"] = {"term_type": "sample attribute"}
-                        template.ontology_type = "ms_unique_vocabularies"
-                    elif ontology == "unimod":
-                        template.ontology_options.append("unimod")
-                        template.ontology_type = "unimod"
-                    elif ontology == "ms":
-                        template.ontology_options.append("ms_unique_vocabularies")
-                        # Set specific filters based on column name
-                        if "instrument" in template.column_name.lower():
-                            custom_filter["ms_unique_vocabularies"] = {"term_type": "instrument"}
-                        elif "analyzer" in template.column_name.lower():
-                            custom_filter["ms_unique_vocabularies"] = {"term_type": "ms analyzer type"}
-                        elif "cleavage" in template.column_name.lower():
-                            custom_filter["ms_unique_vocabularies"] = {"term_type": "cleavage agent"}
-                        template.ontology_type = "ms_unique_vocabularies"
-                    elif ontology == "mondo":
-                        template.ontology_options.extend(["human_disease", "mondo"])
-                        template.ontology_type = "human_disease"
-                    elif ontology == "clo":
-                        template.ontology_options.append("ms_unique_vocabularies")
-                        custom_filter["ms_unique_vocabularies"] = {"term_type": "cell line"}
-                        template.ontology_type = "ms_unique_vocabularies"
+            if validator.validator_name != "ontology":
+                continue
 
-                # Handle special column-specific configurations
-                if "ancestry category" in template.column_name.lower():
-                    template.ontology_options.append("ms_unique_vocabularies")
-                    custom_filter["ms_unique_vocabularies"] = {"term_type": "ancestral category"}
-                    template.ontology_type = "ms_unique_vocabularies"
-                elif "sex" in template.column_name.lower():
-                    template.ontology_options.append("ms_unique_vocabularies")
-                    custom_filter["ms_unique_vocabularies"] = {"term_type": "sex"}
-                    template.ontology_type = "ms_unique_vocabularies"
-                elif "developmental stage" in template.column_name.lower():
-                    template.ontology_options.append("ms_unique_vocabularies")
-                    custom_filter["ms_unique_vocabularies"] = {"term_type": "developmental stage"}
-                    template.ontology_type = "ms_unique_vocabularies"
+            template.enable_typeahead = True
+            template.ontology_options = []
+            template.possible_default_values = validator.params.get("examples", [])
+            custom_filter = {}
+            column_name_lower = template.column_name.lower()
 
-                # Set custom filters if any were configured
-                if custom_filter:
-                    template.custom_ontology_filters = custom_filter
+            for sdrf_name in validator.params.get("ontologies", []):
+                for mapping in registry.get_sdrf_mappings(sdrf_name):
+                    type_key = mapping.type_key
+                    if type_key not in template.ontology_options:
+                        template.ontology_options.append(type_key)
+                    if mapping.is_primary:
+                        template.ontology_type = type_key
+                    resolved = mapping.resolve_filter(column_name_lower)
+                    if resolved:
+                        custom_filter[type_key] = resolved
+
+            if custom_filter:
+                template.custom_ontology_filters = custom_filter

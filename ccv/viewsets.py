@@ -51,6 +51,7 @@ from .models import (
     UberonAnatomy,
     Unimod,
 )
+from .ontology_registry import registry
 from .permissions import MetadataColumnAccessPermission, MetadataTableAccessPermission
 from .serializers import (
     BTOTermSerializer,
@@ -5485,157 +5486,11 @@ class OntologySearchViewSet(viewsets.ViewSet):
     def _get_ontology_suggestions_unified(
         self, ontology_type: str, search_term: str, limit: int, search_type: str, custom_filters: dict = None
     ):
-        """
-        Get ontology suggestions using the unified approach like MetadataColumn.get_ontology_suggestions.
-        """
-
-        # Create a temporary object to use the unified search method
-        class TempOntologySearcher:
-            def __init__(self, ontology_type, custom_ontology_filters=None):
-                self.ontology_type = ontology_type
-                self.custom_ontology_filters = custom_ontology_filters or {}
-
-            def get_ontology_model(self):
-                """Get the Django model class for this ontology type."""
-                ontology_mapping = {
-                    "species": Species,
-                    "tissue": Tissue,
-                    "human_disease": HumanDisease,
-                    "subcellular_location": SubcellularLocation,
-                    "ms_unique_vocabularies": MSUniqueVocabularies,
-                    "unimod": Unimod,
-                    "chebi": ChEBICompound,
-                    "ncbi_taxonomy": NCBITaxonomy,
-                    "mondo": MondoDisease,
-                    "uberon": UberonAnatomy,
-                    "cell_ontology": CellOntology,
-                    "psi_ms": PSIMSOntology,
-                    "bto": BTOTerm,
-                    "doid": DiseaseOntologyTerm,
-                }
-                return ontology_mapping.get(self.ontology_type)
-
-            def get_ontology_suggestions(self, search_term: str = "", limit: int = 20, search_type: str = "icontains"):
-                """Use the same logic as MetadataColumn.get_ontology_suggestions."""
-                model_class = self.get_ontology_model()
-                if not model_class:
-                    return []
-                queryset = model_class.objects.all()
-
-                # Apply custom ontology filters first
-                # Custom filters can be structured as:
-                # 1. {"ontology_type": {"field": "value"}} - wrapped with ontology type (MetadataColumn format)
-                # 2. {"field": "value"} - direct filters (standalone format)
-                if self.custom_ontology_filters:
-                    # Check if filters are wrapped with ontology type
-                    actual_filters = self.custom_ontology_filters.get(self.ontology_type, self.custom_ontology_filters)
-
-                    for field, filter_value in actual_filters.items():
-                        # Skip if this is still the ontology type wrapper
-                        if field == self.ontology_type:
-                            continue
-
-                        if isinstance(filter_value, dict):
-                            # Handle complex filter values like {'icontains': 'value'} or {'exact': 'value'}
-                            for lookup, value in filter_value.items():
-                                filter_kwargs = {f"{field}__{lookup}": value}
-                                queryset = queryset.filter(**filter_kwargs)
-                        else:
-                            # Handle simple filter values
-                            queryset = queryset.filter(**{field: filter_value})
-
-                # Apply search filtering based on search_type and model type
-                if search_term:
-                    search_queries = []
-
-                    # Build search queries based on ontology type and search type
-                    if self.ontology_type == "species":
-                        search_fields = ["official_name", "common_name", "code"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "tissue":
-                        search_fields = ["identifier", "accession", "synonyms"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "human_disease":
-                        search_fields = ["identifier", "acronym", "accession", "definition", "synonyms", "keywords"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "subcellular_location":
-                        search_fields = ["accession", "location_identifier", "definition", "synonyms", "content"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "ms_unique_vocabularies":
-                        search_fields = ["accession", "name", "definition"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "unimod":
-                        search_fields = ["accession", "name", "definition"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "chebi":
-                        search_fields = ["identifier", "name", "definition", "synonyms", "formula"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "ncbi_taxonomy":
-                        search_fields = ["scientific_name", "common_name", "synonyms"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "mondo":
-                        search_fields = ["identifier", "name", "definition", "synonyms"]
-                        # Add obsolete filter for mondo
-                        queryset = queryset.filter(obsolete=False)
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "uberon":
-                        search_fields = ["identifier", "name", "definition", "synonyms"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "cell_ontology":
-                        search_fields = ["identifier", "name", "definition", "synonyms"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "psi_ms":
-                        search_fields = ["identifier", "name", "definition"]
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "bto":
-                        search_fields = ["identifier", "name", "synonyms", "definition"]
-                        queryset = queryset.filter(obsolete=False)
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    elif self.ontology_type == "doid":
-                        search_fields = ["identifier", "name", "synonyms", "definition"]
-                        queryset = queryset.filter(obsolete=False)
-                        for field in search_fields:
-                            search_queries.append(models.Q(**{f"{field}__{search_type}": search_term}))
-
-                    # Apply search queries
-                    if search_queries:
-                        combined_query = search_queries[0]
-                        for query in search_queries[1:]:
-                            combined_query |= query
-                        queryset = queryset.filter(combined_query)
-
-                # Apply limit and return results
-                return queryset[:limit]
-
-        # Use the temporary searcher
-        searcher = TempOntologySearcher(ontology_type, custom_filters)
-        return searcher.get_ontology_suggestions(search_term, limit, search_type)
+        """Get ontology suggestions via the registry."""
+        desc = registry.get(ontology_type)
+        if not desc:
+            return []
+        return desc.build_search_queryset(search_term, search_type, custom_filters)[:limit]
 
     def _format_ontology_suggestion(self, result, ontology_type: str, match_type: str):
         """Format a single ontology result into the expected suggestion format."""

@@ -17,6 +17,7 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from ccc.models import AbstractResource, LabGroup, ResourceType
+from ccv.ontology_registry import registry
 
 
 class BaseMetadataTable(AbstractResource):
@@ -1332,28 +1333,11 @@ class MetadataColumn(models.Model):
     # Advanced features
     modifiers = models.JSONField(default=list, blank=True, help_text="Sample-specific value modifications")
 
-    ontology_choices = [
-        ("species", "Species"),
-        ("tissue", "Tissue"),
-        ("human_disease", "Human Disease"),
-        ("subcellular_location", "Subcellular Location"),
-        ("unimod", "Unimod Modifications"),
-        ("ncbi_taxonomy", "NCBI Taxonomy"),
-        ("mondo", "MONDO Disease"),
-        ("uberon", "UBERON Anatomy"),
-        ("subcellular_location", "Subcellular Location"),
-        ("chebi", "ChEBI"),
-        ("cell_ontology", "Cell Ontology"),
-        ("ms_unique_vocabularies", "MS Unique Vocabularies"),
-        ("psi_ms", "PSI-MS Controlled Vocabulary"),
-    ]
-
-    # Ontology configuration
     ontology_type = models.CharField(
         max_length=50,
         blank=True,
         null=True,
-        choices=ontology_choices,
+        choices=registry.choices(),
         help_text="Type of ontology to use for validation and suggestions",
     )
 
@@ -1404,218 +1388,29 @@ class MetadataColumn(models.Model):
             Model: The ontology model class based on the `ontology_type`, or
                 None if no `ontology_type` is set.
         """
-        if not self.ontology_type:
-            return None
+        return registry.get_model(self.ontology_type)
 
-        ontology_mapping = {
-            "species": Species,
-            "tissue": Tissue,
-            "human_disease": HumanDisease,
-            "subcellular_location": SubcellularLocation,
-            "ms_unique_vocabularies": MSUniqueVocabularies,
-            "unimod": Unimod,
-            "chebi": ChEBICompound,
-            "ncbi_taxonomy": NCBITaxonomy,
-            "mondo": MondoDisease,
-            "uberon": UberonAnatomy,
-            "cell_ontology": CellOntology,
-            "psi_ms": PSIMSOntology,
-            "bto": BTOTerm,
-            "doid": DiseaseOntologyTerm,
-        }
-        return ontology_mapping.get(self.ontology_type)
-
-    def get_ontology_suggestions(self, search_term: str = "", limit: int = 20, search_type: str = "icontains"):
+    def get_ontology_suggestions(
+        self, search_term: str = "", limit: int = 20, search_type: str = "icontains"
+    ) -> list[dict]:
         """Gets ontology suggestions with enhanced search capabilities.
 
         Args:
-            search_term (str, optional): The term to search for. Defaults to
-                "".
-            limit (int, optional): The maximum number of results to return.
-                Defaults to 20.
-            search_type (str, optional): The type of search to perform. Can be
-                'icontains', 'istartswith', or 'exact'. Defaults to
-                "icontains".
+            search_term (str, optional): The term to search for. Defaults to "".
+            limit (int, optional): The maximum number of results to return. Defaults to 20.
+            search_type (str, optional): The type of search. Can be 'icontains', 'istartswith',
+                or 'exact'. Defaults to "icontains".
 
         Returns:
-            list: A list of ontology suggestions.
+            list[dict]: A list of ontology suggestion dicts.
         """
-        model_class = self.get_ontology_model()
-        if not model_class:
-            return []
-        queryset = model_class.objects.all()
-
-        # Use the search_type directly (already case-insensitive for istartswith and icontains)
-        case_insensitive_search_type = search_type
-
-        # Apply custom ontology filters first
-        if self.custom_ontology_filters:
-            actual_filters = self.custom_ontology_filters.get(self.ontology_type, self.custom_ontology_filters)
-            for field, filter_value in actual_filters.items():
-                if field == self.ontology_type:
-                    continue
-                if isinstance(filter_value, dict):
-                    for lookup, value in filter_value.items():
-                        queryset = queryset.filter(**{f"{field}__{lookup}": value})
-                else:
-                    queryset = queryset.filter(**{field: filter_value})
-
-        # Apply search filtering based on search_type and model type
-        if search_term:
-            search_queries = []
-
-            # Build search queries based on ontology type and search type
-            if self.ontology_type == "species":
-                search_fields = ["official_name", "common_name", "code"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "tissue":
-                search_fields = ["identifier", "accession", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "human_disease":
-                search_fields = ["identifier", "acronym", "accession", "definition", "synonyms", "keywords"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "subcellular_location":
-                search_fields = ["accession", "location_identifier", "definition", "synonyms", "content"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "ms_unique_vocabularies":
-                search_fields = ["accession", "name", "definition"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "unimod":
-                search_fields = ["accession", "name", "definition"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "chebi":
-                search_fields = ["identifier", "name", "definition", "synonyms", "formula"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "ncbi_taxonomy":
-                search_fields = ["scientific_name", "common_name", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "mondo":
-                search_fields = ["identifier", "name", "definition", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "uberon":
-                search_fields = ["identifier", "name", "definition", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "cell_ontology":
-                search_fields = ["identifier", "name", "definition", "synonyms", "organism", "tissue_origin"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "psi_ms":
-                search_fields = ["identifier", "name", "definition", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "bto":
-                search_fields = ["identifier", "name", "synonyms", "definition"]
-                queryset = queryset.filter(obsolete=False)
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "doid":
-                search_fields = ["identifier", "name", "synonyms", "definition"]
-                queryset = queryset.filter(obsolete=False)
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            # Combine all search queries with OR
-            if search_queries:
-                combined_query = search_queries[0]
-                for query in search_queries[1:]:
-                    combined_query |= query
-                queryset = queryset.filter(combined_query)
-
-        # Order by relevance with proper prioritization
-        if search_term and search_type in ["icontains", "istartswith"]:
-            if self.ontology_type == "ncbi_taxonomy":
-                from django.db.models import Case, IntegerField, Value, When
-
-                queryset = queryset.annotate(
-                    priority=Case(
-                        When(scientific_name__iexact=search_term, then=Value(0)),
-                        When(**{f"scientific_name__{search_type}": search_term}, then=Value(1)),
-                        When(**{f"common_name__{search_type}": search_term}, then=Value(2)),
-                        When(**{f"synonyms__{search_type}": search_term}, then=Value(3)),
-                        default=Value(4),
-                        output_field=IntegerField(),
-                    )
-                ).order_by("priority", "scientific_name")
-            elif self.ontology_type == "species":
-                from django.db.models import Case, IntegerField, Value, When
-
-                queryset = queryset.annotate(
-                    priority=Case(
-                        When(official_name__iexact=search_term, then=Value(0)),
-                        When(**{f"official_name__{search_type}": search_term}, then=Value(1)),
-                        When(**{f"common_name__{search_type}": search_term}, then=Value(2)),
-                        When(**{f"code__{search_type}": search_term}, then=Value(3)),
-                        default=Value(4),
-                        output_field=IntegerField(),
-                    )
-                ).order_by("priority", "official_name")
-            elif self.ontology_type in [
-                "tissue",
-                "human_disease",
-                "subcellular_location",
-                "mondo",
-                "uberon",
-                "cell_ontology",
-                "psi_ms",
-                "chebi",
-            ]:
-                from django.db.models import Case, IntegerField, Value, When
-
-                # For ontologies with 'name' field
-                if hasattr(model_class, "name"):
-                    queryset = queryset.annotate(
-                        priority=Case(
-                            When(name__iexact=search_term, then=Value(0)),
-                            When(**{f"name__{search_type}": search_term}, then=Value(1)),
-                            default=Value(2),
-                            output_field=IntegerField(),
-                        )
-                    ).order_by("priority", "name")
-                elif hasattr(model_class, "identifier"):
-                    queryset = queryset.annotate(
-                        priority=Case(
-                            When(identifier__iexact=search_term, then=Value(0)),
-                            When(**{f"identifier__{search_type}": search_term}, then=Value(1)),
-                            default=Value(2),
-                            output_field=IntegerField(),
-                        )
-                    ).order_by("priority", "identifier")
-            elif self.ontology_type in ["ms_unique_vocabularies", "unimod"]:
-                from django.db.models import Case, IntegerField, Value, When
-
-                queryset = queryset.annotate(
-                    priority=Case(
-                        When(name__iexact=search_term, then=Value(0)),
-                        When(**{f"name__{search_type}": search_term}, then=Value(1)),
-                        default=Value(2),
-                        output_field=IntegerField(),
-                    )
-                ).order_by("priority", "name")
-
-        return list(queryset[:limit].values())
+        return registry.get_suggestions(
+            self.ontology_type,
+            search_term=search_term,
+            limit=limit,
+            search_type=search_type,
+            custom_filters=self.custom_ontology_filters or None,
+        )
 
     def convert_sdrf_to_metadata(self, value: str) -> str | None:
         """Converts a value from SDRF format to the internal metadata format.
@@ -3737,27 +3532,11 @@ class MetadataColumnTemplate(AbstractResource):
     # Note: mandatory, hidden, readonly are applied when template is used in MetadataColumn
     # These are table-specific properties, not template properties
 
-    ontology_choices = [
-        ("species", "Species"),
-        ("tissue", "Tissue"),
-        ("human_disease", "Human Disease"),
-        ("subcellular_location", "Subcellular Location"),
-        ("ms_unique_vocabularies", "MS Unique Vocabularies"),
-        ("unimod", "Unimod Modifications"),
-        ("ncbi_taxonomy", "NCBI Taxonomy"),
-        ("mondo", "MONDO Disease"),
-        ("uberon", "UBERON Anatomy"),
-        ("chebi", "ChEBI"),
-        ("cell_ontology", "Cell Ontology"),
-        ("psi_ms", "PSI-MS Controlled Vocabulary"),
-    ]
-
-    # Ontology configuration
     ontology_type = models.CharField(
         max_length=50,
         blank=True,
         null=True,
-        choices=ontology_choices,
+        choices=registry.choices(),
         help_text="Type of ontology to use for validation and suggestions",
     )
 
@@ -3878,197 +3657,30 @@ class MetadataColumnTemplate(AbstractResource):
         if self.column_type:
             self.column_type = self.column_type.strip()
 
-    def get_ontology_suggestions(self, search_term: str = "", limit: int = 20, search_type: str = "icontains"):
-        """
-        Get ontology suggestions based on the template's ontology type with enhanced search capabilities.
+    def get_ontology_suggestions(
+        self, search_term: str = "", limit: int = 20, search_type: str = "icontains"
+    ) -> list[dict]:
+        """Gets ontology suggestions based on the template's ontology type.
 
         Args:
-            search_term: Term to search for
-            limit: Maximum number of results to return
-            search_type: Type of search - 'icontains', 'istartswith', or 'exact'
+            search_term: Term to search for.
+            limit: Maximum number of results to return.
+            search_type: Type of search - 'icontains', 'istartswith', or 'exact'.
+
+        Returns:
+            list[dict]: A list of ontology suggestion dicts.
         """
-        model_class = self.get_ontology_model()
-        if not model_class:
-            return []
-        queryset = model_class.objects.all()
-
-        # Use the search_type directly (already case-insensitive for istartswith and icontains)
-        case_insensitive_search_type = search_type
-
-        # Apply custom ontology filters first
-        if self.custom_ontology_filters:
-            for field, filter_value in self.custom_ontology_filters.items():
-                if field == self.ontology_type:
-                    if isinstance(filter_value, dict):
-                        # Handle complex filter values like {'icontains': 'value'} or {'exact': 'value'}
-                        for lookup, value in filter_value.items():
-                            filter_kwargs = {f"{lookup}__{case_insensitive_search_type}": value}
-                            queryset = queryset.filter(**filter_kwargs)
-        # Apply search filtering based on search_type and model type
-        if search_term:
-            search_queries = []
-
-            # Build search queries based on ontology type and search type
-            if self.ontology_type == "species":
-                search_fields = ["official_name", "common_name", "code"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "tissue":
-                search_fields = ["identifier", "accession", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "human_disease":
-                search_fields = ["identifier", "acronym", "accession", "definition", "synonyms", "keywords"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "subcellular_location":
-                search_fields = ["accession", "location_identifier", "definition", "synonyms", "content"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "ms_unique_vocabularies":
-                search_fields = ["accession", "name", "definition"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "unimod":
-                search_fields = ["accession", "name", "definition"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "chebi":
-                search_fields = ["identifier", "name", "definition", "synonyms", "formula"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "ncbi_taxonomy":
-                search_fields = ["scientific_name", "common_name", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "mondo":
-                search_fields = ["identifier", "name", "definition", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "uberon":
-                search_fields = ["identifier", "name", "definition", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "cell_ontology":
-                search_fields = ["identifier", "name", "definition", "synonyms", "organism", "tissue_origin"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            elif self.ontology_type == "psi_ms":
-                search_fields = ["identifier", "name", "definition", "synonyms"]
-                for field in search_fields:
-                    search_queries.append(models.Q(**{f"{field}__{case_insensitive_search_type}": search_term}))
-
-            # Combine all search queries with OR
-            if search_queries:
-                combined_query = search_queries[0]
-                for query in search_queries[1:]:
-                    combined_query |= query
-                queryset = queryset.filter(combined_query)
-
-        # Order by relevance with proper scientific_name prioritization
-        if search_term and search_type in ["icontains", "istartswith"]:
-            if self.ontology_type == "ncbi_taxonomy":
-                # Prioritize scientific_name matches first and foremost
-                from django.db.models import Case, IntegerField, Value, When
-
-                queryset = queryset.annotate(
-                    priority=Case(
-                        When(scientific_name__iexact=search_term, then=Value(0)),
-                        When(**{f"scientific_name__{search_type}": search_term}, then=Value(1)),
-                        When(**{f"common_name__{search_type}": search_term}, then=Value(2)),
-                        When(**{f"synonyms__{search_type}": search_term}, then=Value(3)),
-                        default=Value(4),
-                        output_field=IntegerField(),
-                    )
-                ).order_by("priority", "scientific_name")
-            elif self.ontology_type == "species":
-                from django.db.models import Case, IntegerField, Value, When
-
-                queryset = queryset.annotate(
-                    priority=Case(
-                        When(official_name__iexact=search_term, then=Value(0)),
-                        When(**{f"official_name__{search_type}": search_term}, then=Value(1)),
-                        When(**{f"common_name__{search_type}": search_term}, then=Value(2)),
-                        When(**{f"code__{search_type}": search_term}, then=Value(3)),
-                        default=Value(4),
-                        output_field=IntegerField(),
-                    )
-                ).order_by("priority", "official_name")
-            elif self.ontology_type in [
-                "tissue",
-                "human_disease",
-                "subcellular_location",
-                "mondo",
-                "uberon",
-                "cell_ontology",
-                "psi_ms",
-                "chebi",
-            ]:
-                from django.db.models import Case, IntegerField, Value, When
-
-                # For ontologies with 'name' field
-                if hasattr(model_class, "name"):
-                    queryset = queryset.annotate(
-                        priority=Case(
-                            When(name__iexact=search_term, then=Value(0)),
-                            When(**{f"name__{search_type}": search_term}, then=Value(1)),
-                            default=Value(2),
-                            output_field=IntegerField(),
-                        )
-                    ).order_by("priority", "name")
-                elif hasattr(model_class, "identifier"):
-                    queryset = queryset.annotate(
-                        priority=Case(
-                            When(identifier__iexact=search_term, then=Value(0)),
-                            When(**{f"identifier__{search_type}": search_term}, then=Value(1)),
-                            default=Value(2),
-                            output_field=IntegerField(),
-                        )
-                    ).order_by("priority", "identifier")
-            elif self.ontology_type in ["ms_unique_vocabularies", "unimod"]:
-                from django.db.models import Case, IntegerField, Value, When
-
-                queryset = queryset.annotate(
-                    priority=Case(
-                        When(name__iexact=search_term, then=Value(0)),
-                        When(**{f"name__{search_type}": search_term}, then=Value(1)),
-                        default=Value(2),
-                        output_field=IntegerField(),
-                    )
-                ).order_by("priority", "name")
-
-        return list(queryset[:limit].values())
+        return registry.get_suggestions(
+            self.ontology_type,
+            search_term=search_term,
+            limit=limit,
+            search_type=search_type,
+            custom_filters=self.custom_ontology_filters or None,
+        )
 
     def get_ontology_model(self):
-        """Get the appropriate ontology model class based on ontology_type."""
-        ontology_mapping = {
-            "species": Species,
-            "tissue": Tissue,
-            "human_disease": HumanDisease,
-            "subcellular_location": SubcellularLocation,
-            "ms_unique_vocabularies": MSUniqueVocabularies,
-            "unimod": Unimod,
-            "chebi": ChEBICompound,
-            "ncbi_taxonomy": NCBITaxonomy,
-            "mondo": MondoDisease,
-            "uberon": UberonAnatomy,
-            "cell_ontology": CellOntology,
-            "psi_ms": PSIMSOntology,
-            "bto": BTOTerm,
-            "doid": DiseaseOntologyTerm,
-        }
-        return ontology_mapping.get(self.ontology_type)
+        """Gets the associated ontology model class based on ontology_type."""
+        return registry.get_model(self.ontology_type)
 
     def create_metadata_column(self, metadata_table, position=None):
         """Create a MetadataColumn instance from this template."""
