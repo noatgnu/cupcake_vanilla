@@ -411,6 +411,14 @@ class MetadataImportSerializer(serializers.Serializer):
     )
     create_pools = serializers.BooleanField(default=True, help_text="Whether to create sample pools from SDRF data")
     replace_existing = serializers.BooleanField(default=False, help_text="Whether to replace existing metadata columns")
+    apply_schema_templates = serializers.BooleanField(
+        default=False,
+        help_text=(
+            "When true and the target table is empty, parse the schema declared in the SDRF file "
+            "(comment[sdrf template] column or legacy #template= header) and pre-populate the "
+            "table's columns from the matching Schema's MetadataColumnTemplate definitions."
+        ),
+    )
     async_processing = serializers.BooleanField(
         default=False, help_text="Whether to process the import asynchronously via task queue"
     )

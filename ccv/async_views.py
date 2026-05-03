@@ -527,6 +527,7 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
             parameters={
                 "replace_existing": data.get("replace_existing", False),
                 "validate_ontologies": data.get("validate_ontologies", True),
+                "apply_schema_templates": data.get("apply_schema_templates", False),
                 "file_name": data["file"].name,
             },
         )
@@ -538,6 +539,7 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
             file_content=file_content,
             replace_existing=data.get("replace_existing", False),
             validate_ontologies=data.get("validate_ontologies", True),
+            apply_schema_templates=data.get("apply_schema_templates", False),
             task_id=str(task.id),
         )
 

@@ -4,6 +4,7 @@ RQ tasks for async import operations.
 import traceback
 from typing import Any, Dict
 
+from django.apps import apps
 from django.contrib.auth.models import User
 
 from django_rq import job
@@ -11,7 +12,7 @@ from django_rq import job
 from ccc.models import AsyncTaskStatus
 from ccv.models import MetadataTable
 
-from .import_utils import import_excel_data, import_sdrf_data_bulk
+from .import_utils import apply_schema_templates_to_table, import_excel_data, import_sdrf_data_bulk
 
 
 @job("default", timeout=3600)
@@ -24,6 +25,7 @@ def import_sdrf_task(
     task_id: str = None,
     chunked_upload_id: str = None,
     override_sample_count: bool = False,
+    apply_schema_templates: bool = False,
 ) -> Dict[str, Any]:
     r"""
     Async task for importing SDRF file with proper validation and pool creation.
@@ -73,6 +75,13 @@ def import_sdrf_task(
         user = User.objects.get(id=user_id)
         metadata_table = MetadataTable.objects.get(id=metadata_table_id)
 
+        # Optionally pre-populate columns from the schema declared in the SDRF file
+        schema_apply_result = None
+        if apply_schema_templates:
+            if task:
+                task.update_progress(15, 100, "Applying official schema templates...")
+            schema_apply_result = apply_schema_templates_to_table(file_content, metadata_table)
+
         # Update progress - processing SDRF data
         if task:
             task.update_progress(20, 100, "Processing SDRF file content...")
@@ -87,6 +96,9 @@ def import_sdrf_task(
             override_sample_count=override_sample_count,
         )
 
+        if schema_apply_result:
+            result["schema_apply_result"] = schema_apply_result
+
         # Update progress - finalizing
         if task:
             task.update_progress(95, 100, "Finalizing import...")
@@ -94,8 +106,7 @@ def import_sdrf_task(
         # Clean up chunked upload if provided
         if chunked_upload_id:
             try:
-                from ccv.chunked_upload import MetadataFileUpload
-
+                MetadataFileUpload = apps.get_model("ccv", "MetadataFileUpload")
                 chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
                 chunked_upload.delete()
             except Exception as e:
@@ -121,8 +132,7 @@ def import_sdrf_task(
         # Clean up chunked upload on failure
         if chunked_upload_id:
             try:
-                from ccv.chunked_upload import MetadataFileUpload
-
+                MetadataFileUpload = apps.get_model("ccv", "MetadataFileUpload")
                 chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
                 chunked_upload.delete()
             except Exception as cleanup_error:
@@ -226,8 +236,7 @@ def import_excel_task(
         # Clean up chunked upload if provided
         if chunked_upload_id:
             try:
-                from ccv.chunked_upload import MetadataFileUpload
-
+                MetadataFileUpload = apps.get_model("ccv", "MetadataFileUpload")
                 chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
                 chunked_upload.delete()
             except Exception as e:
@@ -255,8 +264,7 @@ def import_excel_task(
         # Clean up chunked upload on failure
         if chunked_upload_id:
             try:
-                from ccv.chunked_upload import MetadataFileUpload
-
+                MetadataFileUpload = apps.get_model("ccv", "MetadataFileUpload")
                 chunked_upload = MetadataFileUpload.objects.get(id=chunked_upload_id)
                 chunked_upload.delete()
             except Exception as cleanup_error:

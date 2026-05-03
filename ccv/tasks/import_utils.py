@@ -14,8 +14,11 @@ from django.db import transaction
 from django.db.models.signals import post_save
 
 from openpyxl import load_workbook
+from sdrf_pipelines.sdrf.sdrf import SDRFMetadata
 
-from ccv.models import MetadataColumn, MetadataTableTemplate, SamplePool
+from ccv.models import MetadataColumn, MetadataTableTemplate, SamplePool, Schema
+from ccv.signals import sync_hidden_property_to_pool_columns, update_pooled_sample_columns_on_pool_save
+from ccv.utils import update_pooled_sample_column_for_table
 
 
 def _create_modifiers(metadata_value_map: dict) -> list:
@@ -558,6 +561,80 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
         pool.metadata_columns.add(pool_metadata_column)
 
 
+def apply_schema_templates_to_table(file_content: str, metadata_table) -> dict:
+    """
+    Parse SDRF metadata to extract declared schema templates and pre-populate the table's columns.
+
+    Only runs when the target table has no existing columns. Reads the ``comment[sdrf template]``
+    column (v1.1.0+ format) or legacy ``#template=`` header lines, resolves each declared schema
+    name against the database, and creates ordered ``MetadataColumn`` objects from their
+    ``MetadataColumnTemplate`` definitions.
+
+    Args:
+        file_content: Raw SDRF file content as a string.
+        metadata_table: The ``MetadataTable`` instance to populate.
+
+    Returns:
+        dict with keys ``applied`` (bool), ``schemas_used`` (list), ``columns_created`` (list),
+        and optionally ``reason`` (str) when not applied.
+    """
+
+    if metadata_table.columns.exists():
+        return {"applied": False, "reason": "table_not_empty"}
+
+    sdrf_meta = SDRFMetadata(str_content=file_content)
+    raw_templates = sdrf_meta.get_templates()
+
+    schema_names = [t["template"] for t in raw_templates if t.get("template")]
+    if not schema_names:
+        return {"applied": False, "reason": "no_templates_declared"}
+
+    schemas_found = {s.name: s for s in Schema.objects.filter(name__in=schema_names)}
+    if not schemas_found:
+        return {"applied": False, "reason": "schemas_not_found_in_db", "schema_names": schema_names}
+
+    seen: set[str] = set()
+    ordered_templates = []
+    for name in schema_names:
+        schema = schemas_found.get(name)
+        if not schema:
+            continue
+        for col_template in schema.column_templates.filter(is_active=True).order_by("default_position", "id"):
+            if col_template.column_name not in seen:
+                ordered_templates.append(col_template)
+                seen.add(col_template.column_name)
+
+    if not ordered_templates:
+        return {"applied": False, "reason": "no_column_templates_found", "schema_names": schema_names}
+
+    columns_created = []
+    for position, col_template in enumerate(ordered_templates):
+        MetadataColumn.objects.create(
+            metadata_table=metadata_table,
+            name=col_template.column_name,
+            type=col_template.column_type,
+            column_position=position,
+            value=col_template.default_value or "",
+            template=col_template,
+            ontology_type=col_template.ontology_type,
+            ontology_options=col_template.ontology_options,
+            custom_ontology_filters=col_template.custom_ontology_filters,
+            not_applicable=col_template.not_applicable,
+            not_available=col_template.not_available,
+            mandatory=False,
+            hidden=False,
+            readonly=False,
+            auto_generated=False,
+        )
+        columns_created.append(col_template.column_name)
+
+    return {
+        "applied": True,
+        "schemas_used": list(schemas_found.keys()),
+        "columns_created": columns_created,
+    }
+
+
 def import_sdrf_data(
     file_content: str,
     metadata_table,
@@ -1028,8 +1105,6 @@ def import_sdrf_data_bulk(
     Returns:
         Dictionary containing success status, statistics, and any warnings
     """
-    from ccv.signals import sync_hidden_property_to_pool_columns, update_pooled_sample_columns_on_pool_save
-    from ccv.utils import update_pooled_sample_column_for_table
 
     with transaction.atomic():
         lines = file_content.strip().split("\n")

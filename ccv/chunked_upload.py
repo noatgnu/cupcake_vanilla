@@ -2,6 +2,7 @@
 Chunked upload implementation for CUPCAKE Vanilla metadata files.
 """
 
+import logging
 import os
 from typing import Any, Dict, List
 
@@ -17,7 +18,11 @@ from ccc.chunked_upload import BaseChunkedUpload
 from ccc.models import AsyncTaskStatus
 
 from .models import MetadataColumn, MetadataTable, SamplePool
-from .utils import detect_pooled_samples
+from .tasks.import_tasks import import_excel_task, import_sdrf_task
+from .tasks.validation_tasks import validate_sdrf_file_task
+from .utils import apply_ontology_mapping_to_column, detect_pooled_samples
+
+logger = logging.getLogger(__name__)
 
 
 class MetadataFileUpload(BaseChunkedUpload):
@@ -28,7 +33,7 @@ class MetadataFileUpload(BaseChunkedUpload):
 
     def get_allowed_extensions(self) -> List[str]:
         """Get list of allowed file extensions for metadata files."""
-        return [".xlsx", ".xls", ".tsv", ".txt", ".sdrf"]
+        return [".xlsx", ".xls", ".tsv", ".txt"]
 
     def get_allowed_mime_types(self) -> List[str]:
         """Get list of allowed MIME types for metadata files."""
@@ -69,6 +74,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
             replace_existing = request.data.get("replace_existing", False)
             override_sample_count = request.data.get("override_sample_count", False)
             validate_only = request.data.get("validate_only", False)
+            apply_schema_templates = request.data.get("apply_schema_templates", False)
 
             filename = uploaded_file.filename or uploaded_file.file.name
             file_ext = os.path.splitext(filename.lower())[1]
@@ -81,8 +87,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-
-                from ccv.tasks.validation_tasks import validate_sdrf_file_task
 
                 schema_names_raw = request.data.get("schema_names", "default")
                 if isinstance(schema_names_raw, str):
@@ -137,8 +141,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             {"error": "Permission denied: cannot edit this metadata table"},
                             status=status.HTTP_403_FORBIDDEN,
                         )
-                    from ccv.tasks.import_tasks import import_excel_task, import_sdrf_task
-
                     if file_ext in [".xlsx", ".xls"]:
                         task_type = "IMPORT_EXCEL"
                         task_status = AsyncTaskStatus.objects.create(
@@ -170,7 +172,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             task_status.rq_job_id = job.id
                             task_status.save(update_fields=["rq_job_id"])
 
-                    elif file_ext in [".tsv", ".txt", ".sdrf"]:
+                    elif file_ext in [".tsv", ".txt"]:
                         task_type = "IMPORT_SDRF"
                         task_status = AsyncTaskStatus.objects.create(
                             task_type=task_type,
@@ -179,6 +181,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             parameters={
                                 "filename": filename,
                                 "replace_existing": replace_existing,
+                                "apply_schema_templates": apply_schema_templates,
                                 "file_size": uploaded_file.file.size,
                             },
                         )
@@ -191,6 +194,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             user_id=request.user.id,
                             file_content=file_content,
                             replace_existing=replace_existing,
+                            apply_schema_templates=apply_schema_templates,
                             task_id=str(task_status.id),
                             chunked_upload_id=str(uploaded_file.id),
                             override_sample_count=override_sample_count,
@@ -223,10 +227,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                 return Response(result, status=status.HTTP_200_OK)
 
         except Exception as e:
-            # Log error but don't fail the upload completion
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to process metadata file: {str(e)}")
             result = {"warning": f"File uploaded but processing failed: {str(e)}"}
             return Response(result, status=status.HTTP_200_OK)
@@ -343,9 +343,6 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                 column_position=i,
                 value=default_value,
             )
-
-            # Apply ontology mapping if needed
-            from ccv.utils import apply_ontology_mapping_to_column
 
             apply_ontology_mapping_to_column(metadata_column)
 
