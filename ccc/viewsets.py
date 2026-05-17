@@ -1930,3 +1930,16 @@ class ApplianceViewSet(viewsets.ViewSet):
         )
         run_backup_task.delay(log.id)
         return Response(BackupLogSerializer(log).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="network-info", permission_classes=[])
+    def network_info(self, request):
+        """Return appliance hostname and all routable IPv4 addresses. No authentication required."""
+        hostname = _socket.gethostname()
+        try:
+            raw = subprocess.check_output(["hostname", "-I"], text=True).split()
+        except Exception:
+            raw = []
+
+        addresses = [ip for ip in raw if not ip.startswith(("127.", "169.254."))]
+
+        return Response({"hostname": hostname, "addresses": addresses})
