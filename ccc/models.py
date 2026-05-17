@@ -2218,3 +2218,27 @@ class ManagementCommandExecution(models.Model):
                 self.save(update_fields=["status", "error_message", "completed_at"])
         except Exception:
             pass
+
+
+class BackupLog(models.Model):
+    """Track manual backup operations triggered by admin users."""
+
+    BACKUP_TYPES = [("database", "Database"), ("media", "Media"), ("full", "Full")]
+    STATUS = [("running", "Running"), ("completed", "Completed"), ("failed", "Failed")]
+
+    backup_type = models.CharField(max_length=20, choices=BACKUP_TYPES)
+    status = models.CharField(max_length=20, choices=STATUS, default="running")
+    destination = models.TextField()
+    size_bytes = models.BigIntegerField(null=True, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    triggered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="backup_logs"
+    )
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"{self.backup_type} backup to {self.destination} [{self.status}]"

@@ -3,7 +3,9 @@ RQ tasks for CUPCAKE Core (CCC).
 """
 
 import logging
+import shutil
 from io import StringIO
+from pathlib import Path
 
 from django.core.management import call_command
 from django.utils import timezone
@@ -87,3 +89,58 @@ def refresh_available_whisper_models():
     except Exception as e:
         logger.exception("Failed to refresh available Whisper.cpp models")
         return {"status": "error", "error": str(e)}
+
+
+@job("default", timeout="2h")
+def run_backup(backup_log_id):
+    """
+    Run a backup operation and copy the result to the specified destination.
+
+    Args:
+        backup_log_id: ID of the BackupLog record to update
+    """
+    from ccc.models import BackupLog
+
+    BACKUP_DIR = Path("/opt/cupcake/backups")
+
+    try:
+        log = BackupLog.objects.get(id=backup_log_id)
+    except BackupLog.DoesNotExist:
+        logger.error(f"BackupLog {backup_log_id} not found")
+        return
+
+    try:
+        destination = Path(log.destination)
+        destination.mkdir(parents=True, exist_ok=True)
+
+        stdout = StringIO()
+
+        if log.backup_type in ("database", "full"):
+            call_command("dbbackup", "--clean", stdout=stdout)
+
+        if log.backup_type in ("media", "full"):
+            call_command("mediabackup", "--clean", stdout=stdout)
+
+        latest_files = sorted(BACKUP_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if log.backup_type == "full":
+            files_to_copy = latest_files[:2]
+        else:
+            files_to_copy = latest_files[:1]
+
+        total_size = 0
+        for src in files_to_copy:
+            dest_file = destination / src.name
+            shutil.copy2(src, dest_file)
+            total_size += dest_file.stat().st_size
+
+        log.status = "completed"
+        log.size_bytes = total_size
+        log.completed_at = timezone.now()
+        log.save(update_fields=["status", "size_bytes", "completed_at"])
+
+    except Exception as e:
+        logger.exception(f"Backup {backup_log_id} failed")
+        log.status = "failed"
+        log.error_message = str(e)
+        log.completed_at = timezone.now()
+        log.save(update_fields=["status", "error_message", "completed_at"])

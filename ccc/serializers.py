@@ -1112,3 +1112,27 @@ class ResourcePermissionSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         validated_data["granted_by"] = request.user
         return super().create(validated_data)
+
+
+class BackupLogSerializer(serializers.ModelSerializer):
+    """Serializer for BackupLog model."""
+
+    triggered_by_username = serializers.CharField(source="triggered_by.username", read_only=True)
+
+    class Meta:
+        from ccc.models import BackupLog
+
+        model = BackupLog
+        fields = [
+            "id",
+            "backup_type",
+            "status",
+            "destination",
+            "size_bytes",
+            "started_at",
+            "completed_at",
+            "error_message",
+            "triggered_by",
+            "triggered_by_username",
+        ]
+        read_only_fields = ["id", "status", "size_bytes", "started_at", "completed_at", "error_message", "triggered_by"]

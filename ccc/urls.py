@@ -12,6 +12,7 @@ from .annotation_chunked_upload import AnnotationChunkedUploadView
 from .viewsets import (
     AnnotationFolderViewSet,
     AnnotationViewSet,
+    ApplianceViewSet,
     LabGroupInvitationViewSet,
     LabGroupPermissionViewSet,
     LabGroupViewSet,
@@ -34,6 +35,7 @@ router.register(r"annotation-folders", AnnotationFolderViewSet, basename="annota
 router.register(r"annotations", AnnotationViewSet, basename="annotation")
 router.register(r"remote-hosts", RemoteHostViewSet, basename="remotehost")
 router.register(r"resource-permissions", ResourcePermissionViewSet, basename="resourcepermission")
+router.register(r"appliance", ApplianceViewSet, basename="appliance")
 
 urlpatterns = [
     # DRF ViewSet endpoints (api/v1/ prefix comes from main urls.py)

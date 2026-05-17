@@ -8,6 +8,10 @@ and site administration functionality.
 import json
 import logging
 import os
+import re
+import socket as _socket
+import subprocess
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -33,6 +37,7 @@ from ccc.permissions import IsSuperUser
 from .models import (
     Annotation,
     AnnotationFolder,
+    BackupLog,
     LabGroup,
     LabGroupInvitation,
     LabGroupPermission,
@@ -47,6 +52,7 @@ from .serializers import (
     AdminPasswordResetSerializer,
     AnnotationFolderSerializer,
     AnnotationSerializer,
+    BackupLogSerializer,
     DuplicateAccountDetectionSerializer,
     EmailChangeConfirmSerializer,
     EmailChangeRequestSerializer,
@@ -65,6 +71,7 @@ from .serializers import (
     UserRegistrationSerializer,
     UserSerializer,
 )
+from .tasks import run_backup as run_backup_task
 
 logger = logging.getLogger(__name__)
 
@@ -1684,3 +1691,242 @@ class ResourcePermissionViewSet(viewsets.ModelViewSet):
 
         # Regular users can only see permissions they granted or that affect them
         return queryset.filter(models.Q(granted_by=user) | models.Q(user=user))
+
+
+_STORAGE_MOUNT_POINT = "/mnt/cupcake-data"
+_STORAGE_SOCK = "/run/cupcake-storage.sock"
+_BACKUP_ALLOWED_PREFIXES = ("/mnt/cupcake-data/", "/opt/cupcake/backups")
+_SHELL_UNSAFE = re.compile(r"[;&|`$\\\n\r\x00]")
+_VALID_BACKUP_TYPES = ("database", "media", "full")
+_VALID_MOUNT_TYPES = ("usb", "nfs", "smb")
+
+
+class ApplianceViewSet(viewsets.ViewSet):
+    """
+    Admin-only ViewSet for appliance storage and backup management.
+
+    All actions require staff (admin) privileges. Storage operations
+    communicate with the cupcake-storage-manager socket service which
+    runs as root with narrowly-scoped privileges.
+    """
+
+    def _require_staff(self, request):
+        from rest_framework.exceptions import PermissionDenied
+
+        if not request.user.is_staff:
+            raise PermissionDenied("Admin access required.")
+
+    def _send_storage_command(self, payload):
+        """Send a JSON command to the storage manager socket and return the response."""
+        client = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        client.settimeout(60)
+        client.connect(_STORAGE_SOCK)
+        client.sendall(json.dumps(payload).encode() + b"\n")
+        data = b""
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        client.close()
+        return json.loads(data.decode())
+
+    def _is_mounted(self):
+        """Return True if /mnt/cupcake-data is currently mounted."""
+        try:
+            with open("/proc/mounts") as f:
+                return any(line.split()[1] == _STORAGE_MOUNT_POINT for line in f if len(line.split()) >= 3)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _validate_storage_config(config):
+        """
+        Validate storage config fields for the given mountType.
+
+        Returns an error string if invalid, or None if valid.
+        """
+        mount_type = config.get("mountType", "")
+        if mount_type not in _VALID_MOUNT_TYPES:
+            return f"mountType must be one of: {', '.join(_VALID_MOUNT_TYPES)}"
+
+        required: dict[str, list[str]] = {
+            "usb": ["label"],
+            "nfs": ["host", "share"],
+            "smb": ["host", "share"],
+        }
+        for field in required[mount_type]:
+            value = config.get(field, "").strip()
+            if not value:
+                return f"{field} is required for {mount_type} mount"
+            if _SHELL_UNSAFE.search(value):
+                return f"{field} contains invalid characters"
+
+        for field in ("host", "share", "label", "username", "password"):
+            value = config.get(field, "")
+            if value and _SHELL_UNSAFE.search(str(value)):
+                return f"{field} contains invalid characters"
+
+        return None
+
+    @staticmethod
+    def _validate_destination(destination):
+        """
+        Validate a backup destination path.
+
+        Returns an error string if invalid, or None if valid.
+        """
+        if not destination:
+            return "destination is required"
+        if not os.path.isabs(destination):
+            return "destination must be an absolute path"
+        resolved = os.path.normpath(destination)
+        if not any(resolved.startswith(prefix) for prefix in _BACKUP_ALLOWED_PREFIXES):
+            allowed = ", ".join(_BACKUP_ALLOWED_PREFIXES)
+            return f"destination must be under one of: {allowed}"
+        return None
+
+    @action(detail=False, methods=["get"], url_path="storage-status")
+    def storage_status(self, request):
+        """Return current mount status and saved storage config."""
+        self._require_staff(request)
+        config_path = Path("/opt/cupcake/storage-config.json")
+        config = {}
+        if config_path.exists():
+            try:
+                config = json.loads(config_path.read_text())
+            except Exception:
+                pass
+
+        mounted = False
+        device = ""
+        fs_type = ""
+        try:
+            with open("/proc/mounts") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[1] == _STORAGE_MOUNT_POINT:
+                        mounted = True
+                        device = parts[0]
+                        fs_type = parts[2]
+                        break
+        except Exception:
+            pass
+
+        return Response(
+            {
+                "mounted": mounted,
+                "mount_point": _STORAGE_MOUNT_POINT,
+                "device": device,
+                "fs_type": fs_type,
+                "config": config,
+            }
+        )
+
+    @action(detail=False, methods=["post"], url_path="apply-storage")
+    def apply_storage(self, request):
+        """Write storage config and apply mount via the storage manager socket."""
+        self._require_staff(request)
+        config = request.data.get("config")
+        if not isinstance(config, dict):
+            return Response({"error": "config must be an object"}, status=status.HTTP_400_BAD_REQUEST)
+
+        error = self._validate_storage_config(config)
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result = self._send_storage_command({"command": "mount", "config": config})
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if result.get("ok"):
+            return Response({"output": result.get("output", "")})
+        return Response({"error": result.get("error", "Mount failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["post"], url_path="unmount-storage")
+    def unmount_storage(self, request):
+        """Unmount /mnt/cupcake-data via the storage manager socket."""
+        self._require_staff(request)
+        if not self._is_mounted():
+            return Response({"error": "No storage is currently mounted"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result = self._send_storage_command({"command": "unmount"})
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if result.get("ok"):
+            return Response({"output": result.get("output", "")})
+        return Response({"error": result.get("error", "Unmount failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["get"], url_path="block-devices")
+    def block_devices(self, request):
+        """List USB block devices with labels using lsblk."""
+        self._require_staff(request)
+        try:
+            out = subprocess.check_output(["lsblk", "-J", "-o", "NAME,LABEL,SIZE,FSTYPE,TRAN"], text=True)
+            data = json.loads(out)
+            devices = []
+            for dev in data.get("blockdevices", []):
+                if dev.get("tran") == "usb":
+                    for child in dev.get("children", [dev]):
+                        if child.get("fstype"):
+                            devices.append(
+                                {
+                                    "name": f"/dev/{child['name']}",
+                                    "label": child.get("label") or "",
+                                    "size": child.get("size") or "",
+                                    "fs_type": child.get("fstype") or "",
+                                }
+                            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({"devices": devices})
+
+    def list(self, request):
+        """List the 10 most recent backup logs."""
+        self._require_staff(request)
+        logs = BackupLog.objects.order_by("-started_at")[:10]
+        return Response(BackupLogSerializer(logs, many=True).data)
+
+    def retrieve(self, request, pk=None):
+        """Get a single backup log for status polling."""
+        self._require_staff(request)
+        try:
+            log = BackupLog.objects.get(pk=pk)
+        except BackupLog.DoesNotExist:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(BackupLogSerializer(log).data)
+
+    @action(detail=False, methods=["post"], url_path="run-backup")
+    def run_backup(self, request):
+        """Enqueue a backup job and return the BackupLog id."""
+        self._require_staff(request)
+        backup_type = request.data.get("backup_type", "").strip()
+        destination = request.data.get("destination", "").strip()
+
+        if backup_type not in _VALID_BACKUP_TYPES:
+            return Response(
+                {"error": f"backup_type must be one of: {', '.join(_VALID_BACKUP_TYPES)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        dest_error = self._validate_destination(destination)
+        if dest_error:
+            return Response({"error": dest_error}, status=status.HTTP_400_BAD_REQUEST)
+
+        if BackupLog.objects.filter(status="running").exists():
+            return Response(
+                {"error": "A backup is already in progress"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        log = BackupLog.objects.create(
+            backup_type=backup_type,
+            destination=destination,
+            triggered_by=request.user,
+        )
+        run_backup_task.delay(log.id)
+        return Response(BackupLogSerializer(log).data, status=status.HTTP_201_CREATED)
