@@ -105,6 +105,16 @@ RQ_QUEUES = {
             "health_check_interval": 30,
         },
     },
+    "transcribe": {
+        "HOST": REDIS_HOST,
+        "PORT": int(REDIS_PORT),
+        "DB": REDIS_DB_RQ,
+        "PASSWORD": REDIS_PASSWORD or None,
+        "DEFAULT_TIMEOUT": 3600,
+        "CONNECTION_KWARGS": {
+            "health_check_interval": 30,
+        },
+    },
 }
 
 STATIC_URL = "/static/"
