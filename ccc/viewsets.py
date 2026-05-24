@@ -14,12 +14,14 @@ import subprocess
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.core.signing import TimestampSigner
 from django.db import models
 from django.db.models import Q
+from django.http import HttpResponse
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
@@ -492,11 +494,8 @@ The Team
 
         if user_id:
             try:
-                from django.contrib.auth import get_user_model
-
-                User = get_user_model()
-                check_user = User.objects.get(id=user_id)
-            except User.DoesNotExist:
+                check_user = get_user_model().objects.get(id=user_id)
+            except get_user_model().DoesNotExist:
                 return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         else:
             check_user = request.user
@@ -571,8 +570,6 @@ The Team
             )
 
         try:
-            from django.contrib.auth.models import User
-
             user_to_remove = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response(
@@ -1598,8 +1595,6 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         Security: Checks both annotation-level AND parent resource permissions
         (Instrument, StoredReagent, Session, etc.) via Annotation.can_view().
         """
-        from django.http import HttpResponse
-
         signed_token = request.query_params.get("token")
 
         if not signed_token:
@@ -1943,3 +1938,6 @@ class ApplianceViewSet(viewsets.ViewSet):
         addresses = [ip for ip in raw if not ip.startswith(("127.", "169.254."))]
 
         return Response({"hostname": hostname, "addresses": addresses})
+
+
+from ccc.device_token.viewsets import DeviceSummaryViewSet, DeviceTokenViewSet  # noqa: E402, F401

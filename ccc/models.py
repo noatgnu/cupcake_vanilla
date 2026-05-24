@@ -14,6 +14,7 @@ from django.contrib.contenttypes.fields import GenericRelation
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 
 from simple_history.models import HistoricalRecords
 
@@ -1231,9 +1232,7 @@ class LabGroupInvitation(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.invitation_token:
-            import secrets
-
-            self.invitation_token = secrets.token_urlsafe(48)
+            self.invitation_token = get_random_string(64)
 
         if not self.expires_at:
             from datetime import timedelta
@@ -2242,3 +2241,6 @@ class BackupLog(models.Model):
 
     def __str__(self):
         return f"{self.backup_type} backup to {self.destination} [{self.status}]"
+
+
+from ccc.device_token.model import DeviceToken  # noqa: E402, F401

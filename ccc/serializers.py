@@ -18,6 +18,7 @@ from .models import (
     AccountMergeRequest,
     Annotation,
     AnnotationFolder,
+    BackupLog,
     LabGroup,
     LabGroupInvitation,
     LabGroupPermission,
@@ -1120,8 +1121,6 @@ class BackupLogSerializer(serializers.ModelSerializer):
     triggered_by_username = serializers.CharField(source="triggered_by.username", read_only=True)
 
     class Meta:
-        from ccc.models import BackupLog
-
         model = BackupLog
         fields = [
             "id",
@@ -1136,3 +1135,6 @@ class BackupLogSerializer(serializers.ModelSerializer):
             "triggered_by_username",
         ]
         read_only_fields = ["id", "status", "size_bytes", "started_at", "completed_at", "error_message", "triggered_by"]
+
+
+from ccc.device_token.serializer import DeviceTokenSerializer  # noqa: E402, F401

@@ -1,5 +1,7 @@
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
+from ccc.device_token.permissions import IsDeviceTokenAuthenticated  # noqa: F401
+
 
 class IsSuperUser(BasePermission):
     def has_permission(self, request, view):
