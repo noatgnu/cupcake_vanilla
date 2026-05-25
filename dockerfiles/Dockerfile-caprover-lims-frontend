@@ -8,6 +8,8 @@
 # ===== STAGE 1: Frontend Builder =====
 FROM node:20-alpine AS frontend-builder
 
+ARG TUNNEL_DOMAIN=""
+
 RUN apk add --no-cache git curl bash
 
 WORKDIR /app
@@ -18,13 +20,23 @@ ARG CACHEBUST=1
 # Clone the LIMS Angular frontend repository
 RUN git clone https://github.com/noatgnu/cupcake-webgui.git .
 
+# Patch environment to use correct API URL for CapRover nginx proxy
+RUN if [ -n "$TUNNEL_DOMAIN" ]; then \
+      sed -i "s|apiUrl:.*localhost.*api/v1.*|apiUrl: 'https://${TUNNEL_DOMAIN}/api/v1'|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
+    else \
+      sed -i "s|apiUrl:.*localhost.*api/v1.*|apiUrl: window.location.origin + '/api/v1'|g" src/environments/environment.ts && \
+      sed -i "s|production: false|production: true|g" src/environments/environment.ts; \
+    fi
+
+RUN echo "=== Updated environment.ts ===" && cat src/environments/environment.ts
+
 # Install dependencies
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 RUN npm ci
 
-# Build using the appliance configuration which uses relative API URLs
-# environment.appliance.ts uses /api/v1 and dynamic websocket URL — no patching needed
-RUN npx ng build --configuration=appliance
+# Build application
+RUN npm run build
 
 # Verify build output
 RUN ls -la dist/ && ls -la dist/cupcake/browser/
@@ -41,7 +53,7 @@ COPY --from=frontend-builder /app/dist/cupcake/browser /usr/share/nginx/html
 # Create media directory for internal X-Accel-Redirect
 # IMPORTANT: This directory MUST be mounted as a persistent volume in CapRover
 # and MUST be the SAME volume used by the Django backend container
-# In CapRover UI: App Configs → Persistent Directories → Add: /media
+# In CapRover UI: App Configs -> Persistent Directories -> Add: /media
 RUN mkdir -p /media && chown -R nginx:nginx /media
 
 # Remove default nginx config
