@@ -1,0 +1,240 @@
+captainVersion: 4
+services:
+  $$cap_appname:
+    image: noatgnu/cupcake-vanilla:$$cap_version
+    environment:
+      SECRET_KEY: $$cap_secret_key
+      DEBUG: 'False'
+      ALLOWED_HOSTS: $$cap_allowed_hosts
+      POSTGRES_DB: cupcake_vanilla_db
+      POSTGRES_USER: cupcake_vanilla
+      POSTGRES_PASSWORD: $$cap_pg_password
+      POSTGRES_HOST: srv-captain--$$cap_appname-db
+      POSTGRES_PORT: '5432'
+      REDIS_HOST: srv-captain--$$cap_appname-redis
+      REDIS_PORT: '6379'
+      REDIS_DB_RQ: '3'
+      REDIS_URL: redis://srv-captain--$$cap_appname-redis:6379/0
+      CORS_ORIGIN_WHITELIST: $$cap_cors_origins
+      CSRF_TRUSTED_ORIGINS: $$cap_cors_origins
+      ENABLE_RQ_TASKS: 'True'
+      ENABLE_CUPCAKE_MACARON: $$cap_enable_macaron
+      ENABLE_CUPCAKE_MINT_CHOCOLATE: $$cap_enable_mint_chocolate
+      ENABLE_CUPCAKE_SALTED_CARAMEL: $$cap_enable_salted_caramel
+      ENABLE_CUPCAKE_RED_VELVET: $$cap_enable_red_velvet
+      USE_WHISPER: 'False'
+      PROTOCOLS_IO_ACCESS_TOKEN: $$cap_protocols_io_token
+      COTURN_HOST: $$cap_coturn_host
+      COTURN_PORT: '3478'
+      COTURN_TLS_PORT: '5349'
+      COTURN_SECRET: $$cap_coturn_secret
+      COTURN_REALM: $$cap_coturn_realm
+      COTURN_TTL: '86400'
+      ORCID_CLIENT_ID: $$cap_orcid_client_id
+      ORCID_CLIENT_SECRET: $$cap_orcid_client_secret
+      ORCID_BASE_URL: $$cap_orcid_base_url
+      TASK_RESULT_EXPIRE_DAYS: '7'
+      TASK_DOWNLOAD_TOKEN_MAX_AGE: '600'
+    volumes:
+      - $$cap_appname-media:/app/media
+    caproverExtra:
+      containerHttpPort: '8000'
+      notExposeAsWebApp: 'false'
+
+  $$cap_appname-worker:
+    image: noatgnu/cupcake-vanilla-worker:$$cap_version
+    environment:
+      SECRET_KEY: $$cap_secret_key
+      DEBUG: 'False'
+      POSTGRES_DB: cupcake_vanilla_db
+      POSTGRES_USER: cupcake_vanilla
+      POSTGRES_PASSWORD: $$cap_pg_password
+      POSTGRES_HOST: srv-captain--$$cap_appname-db
+      POSTGRES_PORT: '5432'
+      REDIS_HOST: srv-captain--$$cap_appname-redis
+      REDIS_PORT: '6379'
+      REDIS_DB_RQ: '3'
+      REDIS_URL: redis://srv-captain--$$cap_appname-redis:6379/0
+      ENABLE_RQ_TASKS: 'True'
+      ENABLE_CUPCAKE_MACARON: $$cap_enable_macaron
+      ENABLE_CUPCAKE_MINT_CHOCOLATE: $$cap_enable_mint_chocolate
+      ENABLE_CUPCAKE_SALTED_CARAMEL: $$cap_enable_salted_caramel
+      ENABLE_CUPCAKE_RED_VELVET: $$cap_enable_red_velvet
+      USE_WHISPER: 'False'
+    volumes:
+      - $$cap_appname-media:/app/media
+    caproverExtra:
+      notExposeAsWebApp: 'true'
+
+  $$cap_appname-transcribe:
+    image: noatgnu/cupcake-vanilla-transcribe:$$cap_version
+    environment:
+      SECRET_KEY: $$cap_secret_key
+      DEBUG: 'False'
+      POSTGRES_DB: cupcake_vanilla_db
+      POSTGRES_USER: cupcake_vanilla
+      POSTGRES_PASSWORD: $$cap_pg_password
+      POSTGRES_HOST: srv-captain--$$cap_appname-db
+      POSTGRES_PORT: '5432'
+      REDIS_HOST: srv-captain--$$cap_appname-redis
+      REDIS_PORT: '6379'
+      REDIS_DB_RQ: '3'
+      REDIS_URL: redis://srv-captain--$$cap_appname-redis:6379/0
+      USE_WHISPER: 'True'
+      WHISPERCPP_PATH: /app/whisper.cpp/build/bin/whisper-cli
+      WHISPERCPP_DEFAULT_MODEL: /app/whisper.cpp/models/ggml-medium.bin
+      WHISPERCPP_THREAD_COUNT: '6'
+    volumes:
+      - $$cap_appname-media:/app/media
+      - $$cap_appname-whisper-models:/app/whisper.cpp/models
+    caproverExtra:
+      notExposeAsWebApp: 'true'
+
+  $$cap_appname-frontend:
+    image: noatgnu/cupcake-vanilla-frontend:$$cap_version
+    environment:
+      BACKEND_SERVICE_URL: srv-captain--$$cap_appname:8000
+      NGINX_SERVER_NAME: $$cap_frontend_domain
+    caproverExtra:
+      containerHttpPort: '80'
+      notExposeAsWebApp: 'false'
+
+  $$cap_appname-lims-frontend:
+    image: noatgnu/cupcake-vanilla-lims-frontend:$$cap_version
+    environment:
+      BACKEND_SERVICE_URL: srv-captain--$$cap_appname:8000
+      NGINX_SERVER_NAME: $$cap_lims_frontend_domain
+    caproverExtra:
+      containerHttpPort: '80'
+      notExposeAsWebApp: 'false'
+
+  $$cap_appname-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_PASSWORD: $$cap_pg_password
+      POSTGRES_USER: cupcake_vanilla
+      POSTGRES_DB: cupcake_vanilla_db
+    volumes:
+      - $$cap_appname-db-data:/var/lib/postgresql/data
+    caproverExtra:
+      notExposeAsWebApp: 'true'
+
+  $$cap_appname-redis:
+    image: redis:7-alpine
+    command: >-
+      redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - $$cap_appname-redis-data:/data
+    caproverExtra:
+      notExposeAsWebApp: 'true'
+
+caproverOneClickApp:
+  variables:
+    - id: $$cap_appname
+      label: App Name
+      description: Prefix for all service names. Lowercase letters and hyphens only.
+      defaultValue: cupcake-vanilla
+      validRegex: /^[a-z0-9-]+$/
+
+    - id: $$cap_version
+      label: Image Tag
+      description: Docker image tag to deploy.
+      defaultValue: latest
+
+    - id: $$cap_secret_key
+      label: Django Secret Key
+      description: Long random string used for cryptographic signing. Keep this secret.
+      defaultValue: $$cap_gen_random_hex(32)
+      validRegex: /^[^\s]+$/
+
+    - id: $$cap_pg_password
+      label: PostgreSQL Password
+      defaultValue: $$cap_gen_random_hex(16)
+      validRegex: /^[^\s]+$/
+
+    - id: $$cap_allowed_hosts
+      label: Allowed Hosts
+      description: Comma-separated hostnames for the backend (e.g. api.example.com,localhost).
+      defaultValue: localhost
+
+    - id: $$cap_cors_origins
+      label: CORS / CSRF Origins
+      description: Comma-separated allowed origins with scheme (e.g. https://app.example.com).
+      defaultValue: http://localhost
+
+    - id: $$cap_frontend_domain
+      label: Cupcake Vanilla Frontend Domain
+      description: Domain for the cupcake-vanilla-ng Angular frontend (nginx server_name).
+      defaultValue: localhost
+
+    - id: $$cap_lims_frontend_domain
+      label: LIMS Frontend Domain
+      description: Domain for the full cupcake LIMS Angular frontend (nginx server_name).
+      defaultValue: localhost
+
+    - id: $$cap_enable_macaron
+      label: Enable Cupcake Macaron (Instruments)
+      defaultValue: 'True'
+
+    - id: $$cap_enable_mint_chocolate
+      label: Enable Cupcake Mint Chocolate (Storage)
+      defaultValue: 'False'
+
+    - id: $$cap_enable_salted_caramel
+      label: Enable Cupcake Salted Caramel (Billing)
+      defaultValue: 'True'
+
+    - id: $$cap_enable_red_velvet
+      label: Enable Cupcake Red Velvet (Jobs)
+      defaultValue: 'True'
+
+    - id: $$cap_coturn_host
+      label: COTURN Host
+      description: Hostname or IP of your COTURN server for WebRTC. Leave blank if not using.
+      defaultValue: ''
+
+    - id: $$cap_coturn_secret
+      label: COTURN Shared Secret
+      defaultValue: $$cap_gen_random_hex(16)
+
+    - id: $$cap_coturn_realm
+      label: COTURN Realm
+      defaultValue: cupcake-vanilla.local
+
+    - id: $$cap_protocols_io_token
+      label: Protocols.io Access Token
+      description: Optional. Leave blank if unused.
+      defaultValue: ''
+
+    - id: $$cap_orcid_client_id
+      label: ORCID Client ID
+      description: Optional. Required for ORCID OAuth login.
+      defaultValue: ''
+
+    - id: $$cap_orcid_client_secret
+      label: ORCID Client Secret
+      defaultValue: ''
+
+    - id: $$cap_orcid_base_url
+      label: ORCID Base URL
+      description: Use https://orcid.org for production or https://sandbox.orcid.org for testing.
+      defaultValue: https://sandbox.orcid.org
+
+  instructions:
+    start: >-
+      Deploying Cupcake Vanilla — research data management platform.
+      This will create the backend app, RQ worker, transcription worker, Angular frontend (nginx), PostgreSQL 15, and Redis 7.
+      Ensure your Docker images are published before deploying.
+      After deployment, enable HTTPS on the frontend app and point your domain DNS to the CapRover server.
+    end: >-
+      Cupcake Vanilla has been deployed.
+      Run the following in the backend app container to complete setup:
+        python manage.py migrate
+        python manage.py collectstatic --noinput
+        python manage.py createsuperuser
+      Then visit your frontend domain to access the application.
+
+  displayName: Cupcake Vanilla
+  isOfficial: false
+  description: Research data management platform with protocol management, instrument tracking, job submission, billing, and real-time collaboration.
+  documentation: https://github.com/noatgnu/cupcake-vanilla-ng
