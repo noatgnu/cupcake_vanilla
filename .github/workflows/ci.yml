@@ -203,8 +203,8 @@ jobs:
       ENABLE_CUPCAKE_SALTED_CARAMEL: 'true'
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: ci-password-123
-      DJANGO_BASE_URL: http://localhost:8000
-      PLUGIN_BASE_URL: http://localhost:8001
+      DJANGO_BASE_URL: http://127.0.0.1:8000
+      PLUGIN_BASE_URL: http://127.0.0.1:8001
 
     steps:
     - uses: actions/checkout@v4
@@ -246,16 +246,16 @@ jobs:
       run: |
         poetry run python manage.py runserver 8000 &
         echo $! > /tmp/django.pid
-        until curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/plugins/ | grep -q .; do sleep 1; done
+        until curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/v1/plugins/ | grep -q .; do sleep 1; done
 
     - name: Start test plugin server
       run: |
         poetry run python tests/plugin_integration/plugin_server.py \
           --host 127.0.0.1 --port 8001 \
-          --backend http://localhost:8000 \
+          --backend http://127.0.0.1:8000 \
           --username "$ADMIN_USERNAME" --password "$ADMIN_PASSWORD" &
         echo $! > /tmp/plugin.pid
-        until curl -sf http://localhost:8001/manifest -o /dev/null; do sleep 1; done
+        until curl -sf http://127.0.0.1:8001/manifest -o /dev/null; do sleep 1; done
 
     - name: Run plugin integration tests
       run: |
