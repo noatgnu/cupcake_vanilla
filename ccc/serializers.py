@@ -1138,3 +1138,4 @@ class BackupLogSerializer(serializers.ModelSerializer):
 
 
 from ccc.device_token.serializer import DeviceTokenSerializer  # noqa: E402, F401
+from ccc.plugin.serializer import PluginSerializer  # noqa: E402, F401

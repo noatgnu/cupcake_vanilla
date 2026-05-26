@@ -113,6 +113,33 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             await self.send(
                 text_data=json.dumps({"type": "subscription.confirmed", "subscription_type": subscription_type})
             )
+        elif subscription_type == "plugin_updates":
+            plugin_id = data.get("plugin_id")
+            scope = data.get("scope", "global")
+            if not plugin_id:
+                return
+            if scope == "global":
+                group_name = f"plugin__{plugin_id}__global"
+            elif scope == "user":
+                group_name = f"plugin__{plugin_id}__user_{self.user.id}"
+            elif scope == "lab_group":
+                lab_group_id = data.get("lab_group_id")
+                if not lab_group_id:
+                    return
+                group_name = f"plugin__{plugin_id}__lab_group_{lab_group_id}"
+            else:
+                return
+            await self.channel_layer.group_add(group_name, self.channel_name)
+            await self.send(
+                text_data=json.dumps(
+                    {
+                        "type": "subscription.confirmed",
+                        "subscription_type": subscription_type,
+                        "plugin_id": plugin_id,
+                        "scope": scope,
+                    }
+                )
+            )
 
     async def notification_message(self, event):
         """Handle notification messages sent to groups."""
@@ -176,6 +203,20 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                     "result": event.get("result"),
                     "download_url": event.get("download_url"),
                     "timestamp": event.get("timestamp"),
+                }
+            )
+        )
+
+    async def plugin_message(self, event):
+        """Forward a plugin broadcast message to the connected client."""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "plugin.message",
+                    "plugin_id": event["plugin_id"],
+                    "plugin_name": event["plugin_name"],
+                    "scope": event["scope"],
+                    "payload": event["payload"],
                 }
             )
         )

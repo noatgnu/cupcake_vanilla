@@ -9,6 +9,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from ccc.device_token.viewsets import DeviceSummaryViewSet, DeviceTokenViewSet
+from ccc.plugin.viewset import PluginViewSet
 
 from .annotation_chunked_upload import AnnotationChunkedUploadView
 from .viewsets import (
@@ -40,6 +41,7 @@ router.register(r"resource-permissions", ResourcePermissionViewSet, basename="re
 router.register(r"appliance", ApplianceViewSet, basename="appliance")
 router.register(r"device-tokens", DeviceTokenViewSet, basename="devicetoken")
 router.register(r"device", DeviceSummaryViewSet, basename="device")
+router.register(r"plugins", PluginViewSet, basename="plugin")
 
 urlpatterns = [
     # DRF ViewSet endpoints (api/v1/ prefix comes from main urls.py)

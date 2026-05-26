@@ -2244,3 +2244,4 @@ class BackupLog(models.Model):
 
 
 from ccc.device_token.model import DeviceToken  # noqa: E402, F401
+from ccc.plugin.model import Plugin  # noqa: E402, F401

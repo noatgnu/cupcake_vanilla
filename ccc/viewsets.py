@@ -2151,3 +2151,4 @@ class ApplianceViewSet(viewsets.ViewSet):
 
 
 from ccc.device_token.viewsets import DeviceSummaryViewSet, DeviceTokenViewSet  # noqa: E402, F401
+from ccc.plugin.viewset import PluginViewSet  # noqa: E402, F401
