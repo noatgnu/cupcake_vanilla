@@ -1690,10 +1690,17 @@ class ResourcePermissionViewSet(viewsets.ModelViewSet):
 
 _STORAGE_MOUNT_POINT = "/mnt/cupcake-data"
 _STORAGE_SOCK = "/run/cupcake-storage.sock"
+_NETWORK_SOCK = "/run/cupcake-network.sock"
 _BACKUP_ALLOWED_PREFIXES = ("/mnt/cupcake-data/", "/opt/cupcake/backups")
 _SHELL_UNSAFE = re.compile(r"[;&|`$\\\n\r\x00]")
 _VALID_BACKUP_TYPES = ("database", "media", "full")
 _VALID_MOUNT_TYPES = ("usb", "nfs", "smb")
+_WIFI_CONFIG_PATH = Path("/opt/cupcake/wifi-config.json")
+_WIFI_CERT_DIR = Path("/opt/cupcake/wifi-certs")
+_VALID_AUTH_TYPES = ("wpa2-personal", "wpa2-enterprise")
+_VALID_EAP_METHODS = ("peap", "ttls", "tls")
+_VALID_PHASE2_METHODS = ("mschapv2", "pap", "chap")
+_VALID_CERT_TYPES = ("ca", "client_cert", "client_key")
 
 
 class ApplianceViewSet(viewsets.ViewSet):
@@ -1716,6 +1723,21 @@ class ApplianceViewSet(viewsets.ViewSet):
         client = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
         client.settimeout(60)
         client.connect(_STORAGE_SOCK)
+        client.sendall(json.dumps(payload).encode() + b"\n")
+        data = b""
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        client.close()
+        return json.loads(data.decode())
+
+    def _send_network_command(self, payload):
+        """Send a JSON command to the network manager socket and return the response."""
+        client = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        client.settimeout(60)
+        client.connect(_NETWORK_SOCK)
         client.sendall(json.dumps(payload).encode() + b"\n")
         data = b""
         while True:
@@ -1925,6 +1947,194 @@ class ApplianceViewSet(viewsets.ViewSet):
         )
         run_backup_task.delay(log.id)
         return Response(BackupLogSerializer(log).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="wifi-interfaces")
+    def wifi_interfaces(self, request):
+        """Return available wireless interface names by inspecting /sys/class/net."""
+        self._require_staff(request)
+        interfaces = []
+        try:
+            net_path = Path("/sys/class/net")
+            for iface_dir in net_path.iterdir():
+                if (iface_dir / "wireless").exists() or (iface_dir / "phy80211").exists():
+                    interfaces.append(iface_dir.name)
+        except Exception:
+            pass
+        return Response({"interfaces": interfaces})
+
+    @action(detail=False, methods=["get"], url_path="wifi-status")
+    def wifi_status(self, request):
+        """Return current WiFi connection state and saved config (password excluded)."""
+        self._require_staff(request)
+        config = None
+        if _WIFI_CONFIG_PATH.exists():
+            try:
+                cfg = json.loads(_WIFI_CONFIG_PATH.read_text())
+                cfg.pop("password", None)
+                config = cfg
+            except Exception:
+                pass
+
+        connected = False
+        ssid = None
+        iface_name = (config or {}).get("interfaceName", "")
+        if iface_name:
+            try:
+                out = subprocess.check_output(["iw", "dev", iface_name, "link"], text=True, stderr=subprocess.DEVNULL)
+                connected = "Connected to" in out or "SSID" in out
+                for line in out.splitlines():
+                    line = line.strip()
+                    if line.startswith("SSID:"):
+                        ssid = line.split(":", 1)[1].strip()
+                        break
+            except Exception:
+                pass
+
+        has_interface = bool(iface_name) or bool(
+            list(Path("/sys/class/net").glob("*/wireless")) + list(Path("/sys/class/net").glob("*/phy80211"))
+        )
+
+        return Response(
+            {
+                "hasInterface": has_interface,
+                "interfaceName": iface_name or None,
+                "connected": connected,
+                "ssid": ssid,
+                "config": config,
+            }
+        )
+
+    @staticmethod
+    def _validate_wifi_config(config):
+        """
+        Validate WiFi config fields.
+
+        Returns an error string if invalid, or None if valid.
+        """
+        ssid = config.get("ssid", "").strip()
+        if not ssid:
+            return "ssid is required"
+        if len(ssid) > 32:
+            return "ssid must be 32 characters or fewer"
+        if "\x00" in ssid:
+            return "ssid contains invalid characters"
+
+        iface = config.get("interfaceName", "").strip()
+        if not iface:
+            return "interfaceName is required"
+        if not re.match(r"^[a-zA-Z0-9_\-]+$", iface):
+            return "interfaceName contains invalid characters"
+
+        auth_type = config.get("authType", "")
+        if auth_type not in _VALID_AUTH_TYPES:
+            return f"authType must be one of: {', '.join(_VALID_AUTH_TYPES)}"
+
+        if auth_type == "wpa2-personal":
+            if not config.get("password", "").strip():
+                return "password is required for wpa2-personal"
+            return None
+
+        eap_method = config.get("eapMethod", "")
+        if eap_method not in _VALID_EAP_METHODS:
+            return f"eapMethod must be one of: {', '.join(_VALID_EAP_METHODS)}"
+
+        if not config.get("identity", "").strip():
+            return "identity is required for wpa2-enterprise"
+
+        if eap_method in ("peap", "ttls"):
+            if not config.get("password", "").strip():
+                return f"password is required for {eap_method}"
+            phase2 = config.get("phase2Auth", "")
+            if phase2 and phase2 not in _VALID_PHASE2_METHODS:
+                return f"phase2Auth must be one of: {', '.join(_VALID_PHASE2_METHODS)}"
+
+        if eap_method == "tls":
+            for field in ("clientCertFilename", "clientKeyFilename"):
+                name = config.get(field, "").strip()
+                if not name:
+                    return f"{field} is required for EAP-TLS"
+                if not (_WIFI_CERT_DIR / name).exists():
+                    return f"{field} not found; upload the certificate first"
+
+        return None
+
+    @action(detail=False, methods=["post"], url_path="apply-wifi")
+    def apply_wifi(self, request):
+        """Write WiFi config and apply via the network manager socket."""
+        self._require_staff(request)
+        config = request.data.get("config")
+        if not isinstance(config, dict):
+            return Response({"error": "config must be an object"}, status=status.HTTP_400_BAD_REQUEST)
+
+        error = self._validate_wifi_config(config)
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            _WIFI_CONFIG_PATH.write_text(json.dumps(config, indent=2))
+        except Exception as e:
+            return Response({"error": f"Could not save config: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            result = self._send_network_command({"command": "wifi-apply"})
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if result.get("ok"):
+            return Response({"output": result.get("output", "")})
+        return Response(
+            {"error": result.get("error", "WiFi apply failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    @action(detail=False, methods=["post"], url_path="disable-wifi")
+    def disable_wifi(self, request):
+        """Remove WiFi netplan config and apply via the network manager socket."""
+        self._require_staff(request)
+        try:
+            result = self._send_network_command({"command": "wifi-disable"})
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if result.get("ok"):
+            _WIFI_CONFIG_PATH.unlink(missing_ok=True)
+            return Response({"output": result.get("output", "")})
+        return Response(
+            {"error": result.get("error", "WiFi disable failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    @action(detail=False, methods=["post"], url_path="upload-wifi-cert")
+    def upload_wifi_cert(self, request):
+        """Upload a PEM certificate file for WiFi authentication."""
+        self._require_staff(request)
+        cert_type = request.data.get("cert_type", "").strip()
+        if cert_type not in _VALID_CERT_TYPES:
+            return Response(
+                {"error": f"cert_type must be one of: {', '.join(_VALID_CERT_TYPES)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if uploaded.size > 65536:
+            return Response({"error": "Certificate file too large (max 64 KB)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        content = uploaded.read()
+        if not content.startswith(b"-----BEGIN"):
+            return Response(
+                {"error": "File does not appear to be a PEM certificate"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        filename = f"{cert_type}.pem"
+        try:
+            _WIFI_CERT_DIR.mkdir(parents=True, exist_ok=True)
+            dest = _WIFI_CERT_DIR / filename
+            dest.write_bytes(content)
+        except Exception as e:
+            return Response({"error": f"Could not save certificate: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({"filename": filename})
 
     @action(detail=False, methods=["get"], url_path="network-info", permission_classes=[])
     def network_info(self, request):
