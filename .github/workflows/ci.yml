@@ -89,7 +89,19 @@ jobs:
       run: |
         poetry run python manage.py migrate
         poetry run python manage.py collectstatic --noinput
-        poetry run python manage.py test ccc.tests ccv.tests ccm.tests ccmc.tests ccrv.tests ccsc.tests --verbosity=2
+        poetry run python manage.py test \
+          ccc.tests.test_base \
+          ccc.tests.test_annotations \
+          ccc.tests.test_chunked_upload \
+          ccc.tests.test_device_token \
+          ccc.tests.test_appliance \
+          ccc.tests.test_plugin \
+          ccv.tests \
+          ccm.tests \
+          ccmc.tests \
+          ccrv.tests \
+          ccsc.tests \
+          --verbosity=2
 
   test-wails:
     runs-on: ubuntu-latest
@@ -150,6 +162,110 @@ jobs:
         REDIS_URL: redis://localhost:6379
       run: |
         poetry run pytest
+
+  test-plugin-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: cupcake_vanilla_pass
+          POSTGRES_USER: cupcake_vanilla
+          POSTGRES_DB: cupcake_vanilla_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql://cupcake_vanilla:cupcake_vanilla_pass@localhost:5432/cupcake_vanilla_db
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: test-secret-key
+      DEBUG: 'True'
+      DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings
+      ENABLE_CUPCAKE_MACARON: 'true'
+      ENABLE_CUPCAKE_MINT_CHOCOLATE: 'true'
+      ENABLE_CUPCAKE_RED_VELVET: 'true'
+      ENABLE_CUPCAKE_SALTED_CARAMEL: 'true'
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-password-123
+      DJANGO_BASE_URL: http://localhost:8000
+      PLUGIN_BASE_URL: http://localhost:8001
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+
+    - name: Load cached venv
+      id: cached-poetry-dependencies-plugin
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-plugin-${{ runner.os }}-3.12-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-plugin-${{ runner.os }}-3.12-
+
+    - name: Install dependencies
+      if: steps.cached-poetry-dependencies-plugin.outputs.cache-hit != 'true'
+      run: poetry install --no-interaction --no-root
+
+    - name: Install project
+      run: poetry install --no-interaction
+
+    - name: Migrate and seed admin user
+      run: |
+        poetry run python manage.py migrate
+        poetry run python tests/plugin_integration/create_admin.py
+
+    - name: Start Django server
+      run: |
+        poetry run python manage.py runserver 8000 &
+        echo $! > /tmp/django.pid
+        until curl -sf http://localhost:8000/api/v1/plugins/ -o /dev/null; do sleep 1; done
+
+    - name: Start test plugin server
+      run: |
+        poetry run python tests/plugin_integration/plugin_server.py \
+          --host 127.0.0.1 --port 8001 \
+          --backend http://localhost:8000 \
+          --username "$ADMIN_USERNAME" --password "$ADMIN_PASSWORD" &
+        echo $! > /tmp/plugin.pid
+        until curl -sf http://localhost:8001/manifest -o /dev/null; do sleep 1; done
+
+    - name: Run plugin integration tests
+      run: |
+        poetry run pytest tests/plugin_integration/test_plugin_integration.py -v
+
+    - name: Stop servers
+      if: always()
+      run: |
+        kill $(cat /tmp/plugin.pid) 2>/dev/null || true
+        kill $(cat /tmp/django.pid) 2>/dev/null || true
 
   lint:
     runs-on: ubuntu-latest
