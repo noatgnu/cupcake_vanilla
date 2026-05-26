@@ -197,6 +197,7 @@ jobs:
       SECRET_KEY: test-secret-key
       DEBUG: 'True'
       DJANGO_SETTINGS_MODULE: cupcake_vanilla.settings
+      ALLOWED_HOSTS: 'localhost,127.0.0.1'
       ENABLE_CUPCAKE_MACARON: 'true'
       ENABLE_CUPCAKE_MINT_CHOCOLATE: 'true'
       ENABLE_CUPCAKE_RED_VELVET: 'true'
