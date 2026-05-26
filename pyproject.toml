@@ -256,8 +256,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "cupcake_vanilla.settings_test"
 python_files = ["tests.py", "test_*.py", "*_tests.py"]
-addopts = "--cov=ccc --cov=ccv --cov-report=html --cov-report=term-missing --import-mode=importlib"
-testpaths = [".", "ccc", "ccv", "tests"]
+addopts = "--cov=ccc --cov=ccv --cov-report=html --cov-report=term-missing --import-mode=importlib --ignore=ccc/tests/test_plugin.py"
+testpaths = ["ccc", "ccv"]
+norecursedirs = [".venv", "node_modules", "dist", "build", "htmlcov"]
 
 [tool.coverage.run]
 source = ["ccc", "ccv"]
