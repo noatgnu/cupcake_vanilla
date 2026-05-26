@@ -246,7 +246,7 @@ jobs:
       run: |
         poetry run python manage.py runserver 8000 &
         echo $! > /tmp/django.pid
-        until curl -sf http://localhost:8000/api/v1/plugins/ -o /dev/null; do sleep 1; done
+        until curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/plugins/ | grep -q .; do sleep 1; done
 
     - name: Start test plugin server
       run: |
