@@ -42,6 +42,21 @@ class PluginModelTest(TestCase):
         self.assertEqual(self.plugin.description, "")
         self.assertEqual(self.plugin.manifest_cache, {})
 
+    def test_token_auto_generated_on_save(self):
+        self.assertTrue(self.plugin.token)
+        self.assertEqual(len(self.plugin.token), 64)
+
+    def test_token_unique_per_plugin(self):
+        other = _make_plugin("other-plugin")
+        self.assertNotEqual(self.plugin.token, other.token)
+
+    def test_token_stable_across_updates(self):
+        original_token = self.plugin.token
+        self.plugin.name = "renamed"
+        self.plugin.save()
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.token, original_token)
+
     def test_id_is_stable_identifier(self):
         pk = self.plugin.pk
         self.plugin.name = "renamed"
@@ -74,6 +89,17 @@ class PluginViewSetListRetrieveTest(APITestCase):
         self.assertEqual(response.data["id"], self.plugin.pk)
         self.assertEqual(response.data["name"], self.plugin.name)
 
+    def test_retrieve_does_not_expose_token(self):
+        response = self.client.get(f"{BASE}/{self.plugin.pk}/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("token", response.data)
+
+    def test_list_does_not_expose_token(self):
+        response = self.client.get(f"{BASE}/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for item in response.data.get("results", []):
+            self.assertNotIn("token", item)
+
     def test_unauthenticated_returns_401(self):
         self.client.force_authenticate(user=None)
         response = self.client.get(f"{BASE}/")
@@ -86,9 +112,10 @@ class PluginViewSetListRetrieveTest(APITestCase):
 
 class PluginRegisterTest(APITestCase):
     def setUp(self):
+        self.admin = _make_user("regadmin", staff=True)
         self.user = _make_user("reguser")
         self.client = APIClient()
-        self.client.force_authenticate(user=self.user)
+        self.client.force_authenticate(user=self.admin)
 
     def _register(self, payload):
         return self.client.post(f"{BASE}/register/", payload, format="json")
@@ -102,6 +129,24 @@ class PluginRegisterTest(APITestCase):
         response = self._register({"name": "id-plugin", "version": "1.0.0"})
         self.assertIn("id", response.data)
         self.assertIsInstance(response.data["id"], int)
+
+    def test_register_returns_token(self):
+        response = self._register({"name": "token-plugin", "version": "1.0.0"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("token", response.data)
+        self.assertEqual(len(response.data["token"]), 64)
+
+    def test_register_sets_lifecycle_installing(self):
+        response = self._register({"name": "lifecycle-plugin", "version": "1.0.0"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        plugin = Plugin.objects.get(pk=response.data["id"])
+        self.assertEqual(plugin.lifecycle_status, "installing")
+
+    def test_register_upsert_does_not_return_token_on_update(self):
+        r1 = self._register({"name": "stable-token-plugin", "version": "1.0.0"})
+        r2 = self._register({"name": "stable-token-plugin", "version": "1.1.0"})
+        self.assertIn("token", r1.data)
+        self.assertNotIn("token", r2.data)
 
     def test_register_sets_fields(self):
         manifest = {"nav": [{"label": "Home", "path": "home"}]}
@@ -147,9 +192,194 @@ class PluginRegisterTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
 
+    def test_non_admin_register_returns_403(self):
+        self.client.force_authenticate(user=self.user)
+        response = self._register({"name": "x", "version": "1.0.0"})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_unauthenticated_register_returns_401(self):
         self.client.force_authenticate(user=None)
         response = self._register({"name": "x", "version": "1.0.0"})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class PluginStartupTest(APITestCase):
+    """Tests for the plugin startup endpoint authenticated via plugin token."""
+
+    def setUp(self):
+        self.plugin = _make_plugin("startup-plugin", base_url="http://old.local")
+        self.client = APIClient()
+
+    def _startup(self, token, payload):
+        return self.client.post(
+            f"{BASE}/startup/",
+            payload,
+            format="json",
+            HTTP_PLUGIN_TOKEN=token,
+        )
+
+    def test_startup_updates_base_url(self):
+        response = self._startup(self.plugin._plain_token, {"base_url": "http://new.local"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.base_url, "http://new.local")
+
+    def test_startup_updates_manifest(self):
+        manifest = {"name": "startup-plugin", "version": "2.0.0"}
+        response = self._startup(self.plugin._plain_token, {"manifest": manifest})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.manifest_cache, manifest)
+
+    def test_startup_updates_both_fields(self):
+        manifest = {"nav": []}
+        response = self._startup(
+            self.plugin._plain_token,
+            {"base_url": "http://updated.local", "manifest": manifest},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.base_url, "http://updated.local")
+        self.assertEqual(self.plugin.manifest_cache, manifest)
+
+    def test_startup_sets_lifecycle_running(self):
+        response = self._startup(self.plugin._plain_token, {"base_url": "http://new.local"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.lifecycle_status, "running")
+
+    def test_startup_returns_plugin_data(self):
+        response = self._startup(self.plugin._plain_token, {"base_url": "http://new.local"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], self.plugin.pk)
+        self.assertEqual(response.data["name"], self.plugin.name)
+        self.assertEqual(response.data["lifecycle_status"], "running")
+
+    def test_startup_does_not_return_token(self):
+        response = self._startup(self.plugin._plain_token, {})
+        self.assertNotIn("token", response.data)
+
+    def test_startup_invalid_token_returns_401(self):
+        response = self._startup("invalid-token-xyz", {"base_url": "http://x.local"})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_startup_no_token_returns_401(self):
+        response = self.client.post(f"{BASE}/startup/", {"base_url": "http://x.local"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_startup_inactive_plugin_token_returns_401(self):
+        plain = self.plugin._plain_token
+        self.plugin.is_active = False
+        self.plugin.save()
+        response = self._startup(plain, {"base_url": "http://x.local"})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_startup_partial_update_preserves_other_fields(self):
+        original_manifest = {"nav": [{"label": "Home", "path": "home"}]}
+        self.plugin.manifest_cache = original_manifest
+        self.plugin.save()
+        self._startup(self.plugin._plain_token, {"base_url": "http://new.local"})
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.manifest_cache, original_manifest)
+
+
+class PluginReportProgressTest(APITestCase):
+    """Tests for the plugin-token-authenticated self-reporting endpoint."""
+
+    def setUp(self):
+        self.plugin = _make_plugin("progress-plugin")
+        self.client = APIClient()
+
+    def _report(self, token, payload):
+        return self.client.post(
+            f"{BASE}/report-progress/",
+            payload,
+            format="json",
+            HTTP_PLUGIN_TOKEN=token,
+        )
+
+    def test_report_sets_lifecycle_status(self):
+        response = self._report(self.plugin._plain_token, {"lifecycle_status": "error"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.lifecycle_status, "error")
+
+    def test_report_sets_progress_message(self):
+        response = self._report(
+            self.plugin._plain_token, {"lifecycle_status": "starting", "progress_message": "Loading data..."}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.progress_message, "Loading data...")
+
+    def test_report_sets_progress_data(self):
+        data = {"step": 2, "total": 5}
+        response = self._report(self.plugin._plain_token, {"progress_data": data})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.progress_data, data)
+
+    def test_report_invalid_status_returns_400(self):
+        response = self._report(self.plugin._plain_token, {"lifecycle_status": "bogus"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_report_invalid_token_returns_401(self):
+        response = self._report("bad-token", {"lifecycle_status": "running"})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_report_no_token_returns_401(self):
+        response = self.client.post(f"{BASE}/report-progress/", {"lifecycle_status": "running"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_report_returns_updated_plugin_data(self):
+        response = self._report(
+            self.plugin._plain_token, {"lifecycle_status": "stopped", "progress_message": "Shutting down"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["lifecycle_status"], "stopped")
+        self.assertEqual(response.data["progress_message"], "Shutting down")
+
+    def test_report_only_updates_provided_fields(self):
+        self.plugin.progress_message = "original"
+        self.plugin.save()
+        self._report(self.plugin._plain_token, {"lifecycle_status": "error"})
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.progress_message, "original")
+
+
+class PluginPushTest(APITestCase):
+    """Tests for the plugin-token-authenticated runtime broadcast endpoint."""
+
+    def setUp(self):
+        self.plugin = _make_plugin("push-plugin")
+        self.client = APIClient()
+
+    def _push(self, token, payload):
+        return self.client.post(
+            f"{BASE}/push/",
+            payload,
+            format="json",
+            HTTP_PLUGIN_TOKEN=token,
+        )
+
+    def test_push_with_valid_token_returns_200(self):
+        response = self._push(self.plugin._plain_token, {"payload": {"msg": "hello"}})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["sent"])
+
+    def test_push_with_invalid_token_returns_401(self):
+        response = self._push("bad-token", {"payload": {}})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_push_without_token_returns_401(self):
+        response = self.client.post(f"{BASE}/push/", {"payload": {}}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_push_inactive_plugin_returns_401(self):
+        plain = self.plugin._plain_token
+        self.plugin.is_active = False
+        self.plugin.save()
+        response = self._push(plain, {"payload": {}})
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 

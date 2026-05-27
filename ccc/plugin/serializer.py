@@ -17,6 +17,9 @@ class PluginSerializer(serializers.ModelSerializer):
             "manifest_cache",
             "base_url",
             "is_active",
+            "lifecycle_status",
+            "progress_message",
+            "progress_data",
             "registered_at",
             "updated_at",
         ]

@@ -221,6 +221,21 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             )
         )
 
+    async def plugin_lifecycle(self, event):
+        """Forward a plugin lifecycle status change to the connected client."""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "plugin.lifecycle",
+                    "plugin_id": event["plugin_id"],
+                    "plugin_name": event["plugin_name"],
+                    "lifecycle_status": event["lifecycle_status"],
+                    "progress_message": event["progress_message"],
+                    "progress_data": event["progress_data"],
+                }
+            )
+        )
+
     @database_sync_to_async
     def get_user_lab_groups(self):
         """Get user's lab group IDs."""
