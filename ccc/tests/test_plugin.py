@@ -1,8 +1,10 @@
 import asyncio
 import json
+from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.contrib.auth.models import User
+from django.core.management import call_command
 from django.test import TestCase
 
 from rest_framework import status
@@ -492,6 +494,105 @@ class PluginStaffMutationTest(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.delete(f"{BASE}/{self.plugin.pk}/")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class PluginResetTokenTest(APITestCase):
+    """Tests for the admin reset-token endpoint."""
+
+    def setUp(self):
+        self.staff = _make_user("resetstaff", staff=True)
+        self.user = _make_user("resetuser")
+        self.plugin = _make_plugin("reset-plugin")
+        self.client = APIClient()
+
+    def test_reset_token_as_staff_returns_new_token(self):
+        old_hash = self.plugin.token
+        self.client.force_authenticate(user=self.staff)
+        response = self.client.post(f"{BASE}/{self.plugin.pk}/reset-token/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("token", response.data)
+        self.assertEqual(len(response.data["token"]), 64)
+        self.plugin.refresh_from_db()
+        self.assertNotEqual(self.plugin.token, old_hash)
+
+    def test_reset_token_new_token_authenticates(self):
+        self.client.force_authenticate(user=self.staff)
+        response = self.client.post(f"{BASE}/{self.plugin.pk}/reset-token/")
+        new_plain = response.data["token"]
+        plugin_client = APIClient()
+        result = plugin_client.post(
+            f"{BASE}/startup/",
+            {"base_url": "http://x.local"},
+            format="json",
+            HTTP_PLUGIN_TOKEN=new_plain,
+        )
+        self.assertEqual(result.status_code, status.HTTP_200_OK)
+
+    def test_reset_token_old_token_no_longer_authenticates(self):
+        old_plain = self.plugin._plain_token
+        self.client.force_authenticate(user=self.staff)
+        self.client.post(f"{BASE}/{self.plugin.pk}/reset-token/")
+        plugin_client = APIClient()
+        result = plugin_client.post(
+            f"{BASE}/startup/",
+            {"base_url": "http://x.local"},
+            format="json",
+            HTTP_PLUGIN_TOKEN=old_plain,
+        )
+        self.assertEqual(result.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_reset_token_as_non_staff_returns_403(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(f"{BASE}/{self.plugin.pk}/reset-token/")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_reset_token_unauthenticated_returns_401(self):
+        response = self.client.post(f"{BASE}/{self.plugin.pk}/reset-token/")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class RotatePluginTokensCommandTest(TestCase):
+    """Tests for the rotate_plugin_tokens management command."""
+
+    def test_command_rotates_active_plugin_tokens(self):
+        plugin = _make_plugin("cmd-plugin")
+        old_hash = plugin.token
+        out = StringIO()
+        call_command("rotate_plugin_tokens", stdout=out)
+        plugin.refresh_from_db()
+        self.assertNotEqual(plugin.token, old_hash)
+        output = out.getvalue()
+        self.assertIn("cmd-plugin", output)
+
+    def test_command_outputs_name_and_plain_token(self):
+        _make_plugin("output-plugin")
+        out = StringIO()
+        call_command("rotate_plugin_tokens", stdout=out)
+        line = next(ln for ln in out.getvalue().splitlines() if "output-plugin" in ln)
+        parts = line.split("\t")
+        self.assertEqual(parts[0], "output-plugin")
+        self.assertEqual(len(parts[1]), 64)
+
+    def test_command_skips_inactive_by_default(self):
+        plugin = _make_plugin("inactive-cmd-plugin")
+        plugin.is_active = False
+        plugin.save()
+        old_hash = plugin.token
+        out = StringIO()
+        call_command("rotate_plugin_tokens", stdout=out)
+        plugin.refresh_from_db()
+        self.assertEqual(plugin.token, old_hash)
+        self.assertNotIn("inactive-cmd-plugin", out.getvalue())
+
+    def test_command_all_flag_includes_inactive(self):
+        plugin = _make_plugin("inactive-all-plugin")
+        plugin.is_active = False
+        plugin.save()
+        old_hash = plugin.token
+        out = StringIO()
+        call_command("rotate_plugin_tokens", all=True, stdout=out)
+        plugin.refresh_from_db()
+        self.assertNotEqual(plugin.token, old_hash)
 
 
 class PluginConsumerTest(TestCase):

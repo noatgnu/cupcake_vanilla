@@ -52,7 +52,7 @@ class PluginViewSet(viewsets.ModelViewSet):
         """Map actions to their required permission classes."""
         if getattr(self, "action", None) in ("startup", "push", "report_progress"):
             return [IsPluginAuthenticated()]
-        if self.action in ("destroy", "partial_update", "register"):
+        if self.action in ("destroy", "partial_update", "register", "reset_token"):
             return [permissions.IsAdminUser()]
         return [permissions.IsAuthenticated()]
 
@@ -183,6 +183,21 @@ class PluginViewSet(viewsets.ModelViewSet):
             },
         )
         return Response({"sent": True}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="reset-token")
+    def reset_token(self, request, pk=None):
+        """Regenerate the startup token for a plugin.
+
+        Admin-only.  Use this after a SECRET_KEY rotation or if a token is
+        compromised.  The new plain token is returned once; the plugin env
+        file must be updated and the plugin service restarted.
+        """
+        plugin = self.get_object()
+        plugin.token = ""
+        plugin.save(update_fields=["token", "updated_at"])
+        data = self.get_serializer(plugin).data
+        data["token"] = plugin._plain_token
+        return Response(data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"], url_path="manifest")
     def manifest(self, request, pk=None):
