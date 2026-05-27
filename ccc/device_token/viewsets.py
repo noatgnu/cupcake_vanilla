@@ -58,7 +58,7 @@ class DeviceSummaryViewSet(viewsets.ViewSet):
             from ccm.models import Instrument, InstrumentJob, StoredReagent
 
             instrument_count = Instrument.objects.count()
-            active_jobs = InstrumentJob.objects.filter(status__in=["pending", "running"]).count()
+            active_jobs = InstrumentJob.objects.filter(status__in=["pending", "in_progress"]).count()
             low_reagents = StoredReagent.objects.filter(quantity__lte=models.F("low_stock_threshold")).count()
         except ImportError:
             pass
