@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from django.db import models
 from django.utils.crypto import get_random_string
 
@@ -9,6 +10,7 @@ from rest_framework.response import Response
 from ccc.device_token.model import DeviceToken
 from ccc.device_token.permissions import IsDeviceTokenAuthenticated
 from ccc.device_token.serializer import DeviceTokenSerializer
+from ccc.models import LabGroup
 
 
 class DeviceTokenViewSet(viewsets.ModelViewSet):
@@ -42,6 +44,10 @@ class DeviceSummaryViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def summary(self, request):
         user = request.user
+        User = get_user_model()
+
+        users = User.objects.count()
+        lab_groups = LabGroup.objects.count()
 
         active_timers = 0
         try:
@@ -71,5 +77,7 @@ class DeviceSummaryViewSet(viewsets.ViewSet):
                 "active_jobs": active_jobs,
                 "low_reagents": low_reagents,
                 "active_timers": active_timers,
+                "users": users,
+                "lab_groups": lab_groups,
             }
         )
