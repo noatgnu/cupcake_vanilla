@@ -1,4 +1,3 @@
-from django.contrib.auth import get_user_model
 from django.db import models
 from django.utils.crypto import get_random_string
 
@@ -10,7 +9,6 @@ from rest_framework.response import Response
 from ccc.device_token.model import DeviceToken
 from ccc.device_token.permissions import IsDeviceTokenAuthenticated
 from ccc.device_token.serializer import DeviceTokenSerializer
-from ccc.models import LabGroup
 
 
 class DeviceTokenViewSet(viewsets.ModelViewSet):
@@ -43,11 +41,13 @@ class DeviceSummaryViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def summary(self, request):
+        user = request.user
+
         active_timers = 0
         try:
             from ccrv.models import TimeKeeper
 
-            active_timers = TimeKeeper.objects.filter(started=True).count()
+            active_timers = TimeKeeper.objects.filter(started=True, user=user).count()
         except ImportError:
             pass
 
@@ -57,9 +57,11 @@ class DeviceSummaryViewSet(viewsets.ViewSet):
         try:
             from ccm.models import Instrument, InstrumentJob, StoredReagent
 
-            instrument_count = Instrument.objects.count()
-            active_jobs = InstrumentJob.objects.filter(status__in=["pending", "in_progress"]).count()
-            low_reagents = StoredReagent.objects.filter(quantity__lte=models.F("low_stock_threshold")).count()
+            instrument_count = Instrument.objects.filter(enabled=True, is_vaulted=False).count()
+            active_jobs = InstrumentJob.objects.filter(status__in=["pending", "in_progress"], user=user).count()
+            low_reagents = StoredReagent.objects.filter(
+                quantity__lte=models.F("low_stock_threshold"), user=user
+            ).count()
         except ImportError:
             pass
 
@@ -68,8 +70,6 @@ class DeviceSummaryViewSet(viewsets.ViewSet):
                 "instruments": instrument_count,
                 "active_jobs": active_jobs,
                 "low_reagents": low_reagents,
-                "users": get_user_model().objects.filter(is_active=True).count(),
-                "lab_groups": LabGroup.objects.count(),
                 "active_timers": active_timers,
             }
         )

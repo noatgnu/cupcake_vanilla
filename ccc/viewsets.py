@@ -1691,6 +1691,8 @@ class ResourcePermissionViewSet(viewsets.ModelViewSet):
 _STORAGE_MOUNT_POINT = "/mnt/cupcake-data"
 _STORAGE_SOCK = "/run/cupcake-storage.sock"
 _NETWORK_SOCK = "/run/cupcake-network.sock"
+_PLUGIN_SOCK = "/run/cupcake-plugin.sock"
+_VALID_PLUGIN_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 _BACKUP_ALLOWED_PREFIXES = ("/mnt/cupcake-data/", "/opt/cupcake/backups")
 _SHELL_UNSAFE = re.compile(r"[;&|`$\\\n\r\x00]")
 _VALID_BACKUP_TYPES = ("database", "media", "full")
@@ -1739,6 +1741,22 @@ class ApplianceViewSet(viewsets.ViewSet):
         client.settimeout(60)
         client.connect(_NETWORK_SOCK)
         client.sendall(json.dumps(payload).encode() + b"\n")
+        data = b""
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        client.close()
+        return json.loads(data.decode())
+
+    def _send_plugin_command(self, payload):
+        """Send a JSON command to the plugin manager socket and return the response."""
+        client = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        client.settimeout(120)
+        client.connect(_PLUGIN_SOCK)
+        client.sendall(json.dumps(payload).encode())
+        client.shutdown(_socket.SHUT_WR)
         data = b""
         while True:
             chunk = client.recv(4096)
@@ -2135,6 +2153,89 @@ class ApplianceViewSet(viewsets.ViewSet):
             return Response({"error": f"Could not save certificate: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response({"filename": filename})
+
+    @action(detail=False, methods=["post"], url_path="plugin-install")
+    def plugin_install(self, request):
+        """Install a plugin from a URL or local path via the plugin manager daemon."""
+        self._require_staff(request)
+        name = request.data.get("name", "").strip()
+        source = request.data.get("source", "").strip()
+        if not name or not _VALID_PLUGIN_NAME.match(name):
+            return Response({"error": "Invalid plugin name"}, status=status.HTTP_400_BAD_REQUEST)
+        if not source:
+            return Response({"error": "source is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = self._send_plugin_command({"command": "install", "name": name, "source": source})
+        except OSError as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if result.get("ok"):
+            return Response({"output": result.get("output", "")})
+        return Response({"error": result.get("error", "Install failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["post"], url_path="plugin-uninstall")
+    def plugin_uninstall(self, request):
+        """Stop, disable and remove a plugin via the plugin manager daemon."""
+        self._require_staff(request)
+        name = request.data.get("name", "").strip()
+        if not name or not _VALID_PLUGIN_NAME.match(name):
+            return Response({"error": "Invalid plugin name"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = self._send_plugin_command({"command": "uninstall", "name": name})
+        except OSError as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if result.get("ok"):
+            return Response({"output": result.get("output", "")})
+        return Response(
+            {"error": result.get("error", "Uninstall failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    @action(detail=False, methods=["get"], url_path="plugin-list")
+    def plugin_list_installed(self, request):
+        """List plugins currently installed on the appliance filesystem."""
+        self._require_staff(request)
+        try:
+            result = self._send_plugin_command({"command": "list"})
+        except OSError as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if result.get("ok"):
+            return Response({"plugins": result.get("plugins", [])})
+        return Response({"error": result.get("error", "List failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=["get"], url_path="plugin-status")
+    def plugin_status(self, request):
+        """Return the systemd service status for an installed plugin."""
+        self._require_staff(request)
+        name = request.query_params.get("name", "").strip()
+        if not name or not _VALID_PLUGIN_NAME.match(name):
+            return Response({"error": "Invalid plugin name"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            result = self._send_plugin_command({"command": "status", "name": name})
+        except OSError as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(result)
+
+    @action(detail=False, methods=["post"], url_path="plugin-control")
+    def plugin_control(self, request):
+        """Send a start, stop, restart, enable, or disable command to a plugin service."""
+        self._require_staff(request)
+        name = request.data.get("name", "").strip()
+        command = request.data.get("command", "").strip()
+        if not name or not _VALID_PLUGIN_NAME.match(name):
+            return Response({"error": "Invalid plugin name"}, status=status.HTTP_400_BAD_REQUEST)
+        if command not in ("start", "stop", "restart", "enable", "disable"):
+            return Response(
+                {"error": "command must be one of: start, stop, restart, enable, disable"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            result = self._send_plugin_command({"command": command, "name": name})
+        except OSError as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if result.get("ok"):
+            return Response({"output": result.get("output", "")})
+        return Response(
+            {"error": result.get("error", f"{command} failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
     @action(detail=False, methods=["get"], url_path="network-info", permission_classes=[])
     def network_info(self, request):

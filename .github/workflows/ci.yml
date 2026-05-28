@@ -96,6 +96,7 @@ jobs:
           ccc.tests.test_device_token \
           ccc.tests.test_appliance \
           ccc.tests.test_plugin \
+          ccc.tests.test_plugin_manager \
           ccv.tests \
           ccm.tests \
           ccmc.tests \

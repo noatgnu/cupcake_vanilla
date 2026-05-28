@@ -2,17 +2,26 @@
 Standalone test plugin server.
 
 Starts an HTTP server that mimics a real plugin container.
-After startup, registers itself with the cupcake backend.
+Registers itself with the CUPCAKE backend on boot, stores the plugin
+token returned on first registration, then calls startup to transition
+the plugin lifecycle to running.
+
+Relay endpoints let the integration test suite trigger plugin-token
+calls without holding the token itself:
+  POST /api/push            relays to CUPCAKE /api/v1/plugins/push/
+  POST /api/report-progress relays to CUPCAKE /api/v1/plugins/report-progress/
+  POST /api/stopped         relays report-progress with lifecycle_status=stopped
 
 Usage:
-    python plugin_server.py --host 127.0.0.1 --port 8001 \
-        --backend http://localhost:8000 \
+    python plugin_server.py --host 127.0.0.1 --port 8001
+        --backend http://localhost:8000
         --username admin --password password
 """
 
 import argparse
 import json
 import sys
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -25,6 +34,11 @@ _TABLE_DATA = [
 _CHART_DATA = {
     "labels": ["Jan", "Feb", "Mar"],
     "datasets": [{"label": "Requests", "data": [120, 240, 180]}],
+}
+
+_state: dict = {
+    "backend": "",
+    "plugin_token": "",
 }
 
 
@@ -64,6 +78,26 @@ def _manifest(base_url: str) -> dict:
     }
 
 
+def _plugin_call(path: str, body: dict) -> dict:
+    """POST to a plugin-token-authenticated CUPCAKE endpoint."""
+    url = f"{_state['backend']}/api/v1/plugins/{path}"
+    payload = json.dumps(body).encode()
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Plugin-Token": _state["plugin_token"],
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return {"error": exc.reason, "status": exc.code}
+
+
 class _Handler(BaseHTTPRequestHandler):
     base_url: str = ""
 
@@ -84,7 +118,24 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
-        self._json(200, {"success": True, "received": body})
+
+        if self.path == "/api/push":
+            self._json(200, _plugin_call("push/", {"payload": body}))
+        elif self.path == "/api/report-progress":
+            self._json(200, _plugin_call("report-progress/", body))
+        elif self.path == "/api/stopped":
+            self._json(
+                200,
+                _plugin_call(
+                    "report-progress/",
+                    {
+                        "lifecycle_status": "stopped",
+                        "progress_message": "Stopped",
+                    },
+                ),
+            )
+        else:
+            self._json(200, {"success": True, "received": body})
 
     def _json(self, code: int, data) -> None:
         payload = json.dumps(data).encode()
@@ -128,7 +179,7 @@ def _register(backend: str, token: str, base_url: str) -> dict:
 
 
 def main():
-    """Parse arguments, start the HTTP server, register with the backend, and serve forever."""
+    """Parse arguments, bind the HTTP server, register with the backend, call startup, then serve."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8001)
@@ -138,15 +189,24 @@ def main():
     args = parser.parse_args()
 
     base_url = f"http://{args.host}:{args.port}"
+    _state["backend"] = args.backend
 
     handler = type("Handler", (_Handler,), {"base_url": base_url})
     server = HTTPServer((args.host, args.port), handler)
 
-    print(f"[plugin] server started at {base_url}", flush=True)
+    print(f"[plugin] server bound at {base_url}", flush=True)
 
     token = _get_token(args.backend, args.username, args.password)
     result = _register(args.backend, token, base_url)
-    print(f"[plugin] registered with backend, id={result.get('id')}", flush=True)
+    plugin_token = result.get("token", "")
+
+    if plugin_token:
+        _state["plugin_token"] = plugin_token
+        print(f"[plugin] registered (new), id={result.get('id')}", flush=True)
+        _plugin_call("startup/", {"base_url": base_url, "manifest": _manifest(base_url)})
+        print("[plugin] startup announced", flush=True)
+    else:
+        print(f"[plugin] registered (existing), id={result.get('id')}", flush=True)
 
     try:
         server.serve_forever()

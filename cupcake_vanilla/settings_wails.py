@@ -42,6 +42,7 @@ ALLOWED_HOSTS = [
     "[::1]",
     "0.0.0.0",
     "wails.localhost",
+    "*",
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True
