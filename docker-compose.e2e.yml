@@ -1,0 +1,83 @@
+services:
+  e2e-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: cupcake_e2e
+      POSTGRES_USER: cupcake
+      POSTGRES_PASSWORD: cupcake
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cupcake"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cupcake-e2e-net
+
+  e2e-redis:
+    image: redis:7-alpine
+    networks:
+      - cupcake-e2e-net
+
+  e2e-app:
+    build:
+      context: .
+      dockerfile: ./dockerfiles/Dockerfile
+    environment:
+      POSTGRES_NAME: cupcake_e2e
+      POSTGRES_DB: cupcake_e2e
+      POSTGRES_USER: cupcake
+      POSTGRES_PASSWORD: cupcake
+      POSTGRES_HOST: e2e-db
+      POSTGRES_PORT: "5432"
+      SECRET_KEY: e2e-test-secret-key-not-for-production
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
+      CORS_ORIGIN_WHITELIST: "http://localhost:4200,http://localhost:4201,http://localhost:8099"
+      CORS_ALLOW_ALL_ORIGINS: "True"
+      REDIS_URL: redis://e2e-redis:6379/0
+      REDIS_HOST: e2e-redis
+      REDIS_PORT: "6379"
+      REDIS_DB_RQ: "3"
+      ENABLE_RQ_TASKS: "False"
+      ENABLE_CUPCAKE_MACARON: "True"
+      ENABLE_CUPCAKE_MINT_CHOCOLATE: "True"
+      ENABLE_CUPCAKE_SALTED_CARAMEL: "True"
+      ENABLE_CUPCAKE_RED_VELVET: "True"
+      USE_WHISPER: "False"
+    volumes:
+      - e2e-media:/app/media
+      - e2e-static:/app/staticfiles
+    depends_on:
+      e2e-db:
+        condition: service_healthy
+      e2e-redis:
+        condition: service_started
+    networks:
+      - cupcake-e2e-net
+    command: >
+      sh -c "
+        python manage.py migrate --noinput &&
+        python manage.py setup_e2e_data &&
+        python manage.py collectstatic --noinput &&
+        python manage.py runserver 0.0.0.0:8000
+      "
+
+  e2e-nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8099:80"
+    volumes:
+      - ./e2e/nginx.e2e.conf:/etc/nginx/conf.d/default.conf:ro
+      - e2e-media:/app/media:ro
+      - e2e-static:/app/staticfiles:ro
+    depends_on:
+      - e2e-app
+    networks:
+      - cupcake-e2e-net
+
+volumes:
+  e2e-media:
+  e2e-static:
+
+networks:
+  cupcake-e2e-net:
