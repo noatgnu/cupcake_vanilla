@@ -133,8 +133,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         if hasattr(self.request, "user") and self.request.user.is_authenticated:
             user = self.request.user
             show_shared = self.request.query_params.get("show_shared", "false").lower() == "true"
+            admin_view = self.request.query_params.get("admin_view", "false").lower() == "true"
 
-            if show_shared:
+            if admin_view and (user.is_staff or user.is_superuser):
+                pass  # Staff/superuser with admin_view sees all tables without additional filter
+            elif show_shared:
                 # Get all accessible lab groups (includes parent groups via bubble-up)
                 accessible_groups = LabGroup.get_accessible_group_ids(user)
 
