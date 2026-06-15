@@ -6,7 +6,9 @@ the legacy CUPCAKE project, preserving all original functionality while
 integrating with the new modular architecture where appropriate.
 """
 
+import re
 from datetime import datetime
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.db import models, transaction
@@ -160,9 +162,11 @@ class ProtocolModel(AbstractResource):
         if not url:
             raise ValueError("Could not find protocol.io url")
 
-        # get protocol.io id from url
+        path_parts = [p for p in urlparse(url).path.split("/") if p]
+        slug = path_parts[-2] if path_parts and re.match(r"^v\d+$", path_parts[-1]) else path_parts[-1]
+
         protocol_meta = requests.get(
-            f"https://www.protocols.io/api/v3/protocols/{url.split('/')[-1]}",
+            f"https://www.protocols.io/api/v3/protocols/{slug}",
             headers={"Authorization": f"Bearer {settings.PROTOCOLS_IO_ACCESS_TOKEN}"},
         )
 
@@ -293,8 +297,6 @@ class ProtocolModel(AbstractResource):
                         <ul class="reagent-list">{reagents_list}</ul>
                     </div>
                     """
-
-                import re
 
                 step_desc = step.step_description or ""
 
@@ -519,8 +521,6 @@ class ProtocolModel(AbstractResource):
                         {''.join(annotations_items)}
                     </div>
                     """
-
-                import re
 
                 step_desc = step.step_description or ""
 
