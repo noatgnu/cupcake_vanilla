@@ -1104,7 +1104,7 @@ class TimeKeeperViewSet(ModelViewSet):
         if started is not None:
             queryset = queryset.filter(started=started.lower() == "true")
 
-        return queryset.select_related("session", "step", "user", "remote_host")
+        return queryset.select_related("session", "step", "user", "remote_host").order_by("-id")
 
     def perform_create(self, serializer):
         """
