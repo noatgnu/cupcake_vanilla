@@ -809,7 +809,7 @@ class ReagentViewSet(BaseViewSet):
 
     queryset = Reagent.objects.all()
     serializer_class = ReagentSerializer
-    filterset_fields = ["unit"]
+    filterset_fields = ["unit", "name"]
     search_fields = ["name", "unit"]
     ordering_fields = ["name", "unit", "created_at"]
     ordering = ["name"]
