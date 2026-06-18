@@ -481,6 +481,48 @@ class StoredReagent(models.Model):
     def __str__(self):
         return f"{self.reagent.name} in {self.storage_object.object_name}"
 
+    def can_access(self, user):
+        """
+        Check if user can access this stored reagent.
+
+        Access is granted if:
+        - User is staff/superuser
+        - User is the owner
+        - The reagent is shareable AND:
+          - access_all is True, or
+          - user is in access_users, or
+          - user is a member of any lab group in access_lab_groups
+
+        Args:
+            user: Django User instance to check
+
+        Returns:
+            bool: True if user can access the stored reagent
+        """
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.is_staff or user.is_superuser:
+            return True
+
+        if self.user == user:
+            return True
+
+        if not self.shareable:
+            return False
+
+        if self.access_all:
+            return True
+
+        if self.access_users.filter(id=user.id).exists():
+            return True
+
+        for lab_group in self.access_lab_groups.all():
+            if lab_group.is_member(user):
+                return True
+
+        return False
+
     def check_low_stock(self):
         """
         Check if reagent stock is below threshold and send notification

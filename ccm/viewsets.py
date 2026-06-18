@@ -832,13 +832,19 @@ class StoredReagentViewSet(BaseViewSet):
 
     def get_queryset(self):
         """
-        Filter stored reagents with optional sub-storage inclusion.
+        Filter stored reagents by access control, with optional sub-storage inclusion.
 
         Query parameters:
         - storage_object: Filter by storage object ID
         - include_sub_storage: If 'true', include reagents from all nested child storage objects
         """
-        queryset = super().get_queryset()
+        user = self.request.user
+
+        if user.is_staff or user.is_superuser:
+            queryset = StoredReagent.objects.all()
+        else:
+            accessible_ids = {reagent.id for reagent in StoredReagent.objects.all() if reagent.can_access(user)}
+            queryset = StoredReagent.objects.filter(id__in=accessible_ids)
 
         storage_object_id = self.request.query_params.get("storage_object")
         include_sub_storage = self.request.query_params.get("include_sub_storage", "").lower() == "true"

@@ -23,6 +23,18 @@ from .settings import (
     REDIS_URL_CHANNELS,
 )
 
+# The Wails desktop app bundles every CUPCAKE feature (storage, protocols,
+# billing, WebRTC live sessions), so all optional apps must be installed
+# regardless of the ENABLE_CUPCAKE_* env vars used by the server deployment.
+for _cupcake_app in [
+    "ccm.apps.CcmConfig",
+    "ccmc.apps.CcmcConfig",
+    "ccsc.apps.CcscConfig",
+    "ccrv.apps.CcrvConfig",
+]:
+    if _cupcake_app not in INSTALLED_APPS:  # noqa: F405
+        INSTALLED_APPS.append(_cupcake_app)  # noqa: F405
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 WAILS_APP_DATA = os.environ.get("WAILS_APP_DATA", tempfile.gettempdir())
