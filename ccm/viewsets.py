@@ -789,7 +789,7 @@ class StorageObjectViewSet(BaseViewSet):
     }
     search_fields = ["object_name", "object_description"]
     ordering_fields = ["object_name", "object_type", "created_at", "updated_at"]
-    ordering = ["object_name"]
+    ordering = ["-created_at"]
 
     def get_queryset(self):
         """Filter storage objects by user access."""
@@ -837,7 +837,7 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
     }
     search_fields = ["reagent__name", "notes", "reagent__unit", "barcode"]
     ordering_fields = ["quantity", "molecular_weight", "expiration_date", "created_at"]
-    ordering = ["reagent__name"]
+    ordering = ["-created_at"]
 
     def get_queryset(self):
         """
