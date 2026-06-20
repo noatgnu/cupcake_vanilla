@@ -9,6 +9,8 @@ from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -957,6 +959,30 @@ class SessionAnnotationAPITests(CCRVAPITestCase):
             content_type=ContentType.objects.get_for_model(SessionAnnotation), object_id=annotation_id
         )
         self.assertEqual(log.deleted_by, self.regular_user)
+
+    def test_list_query_count_does_not_scale_with_table_size(self):
+        """Test that listing session annotations runs a fixed number of queries, not one per row.
+
+        Regression test for a bug where get_queryset() iterated every SessionAnnotation row in
+        the database in Python, calling can_view() (itself multiple lazy FK lookups) per row -
+        a full-table-scan-with-N+1-queries that got progressively slower as the table grew, the
+        likely cause of e2e tests timing out only late in long sequential runs.
+        """
+        self.client.force_authenticate(user=self.regular_user)
+
+        for i in range(30):
+            annotation = Annotation.objects.create(
+                annotation=f"perf annotation {i}", annotation_type="text", owner=self.regular_user
+            )
+            SessionAnnotation.objects.create(session=self.session, annotation=annotation)
+
+        url = reverse("ccrv:sessionannotation-list")
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 31)
+        self.assertLess(len(ctx.captured_queries), 10)
 
     def test_create_metadata_table_action(self):
         """Test create_metadata_table action."""

@@ -1293,17 +1293,19 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     ordering = ["order"]
 
     def get_queryset(self):
-        """Filter session annotations based on user permissions."""
+        """Filter session annotations based on user permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
-        queryset = SessionAnnotation.objects.all()
+        base_queryset = SessionAnnotation.objects.select_related("session", "annotation", "metadata_table")
+        if user.is_superuser:
+            return base_queryset
 
-        # Filter by sessions user can view
-        accessible_sessions = []
-        for session_annotation in queryset:
-            if session_annotation.can_view(user):
-                accessible_sessions.append(session_annotation.id)
-
-        return queryset.filter(id__in=accessible_sessions)
+        accessible_groups = LabGroup.get_accessible_group_ids(user)
+        return base_queryset.filter(
+            Q(session__owner=user)
+            | Q(session__editors=user)
+            | Q(session__viewers=user)
+            | Q(session__lab_group_id__in=accessible_groups)
+        ).distinct()
 
     def create(self, request, *args, **kwargs):
         """Create session annotation, handling annotation_data if provided."""
@@ -1517,7 +1519,11 @@ class StepAnnotationViewSet(DeletionLogMixin, ModelViewSet):
     def get_queryset(self):
         """Filter annotations by user access permissions."""
         user = self.request.user
-        return self.queryset.filter(session__owner=user)
+        return (
+            self.queryset.filter(session__owner=user)
+            .select_related("session", "step", "annotation")
+            .prefetch_related("instrument_usage_links")
+        )
 
     def create(self, request, *args, **kwargs):
         """Create step annotation, handling annotation_data if provided."""
