@@ -16,6 +16,7 @@ from ccc.annotation_chunked_upload import (
 from ccc.models import AnnotationFolder
 
 from .models import ProtocolStep, Session, SessionAnnotation, SessionAnnotationFolder, StepAnnotation
+from .serializers import queue_annotation_transcription
 
 
 class StepAnnotationChunkedUploadView(AnnotationChunkedUploadView):
@@ -94,6 +95,7 @@ class StepAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 request.user,
                 auto_transcribe,
             )
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             order = StepAnnotation.objects.filter(session=session, step=step).count()
 
@@ -181,6 +183,7 @@ class SessionAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                 request.user,
                 auto_transcribe,
             )
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             order = SessionAnnotation.objects.filter(session=session).count()
 
@@ -274,6 +277,7 @@ class SessionAnnotationFolderChunkedUploadView(AnnotationChunkedUploadView):
                 request.user,
                 auto_transcribe,
             )
+            queue_annotation_transcription(annotation, auto_transcribe)
 
             order = SessionAnnotationFolder.objects.filter(session=session, folder=folder).count()
 
