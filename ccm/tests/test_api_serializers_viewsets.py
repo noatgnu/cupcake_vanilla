@@ -5,6 +5,8 @@ Tests the REST API functionality for instrument management, jobs, usage tracking
 and maintenance functionality.
 """
 
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -334,6 +336,22 @@ class CCMViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(self._get_count_from_response(response), 1)
 
+    def test_instrument_filter_by_updated_at(self):
+        """Test incremental sync filtering: updated_at__gte/__lte on Instrument."""
+        self.client.force_authenticate(user=self.staff_user)
+        instrument = Instrument.objects.create(instrument_name="Sync Test Instrument", user=self.staff_user)
+
+        url = "/api/v1/instruments/"
+        future_cursor = instrument.updated_at + timedelta(seconds=1)
+        response = self.client.get(url, {"updated_at__gte": future_cursor.isoformat()})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._get_count_from_response(response), 0)
+
+        past_cursor = instrument.updated_at - timedelta(seconds=1)
+        response = self.client.get(url, {"updated_at__gte": past_cursor.isoformat()})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._get_count_from_response(response), 1)
+
     def test_instrument_job_workflow(self):
         """Test instrument job workflow actions."""
         instrument = Instrument.objects.create(instrument_name="Test Instrument", user=self.user)
@@ -532,6 +550,43 @@ class CCMViewSetTests(APITestCase):
         self.assertEqual(self._get_count_from_response(response), 1)
         results = self._get_results_from_response(response)
         self.assertEqual(results[0]["description"], "Analysis run")
+
+    def test_instrument_usage_filter_by_updated_at(self):
+        """Test incremental sync filtering: updated_at__gte/__lte on InstrumentUsage."""
+        instrument = Instrument.objects.create(instrument_name="Sync Test Instrument")
+        usage = InstrumentUsage.objects.create(
+            instrument=instrument, user=self.user, description="Sync test run", time_started=timezone.now()
+        )
+
+        url = "/api/v1/instrument-usage/"
+        future_cursor = usage.updated_at + timedelta(seconds=1)
+        response = self.client.get(url, {"updated_at__gte": future_cursor.isoformat()})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._get_count_from_response(response), 0)
+
+        past_cursor = usage.updated_at - timedelta(seconds=1)
+        response = self.client.get(url, {"updated_at__gte": past_cursor.isoformat()})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._get_count_from_response(response), 1)
+
+    def test_stored_reagent_filter_by_updated_at(self):
+        """Test incremental sync filtering: updated_at__gte/__lte on StoredReagent."""
+        storage_object = StorageObject.objects.create(object_name="Sync Test Freezer", user=self.user)
+        reagent = Reagent.objects.create(name="Sync Test Reagent", unit="mL")
+        stored_reagent = StoredReagent.objects.create(
+            reagent=reagent, storage_object=storage_object, quantity=10, user=self.user
+        )
+
+        url = "/api/v1/stored-reagents/"
+        future_cursor = stored_reagent.updated_at + timedelta(seconds=1)
+        response = self.client.get(url, {"updated_at__gte": future_cursor.isoformat()})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._get_count_from_response(response), 0)
+
+        past_cursor = stored_reagent.updated_at - timedelta(seconds=1)
+        response = self.client.get(url, {"updated_at__gte": past_cursor.isoformat()})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._get_count_from_response(response), 1)
 
     def test_maintenance_log_staff_only(self):
         """Test that maintenance logs are only accessible to staff."""

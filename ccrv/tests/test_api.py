@@ -23,6 +23,7 @@ from ccrv.models import (
     ProtocolStep,
     Session,
     SessionAnnotation,
+    StepAnnotation,
 )
 from tests.factories import UserFactory
 
@@ -216,6 +217,29 @@ class ProtocolModelAPITests(CCRVAPITestCase):
         # Our test protocol is enabled
         self.assertEqual(len(response.data), 1)
 
+    def test_filter_by_updated_at_gte_excludes_older_records(self):
+        """Test incremental sync filtering: updated_at__gte excludes records updated before the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.protocol.updated_at + timedelta(seconds=1)
+        url = reverse("ccrv:protocolmodel-list")
+        response = self.client.get(url, {"updated_at__gte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 0)
+
+    def test_filter_by_updated_at_gte_includes_recent_records(self):
+        """Test incremental sync filtering: updated_at__gte includes records updated at or after the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.protocol.updated_at - timedelta(seconds=1)
+        url = reverse("ccrv:protocolmodel-list")
+        response = self.client.get(url, {"updated_at__gte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["id"], self.protocol.id)
+
 
 class SessionAPITests(CCRVAPITestCase):
     """Test Session API endpoints."""
@@ -248,6 +272,29 @@ class SessionAPITests(CCRVAPITestCase):
         self.assertEqual(response.data["name"], "New Session")
         self.assertEqual(response.data["owner"], self.regular_user.id)
         self.assertIsNotNone(response.data["unique_id"])
+
+    def test_filter_by_updated_at_gte_excludes_older_records(self):
+        """Test incremental sync filtering: updated_at__gte excludes records updated before the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.session.updated_at + timedelta(seconds=1)
+        url = reverse("ccrv:session-list")
+        response = self.client.get(url, {"updated_at__gte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 0)
+
+    def test_filter_by_updated_at_lte_includes_recent_records(self):
+        """Test incremental sync filtering: updated_at__lte includes records updated at or before the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.session.updated_at + timedelta(seconds=1)
+        url = reverse("ccrv:session-list")
+        response = self.client.get(url, {"updated_at__lte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["id"], self.session.id)
 
     def test_start_session_action(self):
         """Test starting a session."""
@@ -847,6 +894,29 @@ class SessionAnnotationAPITests(CCRVAPITestCase):
         self.assertEqual(response.data["session"], self.session.id)
         self.assertEqual(response.data["annotation"], new_annotation.id)
 
+    def test_filter_by_updated_at_gte_excludes_older_records(self):
+        """Test incremental sync filtering: updated_at__gte excludes records updated before the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.session_annotation.updated_at + timedelta(seconds=1)
+        url = reverse("ccrv:sessionannotation-list")
+        response = self.client.get(url, {"updated_at__gte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 0)
+
+    def test_filter_by_updated_at_lte_includes_recent_records(self):
+        """Test incremental sync filtering: updated_at__lte includes records updated at or before the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.session_annotation.updated_at + timedelta(seconds=1)
+        url = reverse("ccrv:sessionannotation-list")
+        response = self.client.get(url, {"updated_at__lte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["id"], self.session_annotation.id)
+
     def test_create_metadata_table_action(self):
         """Test create_metadata_table action."""
         self.client.force_authenticate(user=self.regular_user)
@@ -1058,3 +1128,40 @@ class SessionAnnotationAPITests(CCRVAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["name"], "Sample ID")
+
+
+class StepAnnotationAPITests(CCRVAPITestCase):
+    """Test StepAnnotation API endpoints."""
+
+    def setUp(self):
+        super().setUp()
+
+        self.annotation = Annotation.objects.create(
+            annotation="Test step annotation", annotation_type="text", owner=self.regular_user
+        )
+        self.step_annotation = StepAnnotation.objects.create(
+            session=self.session, step=self.step, annotation=self.annotation
+        )
+
+    def test_filter_by_updated_at_gte_excludes_older_records(self):
+        """Test incremental sync filtering: updated_at__gte excludes records updated before the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.step_annotation.updated_at + timedelta(seconds=1)
+        url = reverse("ccrv:stepannotation-list")
+        response = self.client.get(url, {"updated_at__gte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 0)
+
+    def test_filter_by_updated_at_lte_includes_recent_records(self):
+        """Test incremental sync filtering: updated_at__lte includes records updated at or before the cursor."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        cursor = self.step_annotation.updated_at + timedelta(seconds=1)
+        url = reverse("ccrv:stepannotation-list")
+        response = self.client.get(url, {"updated_at__lte": cursor.isoformat()})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["results"][0]["id"], self.step_annotation.id)

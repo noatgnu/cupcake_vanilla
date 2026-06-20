@@ -125,6 +125,10 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
 
     queryset = ProtocolModel.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsOwnerEditorViewerOrNoAccess]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = {
+        "updated_at": ["gte", "lte"],
+    }
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -400,7 +404,13 @@ class SessionViewSet(viewsets.ModelViewSet):
     queryset = Session.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsOwnerEditorViewerOrNoAccess]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["unique_id", "enabled", "processing", "projects"]
+    filterset_fields = {
+        "unique_id": ["exact"],
+        "enabled": ["exact"],
+        "processing": ["exact"],
+        "projects": ["exact"],
+        "updated_at": ["gte", "lte"],
+    }
     search_fields = ["name"]
     ordering_fields = ["created_at", "started_at", "ended_at"]
     ordering = ["-created_at"]
@@ -1258,7 +1268,11 @@ class SessionAnnotationFilter(django_filters.FilterSet):
 
     class Meta:
         model = SessionAnnotation
-        fields = ["session", "annotation", "scratched"]
+        fields = {
+            "session": ["exact"],
+            "annotation": ["exact"],
+            "updated_at": ["gte", "lte"],
+        }
 
 
 class SessionAnnotationViewSet(viewsets.ModelViewSet):
@@ -1479,7 +1493,12 @@ class StepAnnotationFilter(django_filters.FilterSet):
 
     class Meta:
         model = StepAnnotation
-        fields = ["session", "step", "annotation", "scratched"]
+        fields = {
+            "session": ["exact"],
+            "step": ["exact"],
+            "annotation": ["exact"],
+            "updated_at": ["gte", "lte"],
+        }
 
 
 class StepAnnotationViewSet(ModelViewSet):

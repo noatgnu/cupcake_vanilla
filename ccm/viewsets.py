@@ -103,7 +103,13 @@ class InstrumentViewSet(BaseViewSet):
 
     queryset = Instrument.objects.all()
     serializer_class = InstrumentSerializer
-    filterset_fields = ["enabled", "accepts_bookings", "is_vaulted", "user"]
+    filterset_fields = {
+        "enabled": ["exact"],
+        "accepts_bookings": ["exact"],
+        "is_vaulted": ["exact"],
+        "user": ["exact"],
+        "updated_at": ["gte", "lte"],
+    }
     search_fields = ["instrument_name", "instrument_description"]
     ordering_fields = ["instrument_name", "created_at", "updated_at"]
     ordering = ["instrument_name"]
@@ -675,6 +681,7 @@ class InstrumentUsageViewSet(BaseViewSet):
         "approved_by": ["exact"],
         "time_started": ["gte", "lte", "gt", "lt"],
         "time_ended": ["gte", "lte", "gt", "lt"],
+        "updated_at": ["gte", "lte"],
     }
     search_fields = ["description"]
     ordering_fields = ["time_started", "time_ended", "usage_hours", "created_at"]
@@ -825,6 +832,7 @@ class StoredReagentViewSet(BaseViewSet):
         "quantity": ["exact", "gte", "lte", "gt", "lt"],
         "molecular_weight": ["exact", "gte", "lte", "gt", "lt", "isnull"],
         "expiration_date": ["exact", "gte", "lte", "gt", "lt", "isnull"],
+        "updated_at": ["gte", "lte"],
     }
     search_fields = ["reagent__name", "notes", "reagent__unit", "barcode"]
     ordering_fields = ["quantity", "molecular_weight", "expiration_date", "created_at"]
