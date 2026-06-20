@@ -8,13 +8,14 @@ import uuid
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from ccc.models import Annotation, RemoteHost
+from ccc.models import Annotation, DeletionLog, RemoteHost
 from ccrv.models import (
     Project,
     ProtocolModel,
@@ -240,6 +241,20 @@ class ProtocolModelAPITests(CCRVAPITestCase):
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], self.protocol.id)
 
+    def test_destroy_creates_deletion_log(self):
+        """Test that deleting a protocol writes a DeletionLog tombstone for mobile delta sync."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        protocol_id = self.protocol.id
+        url = reverse("ccrv:protocolmodel-detail", kwargs={"pk": protocol_id})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        log = DeletionLog.objects.get(
+            content_type=ContentType.objects.get_for_model(ProtocolModel), object_id=protocol_id
+        )
+        self.assertEqual(log.deleted_by, self.regular_user)
+
 
 class SessionAPITests(CCRVAPITestCase):
     """Test Session API endpoints."""
@@ -295,6 +310,18 @@ class SessionAPITests(CCRVAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], self.session.id)
+
+    def test_destroy_creates_deletion_log(self):
+        """Test that deleting a session writes a DeletionLog tombstone for mobile delta sync."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        session_id = self.session.id
+        url = reverse("ccrv:session-detail", kwargs={"pk": session_id})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        log = DeletionLog.objects.get(content_type=ContentType.objects.get_for_model(Session), object_id=session_id)
+        self.assertEqual(log.deleted_by, self.regular_user)
 
     def test_start_session_action(self):
         """Test starting a session."""
@@ -917,6 +944,20 @@ class SessionAnnotationAPITests(CCRVAPITestCase):
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], self.session_annotation.id)
 
+    def test_destroy_creates_deletion_log(self):
+        """Test that deleting a session annotation writes a DeletionLog tombstone for mobile delta sync."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        annotation_id = self.session_annotation.id
+        url = reverse("ccrv:sessionannotation-detail", kwargs={"pk": annotation_id})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        log = DeletionLog.objects.get(
+            content_type=ContentType.objects.get_for_model(SessionAnnotation), object_id=annotation_id
+        )
+        self.assertEqual(log.deleted_by, self.regular_user)
+
     def test_create_metadata_table_action(self):
         """Test create_metadata_table action."""
         self.client.force_authenticate(user=self.regular_user)
@@ -1165,3 +1206,17 @@ class StepAnnotationAPITests(CCRVAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], self.step_annotation.id)
+
+    def test_destroy_creates_deletion_log(self):
+        """Test that deleting a step annotation writes a DeletionLog tombstone for mobile delta sync."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        annotation_id = self.step_annotation.id
+        url = reverse("ccrv:stepannotation-detail", kwargs={"pk": annotation_id})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        log = DeletionLog.objects.get(
+            content_type=ContentType.objects.get_for_model(StepAnnotation), object_id=annotation_id
+        )
+        self.assertEqual(log.deleted_by, self.regular_user)

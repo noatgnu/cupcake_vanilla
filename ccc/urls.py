@@ -16,6 +16,7 @@ from .viewsets import (
     AnnotationFolderViewSet,
     AnnotationViewSet,
     ApplianceViewSet,
+    DeletionLogViewSet,
     LabGroupInvitationViewSet,
     LabGroupPermissionViewSet,
     LabGroupViewSet,
@@ -38,6 +39,7 @@ router.register(r"annotation-folders", AnnotationFolderViewSet, basename="annota
 router.register(r"annotations", AnnotationViewSet, basename="annotation")
 router.register(r"remote-hosts", RemoteHostViewSet, basename="remotehost")
 router.register(r"resource-permissions", ResourcePermissionViewSet, basename="resourcepermission")
+router.register(r"deletions", DeletionLogViewSet, basename="deletionlog")
 router.register(r"appliance", ApplianceViewSet, basename="appliance")
 router.register(r"device-tokens", DeviceTokenViewSet, basename="devicetoken")
 router.register(r"device", DeviceSummaryViewSet, basename="device")

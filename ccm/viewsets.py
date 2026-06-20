@@ -19,6 +19,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from ccc.mixins import DeletionLogMixin
 from ccc.models import AnnotationFolder, ResourceType
 from ccc.serializers import AnnotationFolderSerializer
 from ccv.models import LabGroup, MetadataColumn, MetadataTableTemplate
@@ -98,7 +99,7 @@ class BaseViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class InstrumentViewSet(BaseViewSet):
+class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
     """ViewSet for Instrument model."""
 
     queryset = Instrument.objects.all()
@@ -155,7 +156,7 @@ class InstrumentViewSet(BaseViewSet):
         """
         if not (self.request.user.is_staff or self.request.user.is_superuser):
             raise PermissionDenied("Only staff or admin users can delete instruments")
-        instance.delete()
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=["post"])
     def check_warranty(self, request, pk=None):
@@ -668,7 +669,7 @@ class InstrumentJobViewSet(BaseViewSet):
             )
 
 
-class InstrumentUsageViewSet(BaseViewSet):
+class InstrumentUsageViewSet(DeletionLogMixin, BaseViewSet):
     """ViewSet for InstrumentUsage model."""
 
     queryset = InstrumentUsage.objects.all()
@@ -822,7 +823,7 @@ class ReagentViewSet(BaseViewSet):
     ordering = ["name"]
 
 
-class StoredReagentViewSet(BaseViewSet):
+class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
     """ViewSet for StoredReagent model."""
 
     queryset = StoredReagent.objects.all()

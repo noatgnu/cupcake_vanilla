@@ -8,12 +8,14 @@ and maintenance functionality.
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
 from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from ccc.models import DeletionLog
 from ccm.models import (
     Instrument,
     InstrumentAnnotation,
@@ -352,6 +354,21 @@ class CCMViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(self._get_count_from_response(response), 1)
 
+    def test_instrument_destroy_creates_deletion_log(self):
+        """Test that deleting an instrument writes a DeletionLog tombstone for mobile delta sync."""
+        instrument = Instrument.objects.create(instrument_name="Deletable Instrument")
+        instrument_id = instrument.id
+
+        self.client.force_authenticate(user=self.staff_user)
+        url = f"/api/v1/instruments/{instrument_id}/"
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        log = DeletionLog.objects.get(
+            content_type=ContentType.objects.get_for_model(Instrument), object_id=instrument_id
+        )
+        self.assertEqual(log.deleted_by, self.staff_user)
+
     def test_instrument_job_workflow(self):
         """Test instrument job workflow actions."""
         instrument = Instrument.objects.create(instrument_name="Test Instrument", user=self.user)
@@ -569,6 +586,23 @@ class CCMViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(self._get_count_from_response(response), 1)
 
+    def test_instrument_usage_destroy_creates_deletion_log(self):
+        """Test that deleting an instrument usage writes a DeletionLog tombstone for mobile delta sync."""
+        instrument = Instrument.objects.create(instrument_name="Deletable Usage Instrument")
+        usage = InstrumentUsage.objects.create(
+            instrument=instrument, user=self.user, description="Deletable run", time_started=timezone.now()
+        )
+        usage_id = usage.id
+
+        url = f"/api/v1/instrument-usage/{usage_id}/"
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        log = DeletionLog.objects.get(
+            content_type=ContentType.objects.get_for_model(InstrumentUsage), object_id=usage_id
+        )
+        self.assertEqual(log.deleted_by, self.user)
+
     def test_stored_reagent_filter_by_updated_at(self):
         """Test incremental sync filtering: updated_at__gte/__lte on StoredReagent."""
         storage_object = StorageObject.objects.create(object_name="Sync Test Freezer", user=self.user)
@@ -587,6 +621,24 @@ class CCMViewSetTests(APITestCase):
         response = self.client.get(url, {"updated_at__gte": past_cursor.isoformat()})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(self._get_count_from_response(response), 1)
+
+    def test_stored_reagent_destroy_creates_deletion_log(self):
+        """Test that deleting a stored reagent writes a DeletionLog tombstone for mobile delta sync."""
+        storage_object = StorageObject.objects.create(object_name="Deletable Freezer", user=self.user)
+        reagent = Reagent.objects.create(name="Deletable Reagent", unit="mL")
+        stored_reagent = StoredReagent.objects.create(
+            reagent=reagent, storage_object=storage_object, quantity=10, user=self.user
+        )
+        stored_reagent_id = stored_reagent.id
+
+        url = f"/api/v1/stored-reagents/{stored_reagent_id}/"
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        log = DeletionLog.objects.get(
+            content_type=ContentType.objects.get_for_model(StoredReagent), object_id=stored_reagent_id
+        )
+        self.assertEqual(log.deleted_by, self.user)
 
     def test_maintenance_log_staff_only(self):
         """Test that maintenance logs are only accessible to staff."""

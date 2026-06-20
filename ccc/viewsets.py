@@ -22,6 +22,7 @@ from django.core.signing import TimestampSigner
 from django.db import models
 from django.db.models import Q
 from django.http import HttpResponse
+from django.utils.dateparse import parse_datetime
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
@@ -29,6 +30,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django_filters.views import FilterMixin
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.filters import SearchFilter
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
@@ -40,6 +42,7 @@ from .models import (
     Annotation,
     AnnotationFolder,
     BackupLog,
+    DeletionLog,
     LabGroup,
     LabGroupInvitation,
     LabGroupPermission,
@@ -55,6 +58,7 @@ from .serializers import (
     AnnotationFolderSerializer,
     AnnotationSerializer,
     BackupLogSerializer,
+    DeletionLogSerializer,
     DuplicateAccountDetectionSerializer,
     EmailChangeConfirmSerializer,
     EmailChangeRequestSerializer,
@@ -1686,6 +1690,41 @@ class ResourcePermissionViewSet(viewsets.ModelViewSet):
 
         # Regular users can only see permissions they granted or that affect them
         return queryset.filter(models.Q(granted_by=user) | models.Q(user=user))
+
+
+class DeletionLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only feed of deletion tombstones for mobile delta sync.
+
+    A `?since=<ISO timestamp>` query param restricts results to deletions recorded after that
+    cursor, mirroring the `updated_at__gte` pattern used for change polling elsewhere. Without
+    this, a record removed on the server would simply stop appearing in change-polling pages,
+    with no way for an offline-first client to tell "deleted" apart from "not yet synced."
+    """
+
+    queryset = DeletionLog.objects.all()
+    serializer_class = DeletionLogSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Scope tombstones to records the user deleted or could have accessed via lab group."""
+        user = self.request.user
+        if user.is_superuser:
+            queryset = DeletionLog.objects.all()
+        else:
+            accessible_groups = LabGroup.get_accessible_group_ids(user)
+            queryset = DeletionLog.objects.filter(
+                models.Q(deleted_by=user) | models.Q(lab_group_id__in=accessible_groups)
+            ).distinct()
+
+        since = self.request.query_params.get("since")
+        if since:
+            parsed = parse_datetime(since)
+            if parsed is None:
+                raise ValidationError({"since": "Must be an ISO-8601 timestamp."})
+            queryset = queryset.filter(deleted_at__gte=parsed)
+
+        return queryset
 
 
 _STORAGE_MOUNT_POINT = "/mnt/cupcake-data"

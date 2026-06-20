@@ -20,6 +20,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from ccc.mixins import DeletionLogMixin
 from ccc.models import LabGroup, RemoteHost
 from ccc.permissions import IsAdminUser, IsOwnerEditorViewerOrNoAccess, IsOwnerOrReadOnly
 from ccc.serializers import AnnotationFolderSerializer
@@ -115,7 +116,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class ProtocolModelViewSet(viewsets.ModelViewSet):
+class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing experimental protocols.
 
@@ -394,7 +395,7 @@ class ProtocolModelViewSet(viewsets.ModelViewSet):
         return response
 
 
-class SessionViewSet(viewsets.ModelViewSet):
+class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing experimental sessions.
 
@@ -1275,7 +1276,7 @@ class SessionAnnotationFilter(django_filters.FilterSet):
         }
 
 
-class SessionAnnotationViewSet(viewsets.ModelViewSet):
+class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing session annotations with metadata support.
 
@@ -1381,7 +1382,7 @@ class SessionAnnotationViewSet(viewsets.ModelViewSet):
             for usage_link in instance.instrument_usage_links.all():
                 usage_link.instrument_usage.delete()
 
-        instance.delete()
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=["post"])
     def create_metadata_table(self, request, pk=None):
@@ -1501,7 +1502,7 @@ class StepAnnotationFilter(django_filters.FilterSet):
         }
 
 
-class StepAnnotationViewSet(ModelViewSet):
+class StepAnnotationViewSet(DeletionLogMixin, ModelViewSet):
     """ViewSet for StepAnnotation model."""
 
     queryset = StepAnnotation.objects.all()
@@ -1595,7 +1596,7 @@ class StepAnnotationViewSet(ModelViewSet):
             for usage_link in instance.instrument_usage_links.all():
                 usage_link.instrument_usage.delete()
 
-        instance.delete()
+        super().perform_destroy(instance)
 
     @action(detail=True, methods=["post"])
     def retrigger_transcription(self, request, pk=None):

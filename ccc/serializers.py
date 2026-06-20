@@ -19,6 +19,7 @@ from .models import (
     Annotation,
     AnnotationFolder,
     BackupLog,
+    DeletionLog,
     LabGroup,
     LabGroupInvitation,
     LabGroupPermission,
@@ -1113,6 +1114,26 @@ class ResourcePermissionSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         validated_data["granted_by"] = request.user
         return super().create(validated_data)
+
+
+class DeletionLogSerializer(serializers.ModelSerializer):
+    """Serializer for deletion tombstones, used by mobile delta sync."""
+
+    content_type_model = serializers.CharField(source="content_type.model", read_only=True)
+    content_type_app_label = serializers.CharField(source="content_type.app_label", read_only=True)
+
+    class Meta:
+        model = DeletionLog
+        fields = [
+            "id",
+            "content_type_model",
+            "content_type_app_label",
+            "object_id",
+            "deleted_at",
+            "deleted_by",
+            "lab_group",
+        ]
+        read_only_fields = fields
 
 
 class BackupLogSerializer(serializers.ModelSerializer):

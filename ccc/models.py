@@ -2243,5 +2243,36 @@ class BackupLog(models.Model):
         return f"{self.backup_type} backup to {self.destination} [{self.status}]"
 
 
+class DeletionLog(models.Model):
+    """
+    Tombstone record for a hard-deleted instance, used by mobile delta sync.
+
+    Written once per delete from `ccc.mixins.DeletionLogMixin.perform_destroy()`. Mobile
+    clients poll `GET /api/v1/deletions/?since=<timestamp>` to learn which previously-cached
+    records were removed on the server, since a plain `updated_at__gte` poll never surfaces a
+    deletion (the row simply stops appearing).
+    """
+
+    content_type = models.ForeignKey("contenttypes.ContentType", on_delete=models.CASCADE)
+    object_id = models.PositiveBigIntegerField()
+    deleted_at = models.DateTimeField(auto_now_add=True)
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="deletion_logs"
+    )
+    lab_group = models.ForeignKey(
+        "ccc.LabGroup", on_delete=models.SET_NULL, null=True, blank=True, related_name="deletion_logs"
+    )
+
+    class Meta:
+        ordering = ["-deleted_at"]
+        indexes = [
+            models.Index(fields=["content_type", "deleted_at"]),
+            models.Index(fields=["deleted_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.content_type.model}#{self.object_id} deleted at {self.deleted_at}"
+
+
 from ccc.device_token.model import DeviceToken  # noqa: E402, F401
 from ccc.plugin.model import Plugin  # noqa: E402, F401
