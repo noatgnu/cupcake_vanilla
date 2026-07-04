@@ -43,4 +43,4 @@ COPY . /app/
 RUN poetry lock
 RUN poetry install --only=main
 
-CMD ["python", "manage.py", "rqworker", "default", "high", "low", "transcribe", "--with-scheduler"]
+CMD ["python", "manage.py", "rqworker", "default", "high", "low", "--with-scheduler"]
