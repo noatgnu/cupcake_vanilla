@@ -10,7 +10,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import update_last_login
 from django.core.cache import cache
-from django.http import HttpResponseRedirect, JsonResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -26,17 +26,16 @@ ORCID_CODE_EXPIRY = 60
 logger = logging.getLogger(__name__)
 
 
+def _redirect_response(url):
+    """Like HttpResponseRedirect, but without its http/https/ftp-only scheme restriction — needed for the fixed `cupcake://` callback scheme."""
+    response = HttpResponse(status=302)
+    response["Location"] = url
+    return response
+
+
 @require_GET
 def orcid_login_initiate(request):
-    """
-    Initiate ORCID OAuth2 authentication flow.
-
-    For `client_type=web` (default), returns a JSON `authorization_url` for the SPA to navigate
-    to itself. For `client_type=mobile`, redirects (302) straight to ORCID instead — a native
-    client points its whole `ASWebAuthenticationSession` at this URL rather than fetching JSON
-    first, so the session cookie set here and the one `orcid_callback` reads back are the same
-    browser context throughout, exactly like the SPA's single-tab flow.
-    """
+    """Initiate ORCID OAuth2 login. `client_type=web` (default) returns JSON for the SPA to navigate to itself; `client_type=mobile` redirects (302) straight to ORCID for a native client's ASWebAuthenticationSession."""
     try:
         authorization_url, state = ORCIDOAuth2Helper.get_authorization_url(request)
 
@@ -79,23 +78,23 @@ def orcid_callback(request):
     if error:
         logger.warning(f"ORCID authentication error: {error}")
         params = urlencode({"error": f"ORCID authentication failed: {error}"})
-        return HttpResponseRedirect(f"{frontend_url}?{params}")
+        return _redirect_response(f"{frontend_url}?{params}")
 
     if not code or not state:
         params = urlencode({"error": "Missing required parameters"})
-        return HttpResponseRedirect(f"{frontend_url}?{params}")
+        return _redirect_response(f"{frontend_url}?{params}")
 
     stored_state = request.session.get("orcid_state")
     if not stored_state or stored_state != state:
         logger.warning("ORCID state mismatch - possible CSRF attack")
         params = urlencode({"error": "Invalid state parameter"})
-        return HttpResponseRedirect(f"{frontend_url}?{params}")
+        return _redirect_response(f"{frontend_url}?{params}")
 
     try:
         token_data = ORCIDOAuth2Helper.exchange_code_for_token(request, code, state)
         if not token_data:
             params = urlencode({"error": "Failed to exchange code for token"})
-            return HttpResponseRedirect(f"{frontend_url}?{params}")
+            return _redirect_response(f"{frontend_url}?{params}")
 
         orcid_id = token_data.get("orcid")
         access_token = token_data.get("access_token")
@@ -103,7 +102,7 @@ def orcid_callback(request):
 
         if not orcid_id or not access_token:
             params = urlencode({"error": "Invalid token response from ORCID"})
-            return HttpResponseRedirect(f"{frontend_url}?{params}")
+            return _redirect_response(f"{frontend_url}?{params}")
 
         user = authenticate(
             request,
@@ -115,7 +114,7 @@ def orcid_callback(request):
 
         if not user:
             params = urlencode({"error": "Authentication failed"})
-            return HttpResponseRedirect(f"{frontend_url}?{params}")
+            return _redirect_response(f"{frontend_url}?{params}")
 
         update_last_login(None, user)
 
@@ -160,16 +159,16 @@ def orcid_callback(request):
         )
 
         logger.info(f"ORCID login successful for user {user.username}, redirecting with auth code")
-        return HttpResponseRedirect(f"{frontend_url}?auth_code={auth_code}")
+        return _redirect_response(f"{frontend_url}?auth_code={auth_code}")
 
     except ValueError as e:
         logger.error(f"ORCID configuration error: {e}")
         params = urlencode({"error": "ORCID authentication not properly configured"})
-        return HttpResponseRedirect(f"{frontend_url}?{params}")
+        return _redirect_response(f"{frontend_url}?{params}")
     except Exception as e:
         logger.error(f"Error in ORCID callback: {e}")
         params = urlencode({"error": "Authentication processing failed"})
-        return HttpResponseRedirect(f"{frontend_url}?{params}")
+        return _redirect_response(f"{frontend_url}?{params}")
 
 
 @csrf_exempt
