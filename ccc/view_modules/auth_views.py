@@ -31,7 +31,11 @@ def orcid_login_initiate(request):
     """
     Initiate ORCID OAuth2 authentication flow.
 
-    Returns authorization URL that the frontend should redirect to.
+    For `client_type=web` (default), returns a JSON `authorization_url` for the SPA to navigate
+    to itself. For `client_type=mobile`, redirects (302) straight to ORCID instead — a native
+    client points its whole `ASWebAuthenticationSession` at this URL rather than fetching JSON
+    first, so the session cookie set here and the one `orcid_callback` reads back are the same
+    browser context throughout, exactly like the SPA's single-tab flow.
     """
     try:
         authorization_url, state = ORCIDOAuth2Helper.get_authorization_url(request)
@@ -42,6 +46,9 @@ def orcid_login_initiate(request):
         request.session["orcid_state"] = state
         request.session["orcid_remember_me"] = remember_me
         request.session["orcid_client_type"] = client_type
+
+        if client_type == "mobile":
+            return HttpResponseRedirect(authorization_url)
 
         return JsonResponse({"authorization_url": authorization_url, "state": state})
 
