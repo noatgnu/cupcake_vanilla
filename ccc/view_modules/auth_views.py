@@ -37,9 +37,11 @@ def orcid_login_initiate(request):
         authorization_url, state = ORCIDOAuth2Helper.get_authorization_url(request)
 
         remember_me = request.GET.get("remember_me", "false").lower() == "true"
+        client_type = request.GET.get("client_type", "web")  # "web" or "mobile"
 
         request.session["orcid_state"] = state
         request.session["orcid_remember_me"] = remember_me
+        request.session["orcid_client_type"] = client_type
 
         return JsonResponse({"authorization_url": authorization_url, "state": state})
 
@@ -63,8 +65,9 @@ def orcid_callback(request):
     state = request.GET.get("state")
     error = request.GET.get("error")
     remember_me = request.session.get("orcid_remember_me", False)
+    client_type = request.session.get("orcid_client_type", "web")
 
-    frontend_url = "/#/login"
+    frontend_url = settings.ORCID_MOBILE_REDIRECT_URL if client_type == "mobile" else "/#/login"
 
     if error:
         logger.warning(f"ORCID authentication error: {error}")
@@ -125,6 +128,8 @@ def orcid_callback(request):
             del request.session["orcid_state"]
         if "orcid_remember_me" in request.session:
             del request.session["orcid_remember_me"]
+        if "orcid_client_type" in request.session:
+            del request.session["orcid_client_type"]
 
         auth_code = secrets.token_urlsafe(32)
         cache_key = f"{ORCID_CODE_CACHE_PREFIX}{auth_code}"

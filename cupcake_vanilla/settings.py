@@ -401,6 +401,9 @@ ORCID_CLIENT_ID = os.environ.get("ORCID_CLIENT_ID", "")
 ORCID_CLIENT_SECRET = os.environ.get("ORCID_CLIENT_SECRET", "")
 ORCID_BASE_URL = os.environ.get("ORCID_BASE_URL", "https://sandbox.orcid.org")  # Use sandbox by default
 
+# Callback redirect for native clients (`?client_type=mobile`) instead of the relative SPA path.
+ORCID_MOBILE_REDIRECT_URL = os.environ.get("ORCID_MOBILE_REDIRECT_URL", "cupcake://oauth-callback")
+
 # Social Auth Configuration (backup/alternative approach)
 SOCIAL_AUTH_ORCID_KEY = ORCID_CLIENT_ID
 SOCIAL_AUTH_ORCID_SECRET = ORCID_CLIENT_SECRET
