@@ -1983,6 +1983,19 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         """Ensure owner is set when creating templates."""
         serializer.save(owner=self.request.user)
 
+    def perform_update(self, serializer):
+        """Check permissions before updating."""
+        template = self.get_object()
+        if not template.can_edit(self.request.user):
+            raise PermissionDenied("You don't have permission to edit this template")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Check permissions before deleting."""
+        if not instance.can_delete(self.request.user):
+            raise PermissionDenied("You don't have permission to delete this template")
+        super().perform_destroy(instance)
+
     @action(detail=True, methods=["post"])
     def add_column(self, request, pk=None):
         """Add a new column to this template."""

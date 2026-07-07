@@ -11,3 +11,4 @@
 
 # Demo database dump
 dockerfiles/demo-db-prepopulated.sql
+*.pyc

@@ -288,6 +288,9 @@ class MetadataTableTemplateSerializer(serializers.ModelSerializer):
         help_text="List of MetadataColumn IDs to associate with this template",
     )
     column_count = serializers.IntegerField(source="user_columns.count", read_only=True)
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
+    schema_names = serializers.SerializerMethodField()
 
     class Meta:
         model = MetadataTableTemplate
@@ -306,8 +309,29 @@ class MetadataTableTemplateSerializer(serializers.ModelSerializer):
             "column_count",
             "created_at",
             "updated_at",
+            "can_edit",
+            "can_delete",
+            "schema_names",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "can_edit", "can_delete", "schema_names"]
+
+    def get_schema_names(self, obj):
+        """Names of the schemas this template was created from, if any (empty for a blank template)."""
+        return list(obj.schemas.values_list("name", flat=True))
+
+    def get_can_edit(self, obj):
+        """Check if current user can edit this template."""
+        request = self.context.get("request")
+        if request and request.user:
+            return obj.can_edit(request.user)
+        return False
+
+    def get_can_delete(self, obj):
+        """Check if current user can delete this template."""
+        request = self.context.get("request")
+        if request and request.user:
+            return obj.can_delete(request.user)
+        return False
 
     def create(self, validated_data):
         user_column_ids = validated_data.pop("user_column_ids", [])
