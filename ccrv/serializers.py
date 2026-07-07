@@ -541,6 +541,14 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def update(self, instance, validated_data):
+        annotation_data = validated_data.pop("annotation", None)
+        if annotation_data and instance.annotation:
+            for field, value in annotation_data.items():
+                setattr(instance.annotation, field, value)
+            instance.annotation.save()
+        return super().update(instance, validated_data)
+
 
 class ProjectSerializer(serializers.ModelSerializer):
     """Serializer for projects with AbstractResource integration."""
@@ -912,6 +920,14 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
     def get_instrument_usage_ids(self, obj):
         """Get list of linked instrument usage booking IDs."""
         return list(obj.instrument_usage_links.values_list("instrument_usage_id", flat=True))
+
+    def update(self, instance, validated_data):
+        annotation_data = validated_data.pop("annotation", None)
+        if annotation_data and instance.annotation:
+            for field, value in annotation_data.items():
+                setattr(instance.annotation, field, value)
+            instance.annotation.save()
+        return super().update(instance, validated_data)
 
 
 class SessionAnnotationFolderSerializer(serializers.ModelSerializer):

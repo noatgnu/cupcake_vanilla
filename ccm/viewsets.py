@@ -585,6 +585,44 @@ class InstrumentJobViewSet(BaseViewSet):
             {"funders": list(funders), "cost_centers": list(cost_centers), "search_engines": search_engines}
         )
 
+    @action(detail=False, methods=["get"])
+    def project_column_values(self, request):
+        project_id = request.query_params.get("project_id")
+        column_name = request.query_params.get("column_name")
+
+        if not project_id or not column_name:
+            return Response(
+                {"error": "project_id and column_name are both required"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        project_jobs = InstrumentJob.objects.filter(project_id=project_id)
+        if not project_jobs.exists():
+            return Response({"error": "Project not found or has no jobs"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not any(job.can_view(request.user) for job in project_jobs):
+            return Response(
+                {"error": "Permission denied: cannot view this project's jobs"}, status=status.HTTP_403_FORBIDDEN
+            )
+
+        job_table_ids = project_jobs.exclude(metadata_table__isnull=True).values_list(
+            "metadata_table_id", flat=True
+        )
+
+        values = (
+            MetadataColumn.objects.filter(metadata_table_id__in=job_table_ids, name__iexact=column_name)
+            .exclude(value__isnull=True)
+            .exclude(value__exact="")
+            .order_by("-updated_at")
+            .values_list("value", flat=True)
+        )
+
+        seen = []
+        for value in values:
+            if value not in seen:
+                seen.append(value)
+
+        return Response({"values": seen})
+
     @action(detail=True, methods=["post"])
     def create_metadata_from_template(self, request, pk=None):
         """Create a metadata table for this job from an existing template."""
