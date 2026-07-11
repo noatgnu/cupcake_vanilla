@@ -14,14 +14,27 @@ from channels.middleware import BaseMiddleware
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import UntypedToken
 
+from ccc.device_token.model import DeviceToken
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+def _get_user_from_device_token(token_string):
+    """Get user from a DeviceToken."""
+    try:
+        token = DeviceToken.objects.select_related("user").get(token=token_string, enabled=True)
+    except DeviceToken.DoesNotExist:
+        return None
+    if token.is_expired():
+        return None
+    return token.user
 
 
 @database_sync_to_async
 def get_user_from_token(token_string):
     """
-    Get user from JWT token.
+    Get user from a JWT access token, falling back to a DeviceToken.
     """
     try:
         # Validate the token
@@ -36,6 +49,9 @@ def get_user_from_token(token_string):
 
         return user
     except (InvalidToken, TokenError, User.DoesNotExist) as e:
+        device_user = _get_user_from_device_token(token_string)
+        if device_user is not None:
+            return device_user
         logger.warning(f"WebSocket JWT authentication failed: {e}")
         return AnonymousUser()
 
