@@ -1466,6 +1466,9 @@ class StepVariation(models.Model):
 
     history = HistoricalRecords()
     step = models.ForeignKey(ProtocolStep, on_delete=models.CASCADE, related_name="variations")
+    session = models.ForeignKey(
+        Session, on_delete=models.CASCADE, related_name="step_variations", blank=True, null=True
+    )
     variation_description = models.TextField(blank=False, null=False)
     variation_duration = models.IntegerField(blank=False, null=False)
     created_at = models.DateTimeField(auto_now_add=True)

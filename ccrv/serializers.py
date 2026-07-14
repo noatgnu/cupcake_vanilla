@@ -754,6 +754,7 @@ class StepVariationSerializer(serializers.ModelSerializer):
             "id",
             "step",
             "step_description",
+            "session",
             "variation_description",
             "variation_duration",
             "created_at",

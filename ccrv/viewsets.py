@@ -1064,7 +1064,11 @@ class StepVariationViewSet(ModelViewSet):
         if step_id:
             queryset = queryset.filter(step_id=step_id)
 
-        return queryset.select_related("step", "remote_host")
+        session_id = self.request.query_params.get("session")
+        if session_id:
+            queryset = queryset.filter(session_id=session_id)
+
+        return queryset.select_related("step", "session", "remote_host")
 
     @action(detail=False, methods=["get"])
     def by_duration(self, request):
