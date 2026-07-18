@@ -406,6 +406,28 @@ class InstrumentJobViewSet(BaseViewSet):
     ordering_fields = ["job_name", "status", "created_at", "updated_at", "submitted_at", "completed_at"]
     ordering = ["-created_at"]
 
+    def get_queryset(self):
+        """
+        Filter jobs visible to the current user, matching InstrumentJob.check_job_permissions:
+        - Staff/superuser: everything
+        - Owner: their own jobs, any status
+        - Assigned staff: jobs they're assigned to
+        - Lab group members: jobs assigned to their lab group, but only once submitted (not draft)
+        """
+        queryset = InstrumentJob.objects.all()
+        user = self.request.user
+
+        if user.is_staff or user.is_superuser:
+            return queryset
+
+        my_lab_group_ids = LabGroup.objects.filter(Q(members=user) | Q(creator=user)).values_list("id", flat=True)
+
+        return queryset.filter(
+            Q(user=user)
+            | Q(staff=user)
+            | (Q(lab_group_id__in=my_lab_group_ids) & ~Q(status="draft"))
+        ).distinct()
+
     def get_serializer_class(self):
         """Use detailed serializer for retrieve action."""
         if self.action == "retrieve":
@@ -688,7 +710,7 @@ class InstrumentJobViewSet(BaseViewSet):
             job.save(update_fields=["metadata_table"])
 
             # Return the created metadata table info
-            serializer = MetadataTableSerializer(metadata_table)
+            serializer = MetadataTableSerializer(metadata_table, context={"request": request})
             return Response(
                 {
                     "message": "Metadata table created successfully from template",
