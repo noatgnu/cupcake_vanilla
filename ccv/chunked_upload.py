@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 from drf_chunked_upload.serializers import ChunkedUploadSerializer
 from drf_chunked_upload.views import ChunkedUploadView
 from openpyxl import load_workbook
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -23,6 +23,23 @@ from .tasks.validation_tasks import validate_sdrf_file_task
 from .utils import apply_ontology_mapping_to_column, detect_pooled_samples
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_bool_param(data, key: str, default: bool = False) -> bool:
+    """
+    Coerce a multipart/form-data boolean-ish field to a real bool.
+
+    Every value arrives as a string over multipart form data, so a raw ``data.get(key, default)``
+    returns the literal string "false" for an unchecked/false value - which is truthy in Python and
+    silently flips the field's real meaning. Delegates to DRF's own BooleanField for the same
+    true/false string handling every serializer-validated endpoint in this app already gets for free.
+    """
+    if key not in data:
+        return default
+    try:
+        return serializers.BooleanField().to_internal_value(data[key])
+    except serializers.ValidationError:
+        return default
 
 
 class MetadataFileUpload(BaseChunkedUpload):
@@ -71,10 +88,10 @@ class MetadataChunkedUploadView(ChunkedUploadView):
         try:
             # Get processing parameters from request
             metadata_table_id = request.data.get("metadata_table_id")
-            replace_existing = request.data.get("replace_existing", False)
-            override_sample_count = request.data.get("override_sample_count", False)
-            validate_only = request.data.get("validate_only", False)
-            apply_schema_templates = request.data.get("apply_schema_templates", False)
+            replace_existing = _parse_bool_param(request.data, "replace_existing")
+            override_sample_count = _parse_bool_param(request.data, "override_sample_count")
+            validate_only = _parse_bool_param(request.data, "validate_only")
+            apply_schema_templates = _parse_bool_param(request.data, "apply_schema_templates")
 
             filename = uploaded_file.filename or uploaded_file.file.name
             file_ext = os.path.splitext(filename.lower())[1]
@@ -96,8 +113,8 @@ class MetadataChunkedUploadView(ChunkedUploadView):
 
                 validation_options = {
                     "schema_names": schema_names or ["default"],
-                    "skip_ontology": request.data.get("skip_ontology", False),
-                    "use_ols_cache_only": request.data.get("use_ols_cache_only", False),
+                    "skip_ontology": _parse_bool_param(request.data, "skip_ontology"),
+                    "use_ols_cache_only": _parse_bool_param(request.data, "use_ols_cache_only"),
                 }
 
                 task_status = AsyncTaskStatus.objects.create(
