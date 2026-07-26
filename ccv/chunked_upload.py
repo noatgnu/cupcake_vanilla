@@ -165,6 +165,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             task_id=str(task_status.id),
                             chunked_upload_id=str(uploaded_file.id),
                             override_sample_count=override_sample_count,
+                            import_type="both",
                         )
 
                         # Update task with RQ job ID (if job was returned)
@@ -198,6 +199,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             task_id=str(task_status.id),
                             chunked_upload_id=str(uploaded_file.id),
                             override_sample_count=override_sample_count,
+                            import_type="both",
                         )
 
                         # Update task with RQ job ID (if job was returned)

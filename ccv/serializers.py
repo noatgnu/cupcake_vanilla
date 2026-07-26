@@ -431,7 +431,11 @@ class MetadataImportSerializer(serializers.Serializer):
     import_type = serializers.ChoiceField(
         choices=["user_metadata", "staff_metadata", "both"],
         default="user_metadata",
-        help_text="Type of metadata to import",
+        help_text=(
+            "Which columns this import is allowed to create/overwrite: 'user_metadata' skips staff-only "
+            "columns entirely (both on replace_existing delete and on value writes), 'staff_metadata'/'both' "
+            "touch every column."
+        ),
     )
     create_pools = serializers.BooleanField(default=True, help_text="Whether to create sample pools from SDRF data")
     replace_existing = serializers.BooleanField(default=False, help_text="Whether to replace existing metadata columns")

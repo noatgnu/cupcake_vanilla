@@ -26,6 +26,7 @@ def import_sdrf_task(
     chunked_upload_id: str = None,
     override_sample_count: bool = False,
     apply_schema_templates: bool = False,
+    import_type: str = "user_metadata",
 ) -> Dict[str, Any]:
     r"""
     Async task for importing SDRF file with proper validation and pool creation.
@@ -94,6 +95,7 @@ def import_sdrf_task(
             validate_ontologies=validate_ontologies,
             create_pools=True,
             override_sample_count=override_sample_count,
+            import_type=import_type,
         )
 
         if schema_apply_result:
@@ -164,6 +166,7 @@ def import_excel_task(
     task_id: str = None,
     chunked_upload_id: str = None,
     override_sample_count: bool = False,
+    import_type: str = "user_metadata",
 ) -> Dict[str, Any]:
     """
     Async task for importing Excel file with multi-sheet pool data processing.
@@ -227,6 +230,7 @@ def import_excel_task(
             validate_ontologies=validate_ontologies,
             create_pools=True,
             override_sample_count=override_sample_count,
+            import_type=import_type,
         )
 
         # Update progress - finalizing

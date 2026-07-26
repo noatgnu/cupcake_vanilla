@@ -34,6 +34,19 @@ from ccv.tasks import (
 )
 
 
+def _effective_import_type(requested_import_type: str, user) -> str:
+    """
+    Narrow a requested import scope down to what the requesting user is actually allowed to touch.
+
+    A non-staff, non-superuser caller can never be granted "staff_metadata"/"both" - it's silently
+    downgraded to "user_metadata" (staff-only columns are protected, everything else still imports
+    exactly as requested) rather than rejecting the whole request outright.
+    """
+    if requested_import_type in ("staff_metadata", "both") and not (user.is_staff or user.is_superuser):
+        return "user_metadata"
+    return requested_import_type
+
+
 class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for managing async tasks (export/import operations).
@@ -519,6 +532,8 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
         # Read file content
         file_content = data["file"].read().decode("utf-8")
 
+        import_type = _effective_import_type(data.get("import_type", "user_metadata"), request.user)
+
         # Create task record
         task = AsyncTaskStatus.objects.create(
             task_type="IMPORT_SDRF",
@@ -528,6 +543,7 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
                 "replace_existing": data.get("replace_existing", False),
                 "validate_ontologies": data.get("validate_ontologies", True),
                 "apply_schema_templates": data.get("apply_schema_templates", False),
+                "import_type": import_type,
                 "file_name": data["file"].name,
             },
         )
@@ -540,6 +556,7 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
             replace_existing=data.get("replace_existing", False),
             validate_ontologies=data.get("validate_ontologies", True),
             apply_schema_templates=data.get("apply_schema_templates", False),
+            import_type=import_type,
             task_id=str(task.id),
         )
 
@@ -578,6 +595,8 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
         # Read file data
         file_data = data["file"].read()
 
+        import_type = _effective_import_type(data.get("import_type", "user_metadata"), request.user)
+
         # Create task record
         task = AsyncTaskStatus.objects.create(
             task_type="IMPORT_EXCEL",
@@ -586,6 +605,7 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
             parameters={
                 "replace_existing": data.get("replace_existing", False),
                 "validate_ontologies": data.get("validate_ontologies", True),
+                "import_type": import_type,
                 "file_name": data["file"].name,
             },
         )
@@ -597,6 +617,7 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
             file_data=file_data,
             replace_existing=data.get("replace_existing", False),
             validate_ontologies=data.get("validate_ontologies", True),
+            import_type=import_type,
             task_id=str(task.id),
         )
 

@@ -161,6 +161,26 @@ def _get_table_template(metadata_table):
     return None
 
 
+def _deletable_columns_for_import_type(metadata_table, import_type: str):
+    """
+    Scope which existing columns a `replace_existing` import is allowed to delete.
+
+    A "user_metadata" import must never delete a staff-only column (it's not allowed to
+    touch its value either, see `_column_is_writable_for_import_type` below) - a
+    "staff_metadata" or "both" import can delete/replace every column, staff-only or not.
+    """
+    if import_type == "user_metadata":
+        return metadata_table.columns.filter(staff_only=False)
+    return metadata_table.columns.all()
+
+
+def _column_is_writable_for_import_type(metadata_column, import_type: str) -> bool:
+    """Whether an import with this scope is allowed to write this column's value/modifiers."""
+    if import_type == "user_metadata" and metadata_column.staff_only:
+        return False
+    return True
+
+
 def _find_or_create_matching_column(
     clean_name, metadata_type, metadata_table, table_template, column_position, occurrence_number
 ):
@@ -643,6 +663,7 @@ def import_sdrf_data(
     validate_ontologies: bool = True,
     create_pools: bool = True,
     override_sample_count: bool = False,
+    import_type: str = "user_metadata",
 ) -> Dict[str, Any]:
     r"""
     Import SDRF (Sample and Data Relationship Format) data with intelligent parsing and pool creation.
@@ -716,7 +737,7 @@ def import_sdrf_data(
         table_template = _get_table_template(metadata_table)
 
         if replace_existing:
-            metadata_table.columns.all().delete()
+            _deletable_columns_for_import_type(metadata_table, import_type).delete()
             metadata_table.sample_pools.all().delete()
 
         # Remove SN= rows from data before general processing
@@ -777,6 +798,9 @@ def import_sdrf_data(
 
         columns_updated = 0
         for i, metadata_column in enumerate(created_columns):
+            if not _column_is_writable_for_import_type(metadata_column, import_type):
+                continue
+
             metadata_value_map: dict[str, list[int]] = {}
 
             raw_indices: dict[str, list[int]] = {}
@@ -1068,6 +1092,7 @@ def import_sdrf_data_bulk(
     validate_ontologies: bool = True,
     create_pools: bool = True,
     override_sample_count: bool = False,
+    import_type: str = "user_metadata",
 ) -> Dict[str, Any]:
     r"""
     Import SDRF data using bulk database operations for improved performance.
@@ -1139,7 +1164,7 @@ def import_sdrf_data_bulk(
         table_template = _get_table_template(metadata_table)
 
         if replace_existing:
-            metadata_table.columns.all().delete()
+            _deletable_columns_for_import_type(metadata_table, import_type).delete()
             metadata_table.sample_pools.all().delete()
 
         sn_data = []
@@ -1198,6 +1223,9 @@ def import_sdrf_data_bulk(
             columns_to_update = []
             columns_updated = 0
             for i, metadata_column in enumerate(created_columns):
+                if not _column_is_writable_for_import_type(metadata_column, import_type):
+                    continue
+
                 metadata_value_map: dict[str, list[int]] = {}
 
                 raw_indices: dict[str, list[int]] = {}
@@ -1472,6 +1500,7 @@ def import_excel_data(
     validate_ontologies: bool = True,
     create_pools: bool = True,
     override_sample_count: bool = False,
+    import_type: str = "user_metadata",
 ) -> Dict[str, Any]:
     """
     Import multi-sheet Excel data with comprehensive pool processing and metadata creation.
@@ -1610,7 +1639,7 @@ def import_excel_data(
                 pool_object_map_data = [list(row) for row in pool_object_map_ws.iter_rows(min_row=2, values_only=True)]
 
         if replace_existing:
-            metadata_table.columns.all().delete()
+            _deletable_columns_for_import_type(metadata_table, import_type).delete()
             metadata_table.sample_pools.all().delete()
 
         all_data = []
@@ -1692,6 +1721,9 @@ def import_excel_data(
                 columns_updated += 1
 
             created_columns.append(metadata_column)
+
+            if not _column_is_writable_for_import_type(metadata_column, import_type):
+                continue
 
             metadata_value_map = {}
             column_index = column_info["column"]
