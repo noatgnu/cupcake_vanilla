@@ -1,17 +1,21 @@
 """
-Test cases for load_ontologies management command, specifically BTO and DOID loading.
+Test cases for load_ontologies management command, covering BTO, DOID, and ChEBI loading.
 
 Tests cover OBO parsing, term processing, database persistence, update logic,
-and error handling for the BTO and DOID ontology loaders.
+and error handling for the BTO, DOID, and ChEBI ontology loaders.
 """
 
+import sqlite3
+import tempfile
 from io import StringIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
 
+from ccv.management.commands.export_mobile_snapshot import _dump_queryset
 from ccv.management.commands.load_ontologies import Command, OBOParser
-from ccv.models import BTOTerm, DiseaseOntologyTerm
+from ccv.models import BTOTerm, ChEBICompound, DiseaseOntologyTerm
 
 BTO_OBO_SAMPLE = """\
 format-version: 1.2
@@ -428,3 +432,403 @@ class LoadDOIDCommandTest(TestCase):
 
         diabetes = DiseaseOntologyTerm.objects.get(identifier="DOID:9351")
         self.assertIn("DOID:4", diabetes.parent_terms)
+
+
+CHEBI_OBO_SAMPLE = """\
+format-version: 1.2
+data-version: releases/2024-01-01
+ontology: chebi
+
+[Term]
+id: CHEBI:15422
+name: ATP
+def: "A purine nucleoside triphosphate." [ChEBI:curator]
+synonym: "adenosine 5'-triphosphate" EXACT []
+synonym: "adenosine triphosphate" RELATED []
+property_value: chemrof:generalized_empirical_formula "C10H16N5O13P3" xsd:string
+property_value: chemrof:mass "507.18" xsd:decimal
+property_value: chemrof:charge "-4" xsd:integer
+property_value: chemrof:inchi_string "InChI=1S/C10H16N5O13P3" xsd:string
+property_value: chemrof:smiles "Nc1ncnc2c1ncn2[C@@H]1O" xsd:string
+is_a: CHEBI:25372 ! purine ribonucleoside triphosphate
+relationship: has_role CHEBI:25212 ! biological role
+
+[Term]
+id: CHEBI:17234
+name: glucose
+def: "A monosaccharide." [ChEBI:curator]
+property_value: chemrof:generalized_empirical_formula "C6H12O6" xsd:string
+property_value: chemrof:mass "180.16" xsd:decimal
+is_a: CHEBI:25372 ! monosaccharide
+
+[Term]
+id: CHEBI:99999
+name: obsolete compound
+is_obsolete: true
+replaced_by: CHEBI:15422
+"""
+
+
+class ParseChEBIPropertyTest(TestCase):
+    """Unit tests for Command._parse_chebi_property covering both legacy and current ChEBI OBO formats."""
+
+    def setUp(self):
+        self.cmd = Command()
+        self.cmd.stdout = StringIO()
+        self.cmd.style = MagicMock()
+
+    def test_chemrof_mass(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:mass "507.18" xsd:decimal')
+        self.assertAlmostEqual(props["mass"], 507.18)
+
+    def test_chemrof_formula(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:generalized_empirical_formula "C10H16N5O13P3" xsd:string')
+        self.assertEqual(props["formula"], "C10H16N5O13P3")
+
+    def test_chemrof_charge(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:charge "0" xsd:integer')
+        self.assertEqual(props["charge"], 0)
+
+    def test_chemrof_negative_charge(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:charge "-4" xsd:integer')
+        self.assertEqual(props["charge"], -4)
+
+    def test_chemrof_inchi(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:inchi_string "InChI=1S/C10H16N5O13P3" xsd:string')
+        self.assertEqual(props["inchi"], "InChI=1S/C10H16N5O13P3")
+
+    def test_chemrof_smiles(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:smiles "Nc1ncnc2c1ncn2[C@@H]1O" xsd:string')
+        self.assertEqual(props["smiles"], "Nc1ncnc2c1ncn2[C@@H]1O")
+
+    def test_legacy_mass(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'http://purl.obolibrary.org/obo/chebi/mass "507.18" xsd:string')
+        self.assertAlmostEqual(props["mass"], 507.18)
+
+    def test_legacy_formula(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'http://purl.obolibrary.org/obo/chebi/formula "C10H16N5O13P3" xsd:string')
+        self.assertEqual(props["formula"], "C10H16N5O13P3")
+
+    def test_legacy_charge(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'http://purl.obolibrary.org/obo/chebi/charge "-4" xsd:string')
+        self.assertEqual(props["charge"], -4)
+
+    def test_legacy_inchi(self):
+        props = {}
+        self.cmd._parse_chebi_property(
+            props, 'http://purl.obolibrary.org/obo/chebi/inchi "InChI=1S/C10H16N5O13P3" xsd:string'
+        )
+        self.assertEqual(props["inchi"], "InChI=1S/C10H16N5O13P3")
+
+    def test_legacy_smiles(self):
+        props = {}
+        self.cmd._parse_chebi_property(
+            props, 'http://purl.obolibrary.org/obo/chebi/smiles "Nc1ncnc2c1ncn2[C@@H]1O" xsd:string'
+        )
+        self.assertEqual(props["smiles"], "Nc1ncnc2c1ncn2[C@@H]1O")
+
+    def test_legacy_monoisotopic_mass_used_when_no_regular_mass(self):
+        props = {}
+        self.cmd._parse_chebi_property(
+            props, 'http://purl.obolibrary.org/obo/chebi/monoisotopicmass "506.99577" xsd:string'
+        )
+        self.assertAlmostEqual(props["mass"], 506.99577)
+
+    def test_legacy_regular_mass_takes_priority_over_monoisotopic(self):
+        props = {"mass": 507.18}
+        self.cmd._parse_chebi_property(
+            props, 'http://purl.obolibrary.org/obo/chebi/monoisotopicmass "506.99577" xsd:string'
+        )
+        self.assertAlmostEqual(props["mass"], 507.18)
+
+    def test_ignores_non_chebi_property(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'foaf:homepage "https://www.ebi.ac.uk/chebi" xsd:anyURI')
+        self.assertNotIn("mass", props)
+
+    def test_handles_invalid_mass_value(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:mass "not_a_number" xsd:decimal')
+        self.assertNotIn("mass", props)
+
+    def test_handles_invalid_charge_value(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, 'chemrof:charge "unknown" xsd:integer')
+        self.assertNotIn("charge", props)
+
+    def test_handles_missing_quoted_value(self):
+        props = {}
+        self.cmd._parse_chebi_property(props, "chemrof:mass 507.18 xsd:decimal")
+        self.assertNotIn("mass", props)
+
+
+class ParseChEBIOBOTest(TestCase):
+    """Unit tests for ChEBI OBO parsing via _parse_chebi_with_progress."""
+
+    def setUp(self):
+        self.cmd = Command()
+        self.cmd.stdout = StringIO()
+        self.cmd.style = MagicMock()
+
+    def _parse(self):
+        return self.cmd._parse_chebi_with_progress(CHEBI_OBO_SAMPLE)
+
+    def test_parses_term_count(self):
+        terms = self._parse()
+        chebi_terms = [t for t in terms if t.get("id", "").startswith("CHEBI:")]
+        self.assertEqual(len(chebi_terms), 3)
+
+    def test_parses_id_and_name(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertEqual(atp["name"], "ATP")
+
+    def test_parses_synonyms(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertIn("adenosine triphosphate", atp["synonyms"])
+
+    def test_parses_mass_property(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertAlmostEqual(atp["properties"]["mass"], 507.18)
+
+    def test_parses_formula_property(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertEqual(atp["properties"]["formula"], "C10H16N5O13P3")
+
+    def test_parses_charge_property(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertEqual(atp["properties"]["charge"], -4)
+
+    def test_parses_inchi_property(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertEqual(atp["properties"]["inchi"], "InChI=1S/C10H16N5O13P3")
+
+    def test_parses_smiles_property(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertEqual(atp["properties"]["smiles"], "Nc1ncnc2c1ncn2[C@@H]1O")
+
+    def test_mass_parsed_for_glucose(self):
+        terms = self._parse()
+        glucose = next(t for t in terms if t.get("id") == "CHEBI:17234")
+        self.assertAlmostEqual(glucose["properties"]["mass"], 180.16)
+
+    def test_parses_obsolete_flag(self):
+        terms = self._parse()
+        obsolete = next(t for t in terms if t.get("id") == "CHEBI:99999")
+        self.assertTrue(obsolete["obsolete"])
+
+    def test_parses_parent_terms(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        self.assertIn("CHEBI:25372", atp["is_a"])
+
+    def test_parses_roles_relationship(self):
+        terms = self._parse()
+        atp = next(t for t in terms if t.get("id") == "CHEBI:15422")
+        role_rels = [r for r in atp.get("relationships", []) if r.startswith("has_role")]
+        self.assertTrue(len(role_rels) > 0)
+
+
+class PrepareChEBICompoundTest(TestCase):
+    """Unit tests for Command._prepare_chebi_compound."""
+
+    def setUp(self):
+        self.cmd = Command()
+        self.cmd.stdout = StringIO()
+        self.cmd.style = MagicMock()
+
+    def _atp_term_data(self):
+        return {
+            "id": "CHEBI:15422",
+            "name": "ATP",
+            "definition": "A purine nucleoside triphosphate.",
+            "synonyms": ["adenosine 5'-triphosphate"],
+            "is_a": ["CHEBI:25372"],
+            "relationships": ["has_role CHEBI:25212 ! biological role"],
+            "properties": {
+                "formula": "C10H16N5O13P3",
+                "mass": 507.18,
+                "charge": -4,
+                "inchi": "InChI=1S/C10H16N5O13P3",
+                "smiles": "Nc1ncnc2c1ncn2[C@@H]1O",
+            },
+        }
+
+    def test_maps_mass_to_compound_data(self):
+        data = self.cmd._prepare_chebi_compound(self._atp_term_data(), "all")
+        self.assertAlmostEqual(data["mass"], 507.18)
+
+    def test_maps_formula_to_compound_data(self):
+        data = self.cmd._prepare_chebi_compound(self._atp_term_data(), "all")
+        self.assertEqual(data["formula"], "C10H16N5O13P3")
+
+    def test_maps_charge_to_compound_data(self):
+        data = self.cmd._prepare_chebi_compound(self._atp_term_data(), "all")
+        self.assertEqual(data["charge"], -4)
+
+    def test_maps_inchi_to_compound_data(self):
+        data = self.cmd._prepare_chebi_compound(self._atp_term_data(), "all")
+        self.assertEqual(data["inchi"], "InChI=1S/C10H16N5O13P3")
+
+    def test_maps_smiles_to_compound_data(self):
+        data = self.cmd._prepare_chebi_compound(self._atp_term_data(), "all")
+        self.assertEqual(data["smiles"], "Nc1ncnc2c1ncn2[C@@H]1O")
+
+    def test_mass_is_none_when_not_in_properties(self):
+        term = self._atp_term_data()
+        term["properties"] = {}
+        data = self.cmd._prepare_chebi_compound(term, "all")
+        self.assertIsNone(data["mass"])
+
+    def test_skips_obsolete_term(self):
+        term = self._atp_term_data()
+        term["obsolete"] = True
+        self.assertIsNone(self.cmd._prepare_chebi_compound(term, "all"))
+
+    def test_skips_term_without_name(self):
+        term = self._atp_term_data()
+        term["name"] = ""
+        self.assertIsNone(self.cmd._prepare_chebi_compound(term, "all"))
+
+    def test_roles_extracted_from_relationships(self):
+        data = self.cmd._prepare_chebi_compound(self._atp_term_data(), "all")
+        self.assertIn("biological role", data["roles"])
+
+
+class BatchProcessChEBICompoundsTest(TestCase):
+    """Unit tests for Command._batch_process_chebi_compounds (DB persistence)."""
+
+    def setUp(self):
+        self.cmd = Command()
+        self.cmd.stdout = StringIO()
+        self.cmd.style = MagicMock()
+
+    def _atp_compound_data(self):
+        return {
+            "identifier": "CHEBI:15422",
+            "name": "ATP",
+            "definition": "A purine nucleoside triphosphate.",
+            "synonyms": "adenosine 5'-triphosphate",
+            "formula": "C10H16N5O13P3",
+            "mass": 507.18,
+            "charge": -4,
+            "inchi": "InChI=1S/C10H16N5O13P3",
+            "smiles": "Nc1ncnc2c1ncn2[C@@H]1O",
+            "parent_terms": "CHEBI:25372",
+            "roles": "biological role",
+            "replacement_term": "",
+        }
+
+    def test_creates_compound_with_mass(self):
+        self.cmd._batch_process_chebi_compounds([self._atp_compound_data()], update_existing=False)
+        compound = ChEBICompound.objects.get(identifier="CHEBI:15422")
+        self.assertAlmostEqual(compound.mass, 507.18)
+
+    def test_creates_compound_with_formula(self):
+        self.cmd._batch_process_chebi_compounds([self._atp_compound_data()], update_existing=False)
+        compound = ChEBICompound.objects.get(identifier="CHEBI:15422")
+        self.assertEqual(compound.formula, "C10H16N5O13P3")
+
+    def test_creates_compound_with_charge(self):
+        self.cmd._batch_process_chebi_compounds([self._atp_compound_data()], update_existing=False)
+        compound = ChEBICompound.objects.get(identifier="CHEBI:15422")
+        self.assertEqual(compound.charge, -4)
+
+    def test_creates_compound_with_inchi(self):
+        self.cmd._batch_process_chebi_compounds([self._atp_compound_data()], update_existing=False)
+        compound = ChEBICompound.objects.get(identifier="CHEBI:15422")
+        self.assertEqual(compound.inchi, "InChI=1S/C10H16N5O13P3")
+
+    def test_creates_compound_with_smiles(self):
+        self.cmd._batch_process_chebi_compounds([self._atp_compound_data()], update_existing=False)
+        compound = ChEBICompound.objects.get(identifier="CHEBI:15422")
+        self.assertEqual(compound.smiles, "Nc1ncnc2c1ncn2[C@@H]1O")
+
+    def test_null_mass_stored_correctly(self):
+        data = self._atp_compound_data()
+        data["mass"] = None
+        self.cmd._batch_process_chebi_compounds([data], update_existing=False)
+        compound = ChEBICompound.objects.get(identifier="CHEBI:15422")
+        self.assertIsNone(compound.mass)
+
+    def test_updates_existing_compound(self):
+        ChEBICompound.objects.create(identifier="CHEBI:15422", name="old", mass=None)
+        self.cmd._batch_process_chebi_compounds([self._atp_compound_data()], update_existing=True)
+        compound = ChEBICompound.objects.get(identifier="CHEBI:15422")
+        self.assertAlmostEqual(compound.mass, 507.18)
+        self.assertEqual(compound.name, "ATP")
+
+
+class ChEBIExportSnapshotTest(TestCase):
+    """Integration tests verifying that mass and other chemical fields survive the SQLite export."""
+
+    def setUp(self):
+        ChEBICompound.objects.create(
+            identifier="CHEBI:15422",
+            name="ATP",
+            formula="C10H16N5O13P3",
+            mass=507.18,
+            charge=-4,
+            inchi="InChI=1S/C10H16N5O13P3",
+            smiles="Nc1ncnc2c1ncn2[C@@H]1O",
+        )
+        ChEBICompound.objects.create(
+            identifier="CHEBI:17234",
+            name="glucose",
+            formula="C6H12O6",
+            mass=None,
+        )
+
+    def _export_and_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sqlite_path = Path(tmp) / "chebi.sqlite"
+            _dump_queryset(ChEBICompound.objects.all().order_by("identifier"), "chebi", sqlite_path)
+            conn = sqlite3.connect(sqlite_path)
+            conn.row_factory = sqlite3.Row
+            rows = {row["identifier"]: dict(row) for row in conn.execute("SELECT * FROM chebi")}
+            conn.close()
+        return rows
+
+    def test_mass_exported_for_compound_with_value(self):
+        rows = self._export_and_read()
+        self.assertAlmostEqual(rows["CHEBI:15422"]["mass"], 507.18)
+
+    def test_mass_exported_as_null_when_not_set(self):
+        rows = self._export_and_read()
+        self.assertIsNone(rows["CHEBI:17234"]["mass"])
+
+    def test_formula_exported(self):
+        rows = self._export_and_read()
+        self.assertEqual(rows["CHEBI:15422"]["formula"], "C10H16N5O13P3")
+
+    def test_charge_exported(self):
+        rows = self._export_and_read()
+        self.assertEqual(rows["CHEBI:15422"]["charge"], -4)
+
+    def test_inchi_exported(self):
+        rows = self._export_and_read()
+        self.assertEqual(rows["CHEBI:15422"]["inchi"], "InChI=1S/C10H16N5O13P3")
+
+    def test_smiles_exported(self):
+        rows = self._export_and_read()
+        self.assertEqual(rows["CHEBI:15422"]["smiles"], "Nc1ncnc2c1ncn2[C@@H]1O")
+
+    def test_both_compounds_exported(self):
+        rows = self._export_and_read()
+        self.assertIn("CHEBI:15422", rows)
+        self.assertIn("CHEBI:17234", rows)

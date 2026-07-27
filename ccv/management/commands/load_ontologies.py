@@ -923,51 +923,67 @@ class Command(BaseCommand):
         return bool(re.match(formula_pattern, text)) and len(text) <= 50
 
     def _parse_chebi_property(self, properties, property_value):
-        """Parse ChEBI property_value fields for chemical properties."""
+        """Parse ChEBI property_value fields for chemical properties.
+
+        Handles both the legacy obo/chebi/ URI format and the current chemrof: prefix format.
+        Legacy: property_value: http://purl.obolibrary.org/obo/chebi/mass "507.18" xsd:string
+        Current: property_value: chemrof:mass "507.18" xsd:decimal
+        """
         import re
 
-        # ChEBI property format: http://purl.obolibrary.org/obo/chebi/PROPERTY "VALUE" xsd:string
-        # Examples:
-        # property_value: http://purl.obolibrary.org/obo/chebi/mass "18.99840" xsd:string
-        # property_value: http://purl.obolibrary.org/obo/chebi/formula "F" xsd:string
+        parts = property_value.split()
+        if len(parts) < 2:
+            return
 
-        if "http://purl.obolibrary.org/obo/chebi/" in property_value:
-            # Extract the property name and value
-            parts = property_value.split()
-            if len(parts) >= 2:
-                property_url = parts[0]
-                # Extract value from quotes
-                match = re.search(r'"([^"]*)"', property_value)
-                if match:
-                    value = match.group(1)
+        property_key = parts[0]
+        match = re.search(r'"([^"]*)"', property_value)
+        if not match:
+            return
+        value = match.group(1)
 
-                    # Map ChEBI property URLs to our model fields
-                    if property_url.endswith("/formula"):
-                        properties["formula"] = value
-                    elif property_url.endswith("/mass"):
-                        try:
-                            properties["mass"] = float(value)
-                        except ValueError:
-                            pass
-                    elif property_url.endswith("/charge"):
-                        try:
-                            properties["charge"] = int(value)
-                        except ValueError:
-                            pass
-                    elif property_url.endswith("/inchi"):
-                        properties["inchi"] = value
-                    elif property_url.endswith("/smiles"):
-                        properties["smiles"] = value
-                    elif property_url.endswith("/monoisotopicmass"):
-                        try:
-                            # Use monoisotopic mass if regular mass not available
-                            if "mass" not in properties:
-                                properties["mass"] = float(value)
-                        except ValueError:
-                            pass
-                    elif property_url.endswith("/inchikey"):
-                        # Store InChI key as additional info (not in our model but useful for debugging)
-                        properties["inchikey"] = value
+        # Current format uses chemrof: prefix
+        if property_key == "chemrof:mass":
+            try:
+                properties["mass"] = float(value)
+            except ValueError:
+                pass
+        elif property_key in ("chemrof:generalized_empirical_formula", "chemrof:formula"):
+            properties["formula"] = value
+        elif property_key == "chemrof:charge":
+            try:
+                properties["charge"] = int(value)
+            except ValueError:
+                pass
+        elif property_key == "chemrof:inchi_string":
+            properties["inchi"] = value
+        elif property_key == "chemrof:smiles":
+            properties["smiles"] = value
+        elif property_key == "chemrof:inchi_key_string":
+            properties["inchikey"] = value
+        # Legacy obo/chebi/ URI format
+        elif "purl.obolibrary.org/obo/chebi/" in property_key:
+            if property_key.endswith("/formula"):
+                properties["formula"] = value
+            elif property_key.endswith("/mass"):
+                try:
+                    properties["mass"] = float(value)
+                except ValueError:
+                    pass
+            elif property_key.endswith("/charge"):
+                try:
+                    properties["charge"] = int(value)
+                except ValueError:
+                    pass
+            elif property_key.endswith("/inchi"):
+                properties["inchi"] = value
+            elif property_key.endswith("/smiles"):
+                properties["smiles"] = value
+            elif property_key.endswith("/monoisotopicmass"):
+                try:
+                    if "mass" not in properties:
+                        properties["mass"] = float(value)
+                except ValueError:
+                    pass
 
     def _prepare_chebi_compound(self, term_data, chebi_filter):
         """Prepare ChEBI compound data if it passes the filter."""

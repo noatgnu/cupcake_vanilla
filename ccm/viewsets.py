@@ -423,9 +423,7 @@ class InstrumentJobViewSet(BaseViewSet):
         my_lab_group_ids = LabGroup.objects.filter(Q(members=user) | Q(creator=user)).values_list("id", flat=True)
 
         return queryset.filter(
-            Q(user=user)
-            | Q(staff=user)
-            | (Q(lab_group_id__in=my_lab_group_ids) & ~Q(status="draft"))
+            Q(user=user) | Q(staff=user) | (Q(lab_group_id__in=my_lab_group_ids) & ~Q(status="draft"))
         ).distinct()
 
     def get_serializer_class(self):
@@ -626,9 +624,7 @@ class InstrumentJobViewSet(BaseViewSet):
                 {"error": "Permission denied: cannot view this project's jobs"}, status=status.HTTP_403_FORBIDDEN
             )
 
-        job_table_ids = project_jobs.exclude(metadata_table__isnull=True).values_list(
-            "metadata_table_id", flat=True
-        )
+        job_table_ids = project_jobs.exclude(metadata_table__isnull=True).values_list("metadata_table_id", flat=True)
 
         values = (
             MetadataColumn.objects.filter(metadata_table_id__in=job_table_ids, name__iexact=column_name)
