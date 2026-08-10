@@ -2232,14 +2232,14 @@ redis = ">=3.5,<6 || >6"
 
 [[package]]
 name = "sdrf-pipelines"
-version = "0.1.3"
+version = "0.1.6"
 description = "Validate and convert SDRF files to configuration files for pipelines."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "sdrf_pipelines-0.1.3-py3-none-any.whl", hash = "sha256:71fae131739e5a01acba3424907657883e12f99547450066b3a2f618a1d6579f"},
-    {file = "sdrf_pipelines-0.1.3.tar.gz", hash = "sha256:27229226774b46ac3b55ce14c878fd30605d1dd43dbe7481bcef8b4c68265473"},
+    {file = "sdrf_pipelines-0.1.6-py3-none-any.whl", hash = "sha256:dfe051f976ad5a07233df84ace8b274245c142ad2bd33965d894581066b6e2bf"},
+    {file = "sdrf_pipelines-0.1.6.tar.gz", hash = "sha256:30fb8053e5ee206a40d6d1685204aa9224262d627773c2f9fb7a5cb04a131173"},
 ]
 
 [package.dependencies]
@@ -2814,4 +2814,4 @@ brotli = ["brotli"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "6c82e3d92e6b4c005ddc1e407818062f9e44cf17a00f30d63ad2a7d660031dbb"
+content-hash = "9ccf79457314db6b9cc72d592b4832fc75eb7f075a64a086f1985114e3b422fe"

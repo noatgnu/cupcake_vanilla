@@ -224,6 +224,27 @@ def sort_pool_metadata(
     return result, id_map
 
 
+def parse_sn_source_names(sdrf_value: str) -> list:
+    """
+    Parse source names from an SDRF pooled-sample SN= value.
+
+    Handles the current format (SN=name1;SN=name2) and the legacy comma format
+    (SN=name1,name2) for backward compatibility with previously imported data.
+
+    Args:
+        sdrf_value: String starting with SN=, e.g. 'SN=Sample1;SN=Sample2'.
+
+    Returns:
+        List of stripped source name strings.
+    """
+    if not sdrf_value.startswith("SN="):
+        return []
+    rest = sdrf_value[3:]
+    if ";SN=" in rest:
+        return [name.strip() for name in rest.split(";SN=")]
+    return [name.strip() for name in rest.split(",")]
+
+
 def convert_sdrf_to_metadata(name: str, value: str) -> str:
     """
     Convert SDRF values to standardized metadata format.
@@ -1049,9 +1070,7 @@ def update_pooled_sample_column_for_table(metadata_table):
         pool_pooled_columns = pool.metadata_columns.filter(name__icontains="pooled sample")
         if pool_pooled_columns.exists():
             pool_pooled_column = pool_pooled_columns.first()
-            # Pool columns should show SN= format
-            sn_value = f"SN={pool.pool_name}"
-            pool_pooled_column.value = sn_value
+            pool_pooled_column.value = pool.sdrf_value
             pool_pooled_column.save()
 
 

@@ -196,7 +196,7 @@ COMPOUND_FIELDS = {
         "condition_field": "pooled",
         "when_pooled": {
             "format": "source_names",
-            "pattern": "SN=sample1,sample2,...",
+            "pattern": "SN=sample1;SN=sample2",
             "help": "List source sample names when pooled=true",
         },
     },

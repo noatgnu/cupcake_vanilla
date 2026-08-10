@@ -1788,7 +1788,7 @@ class SamplePool(models.Model):
             source_name = source_names.get(i, f"sample {i}")
             sample_names.append(source_name)
 
-        return f"SN={','.join(sample_names)}"
+        return "SN=" + ";SN=".join(sample_names)
 
     @property
     def total_samples_count(self):

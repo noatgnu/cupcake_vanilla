@@ -275,9 +275,9 @@ class SDRFImportTest(TestCase):
                 "proteomic profiling by mass spectrometry",
             ],
             [
-                "SN=D-HEp3 #1,D-HEp3 #2",
+                "SN=D-HEp3 #1;SN=D-HEp3 #2",
                 "homo sapiens",
-                "SN=D-HEp3 #1,D-HEp3 #2",
+                "SN=D-HEp3 #1;SN=D-HEp3 #2",
                 "pool_run",
                 "proteomic profiling by mass spectrometry",
             ],
@@ -415,9 +415,9 @@ class SDRFImportTest(TestCase):
             ["D-HEp3 #2", "homo sapiens", "pooled", "run 2"],
             ["T-HEp3 #1", "homo sapiens", "not pooled", "run 3"],
             [
-                "SN=D-HEp3 #1,D-HEp3 #2",
+                "SN=D-HEp3 #1;SN=D-HEp3 #2",
                 "homo sapiens",
-                "SN=D-HEp3 #1,D-HEp3 #2",
+                "SN=D-HEp3 #1;SN=D-HEp3 #2",
                 "pool_run",
             ],
         ]
@@ -523,7 +523,7 @@ class SDRFImportTest(TestCase):
         pooled_data_rows = [
             ["Sample1", "homo sapiens", "pooled", "run 1"],
             ["Sample2", "homo sapiens", "pooled", "run 2"],
-            ["SN=Sample1,Sample2", "homo sapiens", "SN=Sample1,Sample2", "pool_run"],
+            ["SN=Sample1;SN=Sample2", "homo sapiens", "SN=Sample1;SN=Sample2", "pool_run"],
         ]
 
         self.metadata_table.sample_count = len(pooled_data_rows)

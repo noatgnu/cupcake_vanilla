@@ -20,7 +20,7 @@ from ccc.models import AsyncTaskStatus
 from .models import MetadataColumn, MetadataTable, SamplePool
 from .tasks.import_tasks import import_excel_task, import_sdrf_task
 from .tasks.validation_tasks import validate_sdrf_file_task
-from .utils import apply_ontology_mapping_to_column, detect_pooled_samples
+from .utils import apply_ontology_mapping_to_column, detect_pooled_samples, parse_sn_source_names
 
 logger = logging.getLogger(__name__)
 
@@ -390,8 +390,7 @@ class MetadataChunkedUploadView(ChunkedUploadView):
                             sdrf_value = row[pooled_column_index].strip()
 
                             if sdrf_value.startswith("SN="):
-                                source_names = sdrf_value[3:].split(",")
-                                source_names = [name.strip() for name in source_names]
+                                source_names = parse_sn_source_names(sdrf_value)
 
                                 # Find source name column
                                 source_name_column_index = None

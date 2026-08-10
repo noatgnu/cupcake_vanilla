@@ -18,7 +18,7 @@ from sdrf_pipelines.sdrf.sdrf import SDRFMetadata
 
 from ccv.models import MetadataColumn, MetadataTableTemplate, SamplePool, Schema
 from ccv.signals import sync_hidden_property_to_pool_columns, update_pooled_sample_columns_on_pool_save
-from ccv.utils import update_pooled_sample_column_for_table
+from ccv.utils import parse_sn_source_names, update_pooled_sample_column_for_table
 
 
 def _create_modifiers(metadata_value_map: dict) -> list:
@@ -387,7 +387,7 @@ def create_pool_metadata_from_table_columns(pool):
         ...     pool_name='D-HEp3 Pool',
         ...     pooled_only_samples=[1, 2],
         ...     metadata_table=table,
-        ...     sdrf_value='SN=D-HEp3 #1,D-HEp3 #2'
+        ...     sdrf_value='SN=D-HEp3 #1;SN=D-HEp3 #2'
         ... )
         >>> create_pool_metadata_from_table_columns(pool)
         >>> pool.metadata_columns.filter(name__icontains='organism').first().value
@@ -514,7 +514,7 @@ def _create_pool_metadata_from_import(pool, pool_data, metadata_columns):
         >>> # Real proteomics pool data from SDRF fixtures
         >>> pool_data = {
         ...     'pool_name': 'D-HEp3 Pool',
-        ...     'sdrf_value': 'SN=D-HEp3 #1,D-HEp3 #2',
+        ...     'sdrf_value': 'SN=D-HEp3 #1;SN=D-HEp3 #2',
         ...     'metadata_row': [
         ...         'D-HEp3 Pool', 'homo sapiens',
         ...         'NT=head and neck;AC=MA:0000006',
@@ -916,10 +916,8 @@ def import_sdrf_data(
                     if pooled_column_index < len(row):
                         sdrf_value = row[pooled_column_index].strip()
 
-                        # Extract source names from SN= value
                         if sdrf_value.startswith("SN="):
-                            source_names = sdrf_value[3:].split(",")
-                            source_names = [name.strip() for name in source_names]
+                            source_names = parse_sn_source_names(sdrf_value)
 
                             # Get pool name from source name column or use default
                             pool_name = (
@@ -984,7 +982,7 @@ def import_sdrf_data(
 
                 if pooled_source_names:
                     # Create SN= value from source names
-                    sdrf_value = "SN=" + ",".join(pooled_source_names)
+                    sdrf_value = "SN=" + ";SN=".join(pooled_source_names)
                     pool_name = "Pool 1"
                     template_row = data_rows[pooled_rows[0]]
 
@@ -1332,8 +1330,7 @@ def import_sdrf_data_bulk(
                         sdrf_value = row[pooled_column_index].strip()
 
                         if sdrf_value.startswith("SN="):
-                            source_names = sdrf_value[3:].split(",")
-                            source_names = [name.strip() for name in source_names]
+                            source_names = parse_sn_source_names(sdrf_value)
 
                             pool_name = (
                                 row[source_name_column_index]
@@ -1389,7 +1386,7 @@ def import_sdrf_data_bulk(
                             pooled_only_samples.append(row_index + 1)
 
                 if pooled_source_names:
-                    sdrf_value = "SN=" + ",".join(pooled_source_names)
+                    sdrf_value = "SN=" + ";SN=".join(pooled_source_names)
                     pool_name = "Pool 1"
                     template_row = data_rows[pooled_rows[0]]
 

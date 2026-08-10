@@ -24,6 +24,7 @@ from rest_framework.filters import SearchFilter
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from sdrf_pipelines.sdrf.schemas import SchemaRegistry as SdrfSchemaRegistry
 
 from ccc.models import LabGroup, ResourceRole, ResourceVisibility
 
@@ -53,6 +54,21 @@ from .models import (
 )
 from .ontology_registry import registry
 from .permissions import MetadataColumnAccessPermission, MetadataTableAccessPermission
+from .sdrf_defaults import (
+    CLEAVAGE_AGENTS,
+    INSTRUMENT_MODELS,
+    LABEL_VALUES,
+    PROTEIN_MODIFICATIONS,
+    get_all_column_defaults,
+    get_all_compound_fields,
+    get_column_defaults,
+    get_column_suggestions,
+    get_compound_field_schema,
+    get_quick_values,
+    get_structured_field_options,
+    search_columns,
+    validate_compound_field_value,
+)
 from .serializers import (
     BTOTermSerializer,
     CellOntologySerializer,
@@ -97,6 +113,7 @@ from .utils import (
     SampleVariationGenerator,
     apply_ontology_mapping_to_column,
     detect_ontology_type,
+    parse_sn_source_names,
     sort_metadata,
     validate_sdrf,
 )
@@ -3775,10 +3792,8 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                         if pooled_column_index < len(row):
                             sdrf_value = row[pooled_column_index].strip()
 
-                            # Extract source names from SN= value
                             if sdrf_value.startswith("SN="):
-                                source_names = sdrf_value[3:].split(",")
-                                source_names = [name.strip() for name in source_names]
+                                source_names = parse_sn_source_names(sdrf_value)
 
                                 # Get pool name from source name column or use default
                                 pool_name = (
@@ -3845,7 +3860,7 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
                     if pooled_source_names:
                         # Create SN= value from source names
-                        sdrf_value = "SN=" + ",".join(pooled_source_names)
+                        sdrf_value = "SN=" + ";SN=".join(pooled_source_names)
                         pool_name = "Pool 1"
                         template_row = data_rows[pooled_rows[0]]
 
@@ -5795,16 +5810,12 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def columns(self, request):
         """Get all available SDRF columns with their default values."""
-        from .sdrf_defaults import get_all_column_defaults
-
         defaults = get_all_column_defaults()
         return Response({"columns": list(defaults.keys()), "total": len(defaults)})
 
     @action(detail=False, methods=["get"])
     def column_values(self, request):
         """Get default values for a specific column."""
-        from .sdrf_defaults import get_column_defaults
-
         column_name = request.query_params.get("column")
         if not column_name:
             return Response({"error": "column parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -5818,8 +5829,6 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def search(self, request):
         """Search for columns containing the query string."""
-        from .sdrf_defaults import search_columns
-
         query = request.query_params.get("q", "")
         if not query:
             return Response({"error": "q parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -5830,8 +5839,6 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def structured_options(self, request):
         """Get options for structured fields (key-value pairs)."""
-        from .sdrf_defaults import get_structured_field_options
-
         column_name = request.query_params.get("column")
         field_type = request.query_params.get("type")
 
@@ -5849,8 +5856,6 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def labels(self, request):
         """Get all label options (TMT, SILAC, label-free)."""
-        from .sdrf_defaults import LABEL_VALUES
-
         return Response(
             {
                 "label_free": LABEL_VALUES["label free sample"],
@@ -5862,8 +5867,6 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def modifications(self, request):
         """Get protein modification options (fixed and variable)."""
-        from .sdrf_defaults import PROTEIN_MODIFICATIONS
-
         mod_type = request.query_params.get("type")
         if mod_type and mod_type in PROTEIN_MODIFICATIONS:
             return Response({"type": mod_type, "modifications": PROTEIN_MODIFICATIONS[mod_type]})
@@ -5873,15 +5876,11 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def instruments(self, request):
         """Get list of common instrument models."""
-        from .sdrf_defaults import INSTRUMENT_MODELS
-
         return Response({"instruments": INSTRUMENT_MODELS})
 
     @action(detail=False, methods=["get"])
     def cleavage_agents(self, request):
         """Get cleavage agent options."""
-        from .sdrf_defaults import CLEAVAGE_AGENTS
-
         agent_type = request.query_params.get("type")
         if agent_type and agent_type in CLEAVAGE_AGENTS:
             return Response({"type": agent_type, "agents": CLEAVAGE_AGENTS[agent_type]})
@@ -5891,16 +5890,12 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def compound_fields(self, request):
         """Get all compound fields that require special handling."""
-        from .sdrf_defaults import get_all_compound_fields
-
         fields = get_all_compound_fields()
         return Response({"compound_fields": list(fields.keys()), "schemas": fields})
 
     @action(detail=False, methods=["get"])
     def compound_schema(self, request):
         """Get schema for a specific compound field."""
-        from .sdrf_defaults import get_compound_field_schema
-
         column_name = request.query_params.get("column")
         if not column_name:
             return Response({"error": "column parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -5916,8 +5911,6 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def validate_compound(self, request):
         """Validate a compound field value against its schema."""
-        from .sdrf_defaults import validate_compound_field_value
-
         column_name = request.data.get("column")
         value = request.data.get("value")
 
@@ -5931,8 +5924,6 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def suggestions(self, request):
         """Get column name suggestions based on partial input."""
-        from .sdrf_defaults import get_column_suggestions
-
         partial = request.query_params.get("partial", "")
         if not partial:
             return Response({"error": "partial parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -5943,8 +5934,6 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def quick_values(self, request):
         """Get quick access to commonly used value categories."""
-        from .sdrf_defaults import get_quick_values
-
         category = request.query_params.get("category")
         if not category:
             return Response(
@@ -5967,3 +5956,59 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
             return Response({"error": f"Unknown category: {category}"}, status=status.HTTP_404_NOT_FOUND)
 
         return Response({"category": category, "values": values})
+
+    @action(detail=False, methods=["get"])
+    def schema_column_info(self, request):
+        """
+        Return column definitions from one or more sdrf-pipelines schemas.
+
+        Query parameters:
+          schemas  — comma-separated schema names (e.g. 'ms-proteomics,sample-metadata').
+                     Defaults to 'ms-proteomics,sample-metadata'.
+          column   — if given, return info for only that column name.
+
+        Each column entry includes allow_pooled, allow_not_applicable,
+        allow_not_available, requirement, description, and the validators list
+        (which carries canonical examples and patterns the frontend can use).
+        """
+        schema_param = request.query_params.get("schemas", "ms-proteomics,sample-metadata")
+        schema_names = [s.strip() for s in schema_param.split(",") if s.strip()]
+        column_filter = request.query_params.get("column", "").strip().lower()
+
+        registry = SdrfSchemaRegistry()
+        available = set(registry.get_schema_names())
+
+        unknown = [s for s in schema_names if s not in available]
+        if unknown:
+            return Response(
+                {"error": f"Unknown schemas: {unknown}. Available: {sorted(available)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        seen = {}
+        for schema_name in schema_names:
+            schema = registry.get_schema(schema_name)
+            for col in schema.columns:
+                if col.name in seen:
+                    continue
+                seen[col.name] = col
+
+        result = []
+        for name, col in seen.items():
+            if column_filter and column_filter not in name.lower():
+                continue
+            d = col.model_dump()
+            result.append(
+                {
+                    "name": d["name"],
+                    "description": d.get("description"),
+                    "requirement": d.get("requirement"),
+                    "allow_pooled": d.get("allow_pooled", False),
+                    "allow_not_applicable": d.get("allow_not_applicable", False),
+                    "allow_not_available": d.get("allow_not_available", False),
+                    "allow_anonymized": d.get("allow_anonymized", False),
+                    "validators": d.get("validators", []),
+                }
+            )
+
+        return Response({"schemas": schema_names, "columns": result, "total": len(result)})
