@@ -1395,6 +1395,13 @@ def import_sdrf_data_bulk(
 
                 import_pools_data.extend(pools_by_name.values())
 
+            seen_pool_names: dict[str, dict] = {}
+            for pool_data in import_pools_data:
+                name = pool_data["pool_name"]
+                if name not in seen_pool_names:
+                    seen_pool_names[name] = pool_data
+            import_pools_data = list(seen_pool_names.values())
+
             if import_pools_data:
                 existing_pools = SamplePool.objects.filter(metadata_table=metadata_table)
                 existing_pool_names = {pool.pool_name: pool for pool in existing_pools}
