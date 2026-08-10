@@ -881,6 +881,283 @@ class SDRFImportAPITest(APITestCase):
         self.assertIn("metadata_table_id", response_data)
         self.assertIn("Invalid", response_data["metadata_table_id"][0])
 
+    def test_import_sdrf_tmt_multi_pool_no_duplicate_constraint(self):
+        """
+        Regression test: a TMT SDRF where each pool row is repeated once per fraction
+        must produce one SamplePool per distinct pool name without unique constraint errors.
+        """
+        header = "\t".join(
+            [
+                "source name",
+                "characteristics[organism]",
+                "characteristics[pooled sample]",
+                "comment[label]",
+                "comment[fraction identifier]",
+            ]
+        )
+        # 2 regular samples
+        sample_rows = [
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t1",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t1",
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t2",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t2",
+        ]
+        # Pool_A appears once per fraction (2 fractions) — same pool, repeated source name
+        pool_rows = [
+            "Pool_A\thomo sapiens\tSN=Sample1;SN=Sample2\tTMT131\t1",
+            "Pool_A\thomo sapiens\tSN=Sample1;SN=Sample2\tTMT131\t2",
+        ]
+        sdrf_content = "\n".join([header] + sample_rows + pool_rows) + "\n"
+
+        file_obj = io.BytesIO(sdrf_content.encode("utf-8"))
+        file_obj.name = "test_tmt_pool.tsv"
+
+        data = {
+            "file": file_obj,
+            "metadata_table_id": self.metadata_table.id,
+            "replace_existing": True,
+            "create_pools": True,
+        }
+
+        url = reverse("ccv:metadatamanagement-import-sdrf-file")
+        response = self.client.post(url, data, format="multipart")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+
+        pools = self.metadata_table.sample_pools.all()
+        pool_names = list(pools.values_list("pool_name", flat=True))
+
+        self.assertEqual(pools.count(), 1, f"Expected 1 pool, got {pools.count()}: {pool_names}")
+        self.assertIn("Pool_A", pool_names)
+        self.assertTrue(pools.first().sdrf_value.startswith("SN="))
+
+    def test_import_sdrf_tmt_multi_pool_round_trip(self):
+        """
+        Round-trip test: import TMT SDRF with a pool repeated per fraction, export it,
+        then re-import and verify pools and SN= format are preserved consistently.
+        """
+        from ccv.tasks.export_utils import export_sdrf_data
+
+        header = "\t".join(
+            [
+                "source name",
+                "characteristics[organism]",
+                "characteristics[pooled sample]",
+                "comment[label]",
+                "comment[fraction identifier]",
+            ]
+        )
+        sample_rows = [
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t1",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t1",
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t2",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t2",
+        ]
+        # Pool_A appears twice (once per fraction) — same pool, same source names
+        pool_rows = [
+            "Pool_A\thomo sapiens\tSN=Sample1;SN=Sample2\tTMT131\t1",
+            "Pool_A\thomo sapiens\tSN=Sample1;SN=Sample2\tTMT131\t2",
+        ]
+        sdrf_content = "\n".join([header] + sample_rows + pool_rows) + "\n"
+
+        # --- First import ---
+        file_obj = io.BytesIO(sdrf_content.encode("utf-8"))
+        file_obj.name = "test_tmt_round_trip.tsv"
+        url = reverse("ccv:metadatamanagement-import-sdrf-file")
+        response = self.client.post(
+            url,
+            {
+                "file": file_obj,
+                "metadata_table_id": self.metadata_table.id,
+                "replace_existing": True,
+                "create_pools": True,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+
+        self.metadata_table.refresh_from_db()
+        pools_after_import = list(self.metadata_table.sample_pools.all())
+        self.assertEqual(len(pools_after_import), 1)
+        pool = pools_after_import[0]
+        self.assertEqual(pool.pool_name, "Pool_A")
+        self.assertTrue(pool.sdrf_value.startswith("SN="))
+        self.assertIn(";SN=", pool.sdrf_value)
+
+        # --- Export ---
+        export_result = export_sdrf_data(self.metadata_table, self.user, include_pools=True)
+        self.assertTrue(export_result["success"])
+        exported_text = export_result["sdrf_content"]
+        exported_lines = exported_text.splitlines()
+
+        # Exactly one pool row should exist in the export
+        pool_lines = [line for line in exported_lines if "Pool_A" in line]
+        self.assertEqual(len(pool_lines), 1, f"Expected 1 pool row, got {len(pool_lines)}: {pool_lines}")
+
+        # The pool row must contain the correct SN= value with semicolon format
+        pool_line = pool_lines[0]
+        self.assertIn("SN=Sample1;SN=Sample2", pool_line)
+
+        # --- Re-import the exported file ---
+        file_obj2 = io.BytesIO(exported_text.encode("utf-8"))
+        file_obj2.name = "test_tmt_round_trip_exported.tsv"
+        response2 = self.client.post(
+            url,
+            {
+                "file": file_obj2,
+                "metadata_table_id": self.metadata_table.id,
+                "replace_existing": True,
+                "create_pools": True,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response2.status_code, status.HTTP_200_OK, response2.content)
+
+        self.metadata_table.refresh_from_db()
+        pools_after_reimport = list(self.metadata_table.sample_pools.all())
+        self.assertEqual(len(pools_after_reimport), 1)
+        reimported_pool = pools_after_reimport[0]
+        self.assertEqual(reimported_pool.pool_name, "Pool_A")
+        self.assertTrue(reimported_pool.sdrf_value.startswith("SN="))
+        self.assertIn(";SN=", reimported_pool.sdrf_value)
+
+    def test_import_sdrf_pooled_value_multi_pool(self):
+        """
+        Regression test: SDRF where pool rows carry 'pooled' (not SN=) and multiple distinct
+        pools appear across fractions must produce one SamplePool per distinct pool name.
+        """
+        header = "\t".join(
+            [
+                "source name",
+                "characteristics[organism]",
+                "characteristics[pooled sample]",
+                "comment[label]",
+                "comment[fraction identifier]",
+            ]
+        )
+        sample_rows = [
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t1",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t1",
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t2",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t2",
+        ]
+        pool_rows = [
+            "Pool_A\thomo sapiens\tpooled\tTMT131\t1",
+            "Pool_A\thomo sapiens\tpooled\tTMT131\t2",
+            "Pool_B\thomo sapiens\tpooled\tTMT132\t1",
+            "Pool_B\thomo sapiens\tpooled\tTMT132\t2",
+        ]
+        sdrf_content = "\n".join([header] + sample_rows + pool_rows) + "\n"
+
+        file_obj = io.BytesIO(sdrf_content.encode("utf-8"))
+        file_obj.name = "test_pooled_value.tsv"
+        url = reverse("ccv:metadatamanagement-import-sdrf-file")
+        response = self.client.post(
+            url,
+            {
+                "file": file_obj,
+                "metadata_table_id": self.metadata_table.id,
+                "replace_existing": True,
+                "create_pools": True,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+
+        self.metadata_table.refresh_from_db()
+        pools = self.metadata_table.sample_pools.all()
+        pool_names = sorted(pools.values_list("pool_name", flat=True))
+        self.assertEqual(pools.count(), 2, f"Expected 2 pools, got {pools.count()}: {pool_names}")
+        self.assertIn("Pool_A", pool_names)
+        self.assertIn("Pool_B", pool_names)
+
+    def test_import_sdrf_pooled_value_multi_pool_round_trip(self):
+        """
+        Round-trip test: import SDRF where pool rows carry 'pooled' (no SN=), export, re-import,
+        and verify both Pool_A and Pool_B survive the cycle with 'pooled' in the pooled column.
+        """
+        from ccv.tasks.export_utils import export_sdrf_data
+
+        header = "\t".join(
+            [
+                "source name",
+                "characteristics[organism]",
+                "characteristics[pooled sample]",
+                "comment[label]",
+                "comment[fraction identifier]",
+            ]
+        )
+        sample_rows = [
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t1",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t1",
+            "Sample1\thomo sapiens\tnot pooled\tTMT126\t2",
+            "Sample2\thomo sapiens\tnot pooled\tTMT127N\t2",
+        ]
+        pool_rows = [
+            "Pool_A\thomo sapiens\tpooled\tTMT131\t1",
+            "Pool_A\thomo sapiens\tpooled\tTMT131\t2",
+            "Pool_B\thomo sapiens\tpooled\tTMT132\t1",
+            "Pool_B\thomo sapiens\tpooled\tTMT132\t2",
+        ]
+        sdrf_content = "\n".join([header] + sample_rows + pool_rows) + "\n"
+
+        url = reverse("ccv:metadatamanagement-import-sdrf-file")
+
+        # --- First import ---
+        file_obj = io.BytesIO(sdrf_content.encode("utf-8"))
+        file_obj.name = "test_pooled_rt.tsv"
+        response = self.client.post(
+            url,
+            {
+                "file": file_obj,
+                "metadata_table_id": self.metadata_table.id,
+                "replace_existing": True,
+                "create_pools": True,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+
+        self.metadata_table.refresh_from_db()
+        self.assertEqual(self.metadata_table.sample_pools.count(), 2)
+
+        # --- Export ---
+        export_result = export_sdrf_data(self.metadata_table, self.user, include_pools=True)
+        self.assertTrue(export_result["success"])
+        exported_text = export_result["sdrf_content"]
+        exported_lines = exported_text.splitlines()
+
+        # Pool_A and Pool_B rows appear in the sample data with 'pooled'
+        pool_a_lines = [ln for ln in exported_lines if ln.startswith("Pool_A")]
+        pool_b_lines = [ln for ln in exported_lines if ln.startswith("Pool_B")]
+        self.assertTrue(len(pool_a_lines) > 0, "Pool_A rows missing from export")
+        self.assertTrue(len(pool_b_lines) > 0, "Pool_B rows missing from export")
+        for line in pool_a_lines + pool_b_lines:
+            fields = line.split("\t")
+            pooled_col = fields[2] if len(fields) > 2 else ""
+            self.assertEqual(pooled_col, "pooled", f"Unexpected pooled value in: {line}")
+
+        # --- Re-import ---
+        file_obj2 = io.BytesIO(exported_text.encode("utf-8"))
+        file_obj2.name = "test_pooled_rt_exported.tsv"
+        response2 = self.client.post(
+            url,
+            {
+                "file": file_obj2,
+                "metadata_table_id": self.metadata_table.id,
+                "replace_existing": True,
+                "create_pools": True,
+            },
+            format="multipart",
+        )
+        self.assertEqual(response2.status_code, status.HTTP_200_OK, response2.content)
+
+        self.metadata_table.refresh_from_db()
+        reimport_pool_names = sorted(self.metadata_table.sample_pools.values_list("pool_name", flat=True))
+        self.assertEqual(len(reimport_pool_names), 2, f"Re-import pools: {reimport_pool_names}")
+        self.assertIn("Pool_A", reimport_pool_names)
+        self.assertIn("Pool_B", reimport_pool_names)
+
     def test_import_sdrf_replace_existing_false(self):
         """Test SDRF import without replacing existing data."""
         import io

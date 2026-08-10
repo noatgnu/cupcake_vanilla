@@ -317,6 +317,7 @@ def synchronize_pools_with_import_data(metadata_table, import_pools_data, metada
                 metadata_table=metadata_table,
                 created_by=user,
             )
+            existing_pool_names[pool_name] = new_pool
 
             _create_pool_metadata_from_import(new_pool, pool_data, metadata_columns)
 
@@ -964,40 +965,38 @@ def import_sdrf_data(
                             )
 
             elif pooled_rows:
-                # Case 2: No SN= rows but there are "pooled" rows - create a pool from them
-                # Get source names of all pooled samples
-                pooled_source_names = []
-                pooled_only_samples = []
-
+                pools_by_name: dict[str, dict] = {}
                 for row_index in pooled_rows:
+                    pool_name = "Pool 1"
                     if (
                         source_name_column_index is not None
                         and row_index < len(data_rows)
                         and source_name_column_index < len(data_rows[row_index])
                     ):
-                        source_name = data_rows[row_index][source_name_column_index].strip()
-                        if source_name:
-                            pooled_source_names.append(source_name)
-                            pooled_only_samples.append(row_index + 1)
-
-                if pooled_source_names:
-                    # Create SN= value from source names
-                    sdrf_value = "SN=" + ";SN=".join(pooled_source_names)
-                    pool_name = "Pool 1"
-                    template_row = data_rows[pooled_rows[0]]
-
-                    # Store pool data for synchronization
-                    import_pools_data.append(
-                        {
+                        sn = data_rows[row_index][source_name_column_index].strip()
+                        if sn:
+                            pool_name = sn
+                    if pool_name not in pools_by_name:
+                        pools_by_name[pool_name] = {
                             "pool_name": pool_name,
-                            "pooled_only_samples": pooled_only_samples,
+                            "pooled_only_samples": [],
                             "pooled_and_independent_samples": [],
-                            "is_reference": False,  # Pooled rows are not reference pools by default
-                            "metadata_row": template_row,
-                            "sdrf_value": sdrf_value,
+                            "is_reference": False,
+                            "metadata_row": data_rows[row_index],
+                            "sdrf_value": "pooled",
                             "all_data_rows": data_rows,
                         }
-                    )
+                    pools_by_name[pool_name]["pooled_only_samples"].append(row_index + 1)
+
+                import_pools_data.extend(pools_by_name.values())
+
+            # Deduplicate import_pools_data by pool_name (same pool appears once per fraction)
+            seen_pool_names: dict[str, dict] = {}
+            for pool_data in import_pools_data:
+                name = pool_data["pool_name"]
+                if name not in seen_pool_names:
+                    seen_pool_names[name] = pool_data
+            import_pools_data = list(seen_pool_names.values())
 
             # Synchronize pools with sophisticated logic (matching original CUPCAKE)
             if import_pools_data:
@@ -1371,36 +1370,30 @@ def import_sdrf_data_bulk(
                             )
 
             elif pooled_rows:
-                pooled_source_names = []
-                pooled_only_samples = []
-
+                pools_by_name: dict[str, dict] = {}
                 for row_index in pooled_rows:
+                    pool_name = "Pool 1"
                     if (
                         source_name_column_index is not None
                         and row_index < len(data_rows)
                         and source_name_column_index < len(data_rows[row_index])
                     ):
-                        source_name = data_rows[row_index][source_name_column_index].strip()
-                        if source_name:
-                            pooled_source_names.append(source_name)
-                            pooled_only_samples.append(row_index + 1)
-
-                if pooled_source_names:
-                    sdrf_value = "SN=" + ";SN=".join(pooled_source_names)
-                    pool_name = "Pool 1"
-                    template_row = data_rows[pooled_rows[0]]
-
-                    import_pools_data.append(
-                        {
+                        sn = data_rows[row_index][source_name_column_index].strip()
+                        if sn:
+                            pool_name = sn
+                    if pool_name not in pools_by_name:
+                        pools_by_name[pool_name] = {
                             "pool_name": pool_name,
-                            "pooled_only_samples": pooled_only_samples,
+                            "pooled_only_samples": [],
                             "pooled_and_independent_samples": [],
                             "is_reference": False,
-                            "metadata_row": template_row,
-                            "sdrf_value": sdrf_value,
+                            "metadata_row": data_rows[row_index],
+                            "sdrf_value": "pooled",
                             "all_data_rows": data_rows,
                         }
-                    )
+                    pools_by_name[pool_name]["pooled_only_samples"].append(row_index + 1)
+
+                import_pools_data.extend(pools_by_name.values())
 
             if import_pools_data:
                 existing_pools = SamplePool.objects.filter(metadata_table=metadata_table)

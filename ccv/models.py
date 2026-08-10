@@ -1780,15 +1780,13 @@ class SamplePool(models.Model):
         if not all_samples:
             return "not pooled"
 
-        # Get source names from metadata
         source_names = self._get_source_names_for_samples()
-        sample_names = []
-
+        seen = {}
         for i in all_samples:
-            source_name = source_names.get(i, f"sample {i}")
-            sample_names.append(source_name)
+            name = source_names.get(i, f"sample {i}")
+            seen[name] = True
 
-        return "SN=" + ";SN=".join(sample_names)
+        return "SN=" + ";SN=".join(seen.keys())
 
     @property
     def total_samples_count(self):
@@ -1851,27 +1849,21 @@ class SamplePool(models.Model):
         Returns:
             dict: A dictionary mapping sample indices to source names.
         """
-        import json
-
-        # Get the Source name metadata column from unified metadata system
         source_name_column = None
         for metadata_column in self.metadata_table.columns.all():
-            if metadata_column.name == "Source name":
+            if metadata_column.name.lower() == "source name":
                 source_name_column = metadata_column
                 break
 
         if not source_name_column:
-            # No source name metadata found, return empty dict to use fallback
             return {}
 
         source_names = {}
 
-        # Set default value for all samples
         if source_name_column.value:
             for i in range(1, self.metadata_table.sample_count + 1):
                 source_names[i] = source_name_column.value
 
-        # Override with modifier values if they exist
         if source_name_column.modifiers:
             try:
                 modifiers = source_name_column.modifiers
@@ -1884,7 +1876,7 @@ class SamplePool(models.Model):
                     for sample_index in sample_indices:
                         if 1 <= sample_index <= self.metadata_table.sample_count:
                             source_names[sample_index] = value
-            except (json.JSONDecodeError, ValueError):
+            except (TypeError, ValueError):
                 pass
 
         return source_names

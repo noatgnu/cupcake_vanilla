@@ -427,13 +427,15 @@ class MetadataChunkedUploadView(ChunkedUploadView):
 
                 # Create SamplePool objects
                 for pool_data in import_pools_data:
-                    sample_pool = SamplePool.objects.create(
+                    sample_pool, _ = SamplePool.objects.get_or_create(
                         metadata_table=metadata_table,
                         pool_name=pool_data["pool_name"],
-                        pooled_only_samples=pool_data["pooled_only_samples"],
-                        pooled_and_independent_samples=pool_data["pooled_and_independent_samples"],
-                        is_reference=pool_data["is_reference"],
-                        created_by=metadata_table.creator,
+                        defaults={
+                            "pooled_only_samples": pool_data["pooled_only_samples"],
+                            "pooled_and_independent_samples": pool_data["pooled_and_independent_samples"],
+                            "is_reference": pool_data["is_reference"],
+                            "created_by": metadata_table.creator,
+                        },
                     )
                     created_pools.append(sample_pool)
 
