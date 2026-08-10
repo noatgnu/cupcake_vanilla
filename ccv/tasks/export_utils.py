@@ -6,8 +6,13 @@ sync views and async RQ tasks.
 """
 
 import io
+import json
+import re
+import traceback
 import zipfile
 from typing import Any, Dict, List, Optional
+
+from django.utils import timezone
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, PatternFill, Side
@@ -88,47 +93,76 @@ def export_sdrf_data(
     if include_pools:
         pools = list(metadata_table.sample_pools.all())
         if pools:
-            # Add SN= rows for reference pools (original CUPCAKE approach)
+            headers = result_data[0]
+            pooled_col_idx = None
+            source_name_col_idx = None
+            data_file_col_idx = None
+            frac_id_col_idx = None
+
+            for idx, header in enumerate(headers):
+                hl = header.lower()
+                if ("pooled sample" in hl or "pooled_sample" in hl) and pooled_col_idx is None:
+                    pooled_col_idx = idx
+                elif ("source name" in hl or "source_name" in hl) and source_name_col_idx is None:
+                    source_name_col_idx = idx
+                elif "data file" in hl and data_file_col_idx is None:
+                    data_file_col_idx = idx
+                elif "fraction identifier" in hl and frac_id_col_idx is None:
+                    frac_id_col_idx = idx
+
             for pool in pools:
-                if pool.is_reference and pool.sdrf_value:
-                    # Create a pool row following original CUPCAKE format
-                    pool_row = ["" for _ in result_data[0]]  # Initialize with empty values
+                if not pool.is_reference or not pool.sdrf_value:
+                    continue
 
-                    # Find the pooled sample column index
-                    pooled_column_index = None
-                    for i, header in enumerate(result_data[0]):
-                        header_lower = header.lower()
-                        if "pooled sample" in header_lower or "pooled_sample" in header_lower:
-                            pooled_column_index = i
-                            break
+                pool_col_values: Dict[str, str] = {}
+                for mc in pool.metadata_columns.all():
+                    pool_col_values[mc.name.lower()] = mc.value or ""
 
-                    # Find the source name column index
-                    source_name_column_index = None
-                    for i, header in enumerate(result_data[0]):
-                        header_lower = header.lower()
-                        if "source name" in header_lower or "source_name" in header_lower:
-                            source_name_column_index = i
-                            break
+                all_member_indices = (pool.pooled_and_independent_samples or []) + (pool.pooled_only_samples or [])
 
-                    # Set pool data in the row
-                    if pooled_column_index is not None:
-                        pool_row[pooled_column_index] = pool.sdrf_value
+                fractions: Dict[str, List] = {}
+                if data_file_col_idx is not None and all_member_indices:
+                    for sample_idx in all_member_indices:
+                        if 0 < sample_idx < len(result_data):
+                            sample_row = result_data[sample_idx]
+                            data_file = sample_row[data_file_col_idx]
+                            if data_file and data_file not in fractions:
+                                fractions[data_file] = sample_row
 
-                    if source_name_column_index is not None:
-                        pool_row[source_name_column_index] = pool.pool_name
-
-                    # Fill other columns with pool-specific default values
-                    for i, metadata_column in enumerate(visible_metadata):
-                        if i < len(pool_row) and not pool_row[i]:  # Only fill empty cells
-                            # Use column default value or check column flags for appropriate empty value
-                            if metadata_column.value:
-                                pool_row[i] = metadata_column.value
-                            elif metadata_column.not_applicable:
-                                pool_row[i] = "not applicable"
-                            elif metadata_column.not_available:
-                                pool_row[i] = "not available"
-
-                    # Add pool row to results
+                if fractions:
+                    for data_file, sample_row in sorted(fractions.items()):
+                        pool_row = [""] * len(headers)
+                        if pooled_col_idx is not None:
+                            pool_row[pooled_col_idx] = pool.sdrf_value
+                        if source_name_col_idx is not None:
+                            pool_row[source_name_col_idx] = pool.pool_name
+                        if data_file_col_idx is not None:
+                            pool_row[data_file_col_idx] = data_file
+                        if frac_id_col_idx is not None:
+                            pool_row[frac_id_col_idx] = sample_row[frac_id_col_idx]
+                        for col_idx, header in enumerate(headers):
+                            if pool_row[col_idx]:
+                                continue
+                            hl = header.lower()
+                            col_name = hl.split("[")[1].rstrip("]") if "[" in hl else hl
+                            val = pool_col_values.get(col_name, "") or pool_col_values.get(hl, "")
+                            if val:
+                                pool_row[col_idx] = val
+                        result_data.append(pool_row)
+                else:
+                    pool_row = [""] * len(headers)
+                    if pooled_col_idx is not None:
+                        pool_row[pooled_col_idx] = pool.sdrf_value
+                    if source_name_col_idx is not None:
+                        pool_row[source_name_col_idx] = pool.pool_name
+                    for col_idx, header in enumerate(headers):
+                        if pool_row[col_idx]:
+                            continue
+                        hl = header.lower()
+                        col_name = hl.split("[")[1].rstrip("]") if "[" in hl else hl
+                        val = pool_col_values.get(col_name, "") or pool_col_values.get(hl, "")
+                        if val:
+                            pool_row[col_idx] = val
                     result_data.append(pool_row)
 
     # Convert to tab-separated format (SDRF standard)
@@ -342,8 +376,6 @@ def export_excel_template(
             pool_id_metadata_column_map_ws.append([k, v["column"], v["name"], v["type"], v["hidden"]])
 
         # Fill pool object mapping sheet (critical for pooled status)
-        import json
-
         pool_object_map_ws.append(
             [
                 "pool_name",
@@ -471,8 +503,6 @@ def export_excel_template_data(
     Returns:
         Dict containing export results and file content information
     """
-    import re
-
     # Check permissions
     if not metadata_table.can_view(user):
         raise PermissionError("Permission denied: cannot view this metadata table")
@@ -559,8 +589,6 @@ def export_excel_template_data(
 
     except Exception as e:
         print(f"Error creating Excel workbook: {str(e)}")
-        import traceback
-
         print(f"Full traceback: {traceback.format_exc()}")
         raise
 
@@ -707,8 +735,6 @@ def export_multiple_excel_template_data(
     Returns:
         Dict with ZIP file data and export statistics
     """
-    from django.utils import timezone
-
     # Create ZIP file in memory
     zip_buffer = io.BytesIO()
     exported_files = []

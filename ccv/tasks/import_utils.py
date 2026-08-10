@@ -750,16 +750,14 @@ def import_sdrf_data(
                     sn_data.append(data_rows[row_index])
                     del data_rows[row_index]
 
-        expected_sample_count = (
-            len(data_rows) if override_sample_count else (metadata_table.sample_count or len(data_rows))
-        )
-        if len(data_rows) != expected_sample_count:
-            if len(data_rows) < expected_sample_count:
-                data_rows.extend(
-                    [["" for i in range(len(headers))] for j in range(expected_sample_count - len(data_rows))]
-                )
-            else:
-                data_rows = data_rows[:expected_sample_count]
+        if override_sample_count:
+            expected_sample_count = len(data_rows)
+        else:
+            existing = metadata_table.sample_count or 0
+            expected_sample_count = max(existing, len(data_rows))
+
+        if len(data_rows) < expected_sample_count:
+            data_rows.extend([["" for i in range(len(headers))] for j in range(expected_sample_count - len(data_rows))])
 
         pool_row_offset = len(data_rows)
         if pooled_column_index is not None and sn_data:
@@ -1171,16 +1169,14 @@ def import_sdrf_data_bulk(
                     sn_data.append(data_rows[row_index])
                     del data_rows[row_index]
 
-        expected_sample_count = (
-            len(data_rows) if override_sample_count else (metadata_table.sample_count or len(data_rows))
-        )
-        if len(data_rows) != expected_sample_count:
-            if len(data_rows) < expected_sample_count:
-                data_rows.extend(
-                    [["" for i in range(len(headers))] for j in range(expected_sample_count - len(data_rows))]
-                )
-            else:
-                data_rows = data_rows[:expected_sample_count]
+        if override_sample_count:
+            expected_sample_count = len(data_rows)
+        else:
+            existing = metadata_table.sample_count or 0
+            expected_sample_count = max(existing, len(data_rows))
+
+        if len(data_rows) < expected_sample_count:
+            data_rows.extend([["" for i in range(len(headers))] for j in range(expected_sample_count - len(data_rows))])
 
         pool_row_offset = len(data_rows)
         if pooled_column_index is not None and sn_data:
@@ -1647,15 +1643,15 @@ def import_excel_data(
             hidden_row = hidden_data[i] if i < len(hidden_data) and hidden_data else []
             all_data.append(main_row + hidden_row)
 
-        expected_sample_count = (
-            len(all_data) if override_sample_count else (metadata_table.sample_count or len(all_data))
-        )
-        if len(all_data) != expected_sample_count:
-            if len(all_data) < expected_sample_count:
-                num_cols = len(all_data[0]) if all_data else len(id_metadata_column_map)
-                all_data.extend([[None for _ in range(num_cols)] for _ in range(expected_sample_count - len(all_data))])
-            else:
-                all_data = all_data[:expected_sample_count]
+        if override_sample_count:
+            expected_sample_count = len(all_data)
+        else:
+            existing = metadata_table.sample_count or 0
+            expected_sample_count = max(existing, len(all_data))
+
+        if len(all_data) < expected_sample_count:
+            num_cols = len(all_data[0]) if all_data else len(id_metadata_column_map)
+            all_data.extend([[None for _ in range(num_cols)] for _ in range(expected_sample_count - len(all_data))])
 
         # Pool data is in separate sheets (pool_main, pool_hidden), so sample_count only reflects main samples
         metadata_table.sample_count = expected_sample_count
