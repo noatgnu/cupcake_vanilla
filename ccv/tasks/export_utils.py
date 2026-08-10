@@ -126,18 +126,24 @@ def export_sdrf_data(
                         if 0 < sample_idx < len(result_data):
                             sample_row = result_data[sample_idx]
                             data_file = sample_row[data_file_col_idx]
-                            if data_file and data_file not in fractions:
-                                fractions[data_file] = sample_row
+                            if data_file:
+                                frac_key = (
+                                    sample_row[frac_id_col_idx]
+                                    if frac_id_col_idx is not None and sample_row[frac_id_col_idx]
+                                    else data_file
+                                )
+                                if frac_key not in fractions:
+                                    fractions[frac_key] = sample_row
 
                 if fractions:
-                    for data_file, sample_row in sorted(fractions.items()):
+                    for _key, sample_row in sorted(fractions.items()):
                         pool_row = [""] * len(headers)
                         if pooled_col_idx is not None:
                             pool_row[pooled_col_idx] = pool.sdrf_value
                         if source_name_col_idx is not None:
                             pool_row[source_name_col_idx] = pool.pool_name
                         if data_file_col_idx is not None:
-                            pool_row[data_file_col_idx] = data_file
+                            pool_row[data_file_col_idx] = sample_row[data_file_col_idx]
                         if frac_id_col_idx is not None:
                             pool_row[frac_id_col_idx] = sample_row[frac_id_col_idx]
                         for col_idx, header in enumerate(headers):
