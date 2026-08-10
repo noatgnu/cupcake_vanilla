@@ -3842,40 +3842,30 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                                 )
 
                 elif pooled_rows:
-                    # Case 2: No SN= rows but there are "pooled" rows - create a pool from them
-                    # Get source names of all pooled samples
-                    pooled_source_names = []
-                    pooled_only_samples = []
-
+                    pools_by_name: dict[str, dict] = {}
                     for row_index in pooled_rows:
+                        pool_name = "Pool 1"
                         if (
                             source_name_column_index is not None
                             and row_index < len(data_rows)
                             and source_name_column_index < len(data_rows[row_index])
                         ):
-                            source_name = data_rows[row_index][source_name_column_index].strip()
-                            if source_name:
-                                pooled_source_names.append(source_name)
-                                pooled_only_samples.append(row_index + 1)
-
-                    if pooled_source_names:
-                        # Create SN= value from source names
-                        sdrf_value = "SN=" + ";SN=".join(pooled_source_names)
-                        pool_name = "Pool 1"
-                        template_row = data_rows[pooled_rows[0]]
-
-                        # Store pool data for synchronization
-                        import_pools_data.append(
-                            {
+                            sn = data_rows[row_index][source_name_column_index].strip()
+                            if sn:
+                                pool_name = sn
+                        if pool_name not in pools_by_name:
+                            pools_by_name[pool_name] = {
                                 "pool_name": pool_name,
-                                "pooled_only_samples": pooled_only_samples,
+                                "pooled_only_samples": [],
                                 "pooled_and_independent_samples": [],
-                                "is_reference": False,  # Pooled rows are not reference pools by default
-                                "metadata_row": template_row,
-                                "sdrf_value": sdrf_value,
+                                "is_reference": False,
+                                "metadata_row": data_rows[row_index],
+                                "sdrf_value": "pooled",
                                 "all_data_rows": data_rows,
                             }
-                        )
+                        pools_by_name[pool_name]["pooled_only_samples"].append(row_index + 1)
+
+                    import_pools_data.extend(pools_by_name.values())
 
                 # Synchronize pools with sophisticated logic (matching original CUPCAKE)
                 if import_pools_data:
