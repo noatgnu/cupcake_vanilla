@@ -557,10 +557,12 @@ def export_excel_template_data(
             return raw.split("[", 1)[1][:-1]
         return raw
 
-    # Normalise to inner names so the regex matches FavouriteMetadataOption.name
-    # regardless of whether MetadataColumn.name stores 'organism' or
-    # 'characteristics[organism]' (the latter occurs for SDRF-imported tables).
     inner_column_names = set(_inner_name(column.name) for column in metadata_columns)
+
+    # FavouriteMetadataOption.name may be stored as either the inner name ('organism')
+    # or the full SDRF name ('characteristics[organism]') depending on which UI path
+    # created it. Include both forms in the regex so we match either storage format.
+    all_name_variants = inner_column_names | {column.name.lower() for column in metadata_columns}
 
     def _fav_key(name: str) -> str:
         return _inner_name(name)
@@ -573,7 +575,7 @@ def export_excel_template_data(
         user_favourites = FavouriteMetadataOption.objects.filter(
             user=user,
             lab_group__isnull=True,
-            name__iregex=_build_regex(inner_column_names),
+            name__iregex=_build_regex(all_name_variants),
         )
         for fav in user_favourites:
             key = _fav_key(fav.name)
@@ -585,12 +587,12 @@ def export_excel_template_data(
             if lab_group_ids == []:
                 lab_favourites = FavouriteMetadataOption.objects.filter(
                     lab_group__isnull=False,
-                    name__iregex=_build_regex(inner_column_names),
+                    name__iregex=_build_regex(all_name_variants),
                 )
             else:
                 lab_favourites = FavouriteMetadataOption.objects.filter(
                     lab_group_id__in=lab_group_ids,
-                    name__iregex=_build_regex(inner_column_names),
+                    name__iregex=_build_regex(all_name_variants),
                 )
 
             for fav in lab_favourites:
@@ -602,7 +604,7 @@ def export_excel_template_data(
                     favourites[key].append("not applicable")
 
         global_favourites = FavouriteMetadataOption.objects.filter(
-            is_global=True, name__iregex=_build_regex(inner_column_names)
+            is_global=True, name__iregex=_build_regex(all_name_variants)
         )
         for fav in global_favourites:
             key = _fav_key(fav.name)

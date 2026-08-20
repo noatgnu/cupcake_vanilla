@@ -3023,11 +3023,13 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         if not inner_column_names:
             return Response({"error": "No metadata columns found"}, status=400)
 
+        all_name_variants = inner_column_names | {column.name.lower() for column in metadata_columns}
+
         # User-specific favourites
         user_favourites = FavouriteMetadataOption.objects.filter(
             user=request.user,
             lab_group__isnull=True,
-            name__iregex=_build_regex(inner_column_names),
+            name__iregex=_build_regex(all_name_variants),
         )
         for fav in user_favourites:
             key = _fav_key(fav.name)
@@ -3042,13 +3044,13 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 # Empty list means "all lab groups"
                 lab_favourites = FavouriteMetadataOption.objects.filter(
                     lab_group__isnull=False,
-                    name__iregex=_build_regex(inner_column_names),
+                    name__iregex=_build_regex(all_name_variants),
                 )
             else:
                 # Specific lab group IDs
                 lab_favourites = FavouriteMetadataOption.objects.filter(
                     lab_group_id__in=lab_group_ids,
-                    name__iregex=_build_regex(inner_column_names),
+                    name__iregex=_build_regex(all_name_variants),
                 )
 
             for fav in lab_favourites:
