@@ -2975,11 +2975,12 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             async_view = AsyncExportViewSet()
             return async_view.excel_template(request)
 
-        # Get metadata columns (user can specify specific columns or get all)
         if data.get("metadata_column_ids"):
-            metadata_columns = metadata_table.columns.filter(id__in=data["metadata_column_ids"])
+            metadata_columns = list(
+                metadata_table.columns.filter(id__in=data["metadata_column_ids"]).select_related("template")
+            )
         else:
-            metadata_columns = metadata_table.columns.all()
+            metadata_columns = list(metadata_table.columns.all().select_related("template"))
 
         # Separate main and hidden metadata (original CUPCAKE logic)
         main_metadata = [m for m in metadata_columns if not m.hidden]
@@ -3018,6 +3019,9 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             return r"^(" + "|".join(re.escape(n) for n in names) + ")$"
 
         inner_column_names = set(_inner_name(column.name) for column in metadata_columns)
+
+        if not inner_column_names:
+            return Response({"error": "No metadata columns found"}, status=400)
 
         # User-specific favourites
         user_favourites = FavouriteMetadataOption.objects.filter(
@@ -3238,31 +3242,51 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             adjusted_width = max_length + 2
             hidden_ws.column_dimensions[column].width = adjusted_width
 
+        def _col_inner(col_name: str) -> str:
+            low = col_name.lower()
+            if "[" in low and low.endswith("]"):
+                return low.split("[", 1)[1][:-1]
+            return low
+
+        def _resolve_dropdown_options(name: str, columns: list) -> list:
+            """Return the not_applicable/not_available prefix options for a column.
+
+            Reads from the linked template (schema-authoritative) when available,
+            falling back to the column's own flags for template-created columns.
+            """
+            col = next((c for c in columns if _col_inner(c.name) == _col_inner(name)), None)
+            not_applicable_allowed = False
+            not_available_allowed = False
+            if col:
+                tmpl = getattr(col, "template", None)
+                if tmpl is not None:
+                    not_applicable_allowed = tmpl.not_applicable
+                    not_available_allowed = tmpl.not_available
+                    for v in tmpl.possible_default_values or []:
+                        v_lower = v.lower() if isinstance(v, str) else ""
+                        if v_lower == "not applicable":
+                            not_applicable_allowed = True
+                        elif v_lower == "not available":
+                            not_available_allowed = True
+                else:
+                    not_applicable_allowed = col.not_applicable
+                    not_available_allowed = col.not_available
+            opts = []
+            if not_applicable_allowed:
+                opts.append("not applicable")
+            elif not_available_allowed:
+                opts.append("not available")
+            return opts
+
         # Add data validation dropdowns for main worksheet (original CUPCAKE logic)
         if result_main and len(result_main) > 0:
             for i, header in enumerate(result_main[0]):
                 name = header
+                option_list = _resolve_dropdown_options(name, main_metadata)
+                fav_key = _col_inner(name)
+                if fav_key in favourites:
+                    option_list.extend(favourites[fav_key])
 
-                # Find the corresponding metadata column
-                metadata_column = next((col for col in main_metadata if col.name == name), None)
-
-                # Build option list
-                option_list = []
-                # Use column flags to determine appropriate empty value option
-                if metadata_column:
-                    if metadata_column.not_applicable:
-                        option_list.append("not applicable")
-                    elif metadata_column.not_available:
-                        option_list.append("not available")
-                else:
-                    # Fallback for columns without metadata definition
-                    option_list.append("not available")
-
-                # Add favourites if available
-                if name.lower() in favourites:
-                    option_list.extend(favourites[name.lower()])
-
-                # Create data validation
                 if option_list:
                     dv = DataValidation(
                         type="list",
@@ -3277,27 +3301,11 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         if result_hidden and len(result_hidden) > 0:
             for i, header in enumerate(result_hidden[0]):
                 name = header
+                option_list = _resolve_dropdown_options(name, hidden_metadata)
+                fav_key = _col_inner(name)
+                if fav_key in favourites:
+                    option_list.extend(favourites[fav_key])
 
-                # Find the corresponding metadata column
-                metadata_column = next((col for col in hidden_metadata if col.name == name), None)
-
-                # Build option list
-                option_list = []
-                # Use column flags to determine appropriate empty value option
-                if metadata_column:
-                    if metadata_column.not_applicable:
-                        option_list.append("not applicable")
-                    elif metadata_column.not_available:
-                        option_list.append("not available")
-                else:
-                    # Fallback for columns without metadata definition
-                    option_list.append("not available")
-
-                # Add favourites if available
-                if name.lower() in favourites:
-                    option_list.extend(favourites[name.lower()])
-
-                # Create data validation
                 if option_list:
                     dv = DataValidation(
                         type="list",

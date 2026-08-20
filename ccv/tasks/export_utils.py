@@ -466,15 +466,28 @@ def _add_dropdown_validation(
             else:
                 worksheet.cell(row=1, column=i + 1).value = display_name.lower()
 
-        # Build option list based on column flags
+        not_applicable_allowed = False
+        not_available_allowed = False
         option_list = []
+
         if metadata_column:
-            if metadata_column.not_applicable:
-                option_list.append("not applicable")
-            elif metadata_column.not_available:
-                option_list.append("not available")
-        else:
-            # Fallback for columns without metadata definition
+            tmpl = getattr(metadata_column, "template", None)
+            if tmpl is not None:
+                not_applicable_allowed = tmpl.not_applicable
+                not_available_allowed = tmpl.not_available
+                for v in tmpl.possible_default_values or []:
+                    v_lower = v.lower() if isinstance(v, str) else ""
+                    if v_lower == "not applicable":
+                        not_applicable_allowed = True
+                    elif v_lower == "not available":
+                        not_available_allowed = True
+            else:
+                not_applicable_allowed = metadata_column.not_applicable
+                not_available_allowed = metadata_column.not_available
+
+        if not_applicable_allowed:
+            option_list.append("not applicable")
+        elif not_available_allowed:
             option_list.append("not available")
 
         if name.lower() in favourites:
@@ -523,11 +536,10 @@ def export_excel_template_data(
     if not metadata_table.can_view(user):
         raise PermissionError("Permission denied: cannot view this metadata table")
 
-    # Get metadata columns (user can specify specific columns or get all)
     if metadata_column_ids:
-        metadata_columns = metadata_table.columns.filter(id__in=metadata_column_ids)
+        metadata_columns = list(metadata_table.columns.filter(id__in=metadata_column_ids).select_related("template"))
     else:
-        metadata_columns = metadata_table.columns.all()
+        metadata_columns = list(metadata_table.columns.all().select_related("template"))
 
     # Get pools
     pools = list(metadata_table.sample_pools.all()) if include_pools else []
@@ -550,59 +562,53 @@ def export_excel_template_data(
     # 'characteristics[organism]' (the latter occurs for SDRF-imported tables).
     inner_column_names = set(_inner_name(column.name) for column in metadata_columns)
 
-    if not inner_column_names:
-        inner_column_names = set()
-
     def _fav_key(name: str) -> str:
         return _inner_name(name)
 
     def _build_regex(names):
         return r"^(" + "|".join(re.escape(n) for n in names) + ")$"
 
-    # User-specific favourites
-    user_favourites = FavouriteMetadataOption.objects.filter(
-        user=user,
-        lab_group__isnull=True,
-        name__iregex=_build_regex(inner_column_names),
-    )
-    for fav in user_favourites:
-        key = _fav_key(fav.name)
-        if key not in favourites:
-            favourites[key] = []
-        favourites[key].append(f"[{fav.id}] {fav.display_value}[*]")
-
-    # Lab group favourites
-    if lab_group_ids is not None:  # Check for None vs empty list
-        if lab_group_ids == []:
-            # Empty list means "all lab groups"
-            lab_favourites = FavouriteMetadataOption.objects.filter(
-                lab_group__isnull=False,
-                name__iregex=_build_regex(inner_column_names),
-            )
-        else:
-            # Specific lab group IDs
-            lab_favourites = FavouriteMetadataOption.objects.filter(
-                lab_group_id__in=lab_group_ids,
-                name__iregex=_build_regex(inner_column_names),
-            )
-
-        for fav in lab_favourites:
+    if inner_column_names:
+        # User-specific favourites
+        user_favourites = FavouriteMetadataOption.objects.filter(
+            user=user,
+            lab_group__isnull=True,
+            name__iregex=_build_regex(inner_column_names),
+        )
+        for fav in user_favourites:
             key = _fav_key(fav.name)
             if key not in favourites:
                 favourites[key] = []
-            favourites[key].append(f"[{fav.id}] {fav.display_value}[**]")
-            if key in ("tissue", "organism part"):
-                favourites[key].append("not applicable")
+            favourites[key].append(f"[{fav.id}] {fav.display_value}[*]")
 
-    # Global recommendations
-    global_favourites = FavouriteMetadataOption.objects.filter(
-        is_global=True, name__iregex=_build_regex(inner_column_names)
-    )
-    for fav in global_favourites:
-        key = _fav_key(fav.name)
-        if key not in favourites:
-            favourites[key] = []
-        favourites[key].append(f"[{fav.id}] {fav.display_value}[***]")
+        if lab_group_ids is not None:
+            if lab_group_ids == []:
+                lab_favourites = FavouriteMetadataOption.objects.filter(
+                    lab_group__isnull=False,
+                    name__iregex=_build_regex(inner_column_names),
+                )
+            else:
+                lab_favourites = FavouriteMetadataOption.objects.filter(
+                    lab_group_id__in=lab_group_ids,
+                    name__iregex=_build_regex(inner_column_names),
+                )
+
+            for fav in lab_favourites:
+                key = _fav_key(fav.name)
+                if key not in favourites:
+                    favourites[key] = []
+                favourites[key].append(f"[{fav.id}] {fav.display_value}[**]")
+                if key in ("tissue", "organism part"):
+                    favourites[key].append("not applicable")
+
+        global_favourites = FavouriteMetadataOption.objects.filter(
+            is_global=True, name__iregex=_build_regex(inner_column_names)
+        )
+        for fav in global_favourites:
+            key = _fav_key(fav.name)
+            if key not in favourites:
+                favourites[key] = []
+            favourites[key].append(f"[{fav.id}] {fav.display_value}[***]")
 
     # Create Excel workbook using existing utility
     try:
@@ -638,7 +644,7 @@ def export_excel_template_data(
         "content_type": content_type,
         "file_data": file_data,
         "metadata_table_name": metadata_table.name,
-        "column_count": metadata_columns.count(),
+        "column_count": len(metadata_columns),
         "pool_count": len(pools),
     }
 
