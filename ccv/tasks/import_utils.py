@@ -7,6 +7,7 @@ sync views and async RQ tasks.
 
 import io
 import json
+import re
 from collections import Counter
 from typing import Any, Dict
 
@@ -16,9 +17,32 @@ from django.db.models.signals import post_save
 from openpyxl import load_workbook
 from sdrf_pipelines.sdrf.sdrf import SDRFMetadata
 
-from ccv.models import MetadataColumn, MetadataTableTemplate, SamplePool, Schema
+from ccv.models import FavouriteMetadataOption, MetadataColumn, MetadataTableTemplate, SamplePool, Schema
 from ccv.signals import sync_hidden_property_to_pool_columns, update_pooled_sample_columns_on_pool_save
 from ccv.utils import parse_sn_source_names, update_pooled_sample_column_for_table
+
+_FAVOURITE_PATTERN = re.compile(r"^\[(\d+)\] (.+?)\[\*+\]$")
+
+
+def _resolve_favourite_cell_value(cell_value: str) -> str:
+    """Strip the export marker format and return the underlying favourite value.
+
+    The Excel export encodes favourite options as ``[id] display_value[*]`` (personal),
+    ``[id] display_value[**]`` (lab group), or ``[id] display_value[***]`` (global).
+    When such a cell is re-imported the raw favourite ``value`` field should be used
+    so that ``convert_sdrf_to_metadata`` receives a clean SDRF value.
+
+    Falls back to the cell string as-is when no match is found.
+    """
+    m = _FAVOURITE_PATTERN.match(cell_value.strip())
+    if not m:
+        return cell_value
+    fav_id = int(m.group(1))
+    try:
+        fav = FavouriteMetadataOption.objects.get(id=fav_id)
+        return fav.value or m.group(2)
+    except FavouriteMetadataOption.DoesNotExist:
+        return m.group(2)
 
 
 def _create_modifiers(metadata_value_map: dict) -> list:
@@ -1725,6 +1749,7 @@ def import_excel_data(
                 if column_index < len(row) and row[column_index]:
                     cell_value = str(row[column_index]).strip()
                     if cell_value:
+                        cell_value = _resolve_favourite_cell_value(cell_value)
                         if validate_ontologies:
                             cell_value = metadata_column.convert_sdrf_to_metadata(cell_value)
                         metadata_value_map[row_index + 1] = cell_value
