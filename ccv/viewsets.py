@@ -3005,19 +3005,31 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         # Get favourites for each metadata column based on column names
         favourites = {}
 
-        # Get column names from actual metadata columns being exported
-        column_names = set(column.name.lower() for column in metadata_columns)
+        def _inner_name(raw: str) -> str:
+            raw = raw.lower()
+            if "[" in raw and raw.endswith("]"):
+                return raw.split("[", 1)[1][:-1]
+            return raw
 
-        # User-specific favourites - use case-insensitive name matching
+        def _fav_key(name: str) -> str:
+            return _inner_name(name)
+
+        def _build_regex(names):
+            return r"^(" + "|".join(re.escape(n) for n in names) + ")$"
+
+        inner_column_names = set(_inner_name(column.name) for column in metadata_columns)
+
+        # User-specific favourites
         user_favourites = FavouriteMetadataOption.objects.filter(
             user=request.user,
             lab_group__isnull=True,
-            name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+            name__iregex=_build_regex(inner_column_names),
         )
         for fav in user_favourites:
-            if fav.name.lower() not in favourites:
-                favourites[fav.name.lower()] = []
-            favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[*]")
+            key = _fav_key(fav.name)
+            if key not in favourites:
+                favourites[key] = []
+            favourites[key].append(f"[{fav.id}] {fav.display_value}[*]")
 
         # Lab group favourites
         lab_group_ids = data.get("lab_group_ids")
@@ -3026,31 +3038,32 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 # Empty list means "all lab groups"
                 lab_favourites = FavouriteMetadataOption.objects.filter(
                     lab_group__isnull=False,
-                    name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+                    name__iregex=_build_regex(inner_column_names),
                 )
             else:
                 # Specific lab group IDs
                 lab_favourites = FavouriteMetadataOption.objects.filter(
                     lab_group_id__in=lab_group_ids,
-                    name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+                    name__iregex=_build_regex(inner_column_names),
                 )
 
             for fav in lab_favourites:
-                if fav.name.lower() not in favourites:
-                    favourites[fav.name.lower()] = []
-                favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[**]")
-                # Add "not applicable" for required metadata
-                if fav.name.lower() == "tissue" or fav.name.lower() == "organism part":
-                    favourites[fav.name.lower()].append("not applicable")
+                key = _fav_key(fav.name)
+                if key not in favourites:
+                    favourites[key] = []
+                favourites[key].append(f"[{fav.id}] {fav.display_value}[**]")
+                if key in ("tissue", "organism part"):
+                    favourites[key].append("not applicable")
 
         # Global recommendations
         global_favourites = FavouriteMetadataOption.objects.filter(
-            is_global=True, name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$"
+            is_global=True, name__iregex=_build_regex(inner_column_names)
         )
         for fav in global_favourites:
-            if fav.name.lower() not in favourites:
-                favourites[fav.name.lower()] = []
-            favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[***]")
+            key = _fav_key(fav.name)
+            if key not in favourites:
+                favourites[key] = []
+            favourites[key].append(f"[{fav.id}] {fav.display_value}[***]")
 
         # Create Excel workbook with multiple sheets (original CUPCAKE structure)
         wb = Workbook()

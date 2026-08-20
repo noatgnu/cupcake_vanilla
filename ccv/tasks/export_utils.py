@@ -442,8 +442,18 @@ def _add_dropdown_validation(
         else:
             name = name_splitted[0]
 
-        # Find the corresponding metadata column
-        metadata_column = next((col for col in metadata_columns if col.name == name), None)
+        # Find the corresponding metadata column by inner name, handling both
+        # 'organism' and 'characteristics[organism]' in MetadataColumn.name.
+        def _col_inner(col_name: str) -> str:
+            low = col_name.lower()
+            if "[" in low and low.endswith("]"):
+                return low.split("[", 1)[1][:-1]
+            return low
+
+        metadata_column = next(
+            (col for col in metadata_columns if _col_inner(col.name) == name.lower()),
+            None,
+        )
 
         # Apply field masking
         name_capitalized = name.capitalize().replace("Ms1", "MS1").replace("Ms2", "MS2")
@@ -525,19 +535,41 @@ def export_excel_template_data(
     # Get favourites for each metadata column based on column names
     favourites = {}
 
-    # Get column names from actual metadata columns being exported
-    column_names = set(column.name.lower() for column in metadata_columns)
+    def _inner_name(raw: str) -> str:
+        """Return the inner column name, stripping any SDRF type prefix.
 
-    # User-specific favourites - use case-insensitive name matching
+        Handles both 'characteristics[organism]' → 'organism' and plain 'organism'.
+        """
+        raw = raw.lower()
+        if "[" in raw and raw.endswith("]"):
+            return raw.split("[", 1)[1][:-1]
+        return raw
+
+    # Normalise to inner names so the regex matches FavouriteMetadataOption.name
+    # regardless of whether MetadataColumn.name stores 'organism' or
+    # 'characteristics[organism]' (the latter occurs for SDRF-imported tables).
+    inner_column_names = set(_inner_name(column.name) for column in metadata_columns)
+
+    if not inner_column_names:
+        inner_column_names = set()
+
+    def _fav_key(name: str) -> str:
+        return _inner_name(name)
+
+    def _build_regex(names):
+        return r"^(" + "|".join(re.escape(n) for n in names) + ")$"
+
+    # User-specific favourites
     user_favourites = FavouriteMetadataOption.objects.filter(
         user=user,
         lab_group__isnull=True,
-        name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+        name__iregex=_build_regex(inner_column_names),
     )
     for fav in user_favourites:
-        if fav.name.lower() not in favourites:
-            favourites[fav.name.lower()] = []
-        favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[*]")
+        key = _fav_key(fav.name)
+        if key not in favourites:
+            favourites[key] = []
+        favourites[key].append(f"[{fav.id}] {fav.display_value}[*]")
 
     # Lab group favourites
     if lab_group_ids is not None:  # Check for None vs empty list
@@ -545,31 +577,32 @@ def export_excel_template_data(
             # Empty list means "all lab groups"
             lab_favourites = FavouriteMetadataOption.objects.filter(
                 lab_group__isnull=False,
-                name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+                name__iregex=_build_regex(inner_column_names),
             )
         else:
             # Specific lab group IDs
             lab_favourites = FavouriteMetadataOption.objects.filter(
                 lab_group_id__in=lab_group_ids,
-                name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$",
+                name__iregex=_build_regex(inner_column_names),
             )
 
         for fav in lab_favourites:
-            if fav.name.lower() not in favourites:
-                favourites[fav.name.lower()] = []
-            favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[**]")
-            # Add "not applicable" for required metadata
-            if fav.name.lower() == "tissue" or fav.name.lower() == "organism part":
-                favourites[fav.name.lower()].append("not applicable")
+            key = _fav_key(fav.name)
+            if key not in favourites:
+                favourites[key] = []
+            favourites[key].append(f"[{fav.id}] {fav.display_value}[**]")
+            if key in ("tissue", "organism part"):
+                favourites[key].append("not applicable")
 
     # Global recommendations
     global_favourites = FavouriteMetadataOption.objects.filter(
-        is_global=True, name__iregex=r"^(" + "|".join(re.escape(name) for name in column_names) + ")$"
+        is_global=True, name__iregex=_build_regex(inner_column_names)
     )
     for fav in global_favourites:
-        if fav.name.lower() not in favourites:
-            favourites[fav.name.lower()] = []
-        favourites[fav.name.lower()].append(f"[{fav.id}] {fav.display_value}[***]")
+        key = _fav_key(fav.name)
+        if key not in favourites:
+            favourites[key] = []
+        favourites[key].append(f"[{fav.id}] {fav.display_value}[***]")
 
     # Create Excel workbook using existing utility
     try:
