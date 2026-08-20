@@ -11,6 +11,7 @@ from django_rq import job
 
 from ccc.models import AsyncTaskStatus, TaskResult
 from ccv.models import MetadataTable
+from ccv.tasks.export_utils import export_excel_template_data
 
 
 @job("default", timeout=3600)
@@ -48,9 +49,6 @@ def export_excel_template_task(
         # Get user and metadata table
         user = User.objects.get(id=user_id)
         metadata_table = MetadataTable.objects.get(id=metadata_table_id)
-
-        # Use the shared export utility
-        from .export_utils import export_excel_template_data
 
         result = export_excel_template_data(
             metadata_table=metadata_table,
