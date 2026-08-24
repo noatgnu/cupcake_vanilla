@@ -135,7 +135,12 @@ class Command(BaseCommand):
         every instance in memory before a single bulk_create would risk the exact kind of OOM
         this command exists to avoid.
         """
-        fields = [f for f in _scalar_fields(model) if not f.primary_key]
+        # Drop only auto-generated surrogate PKs; natural PKs (e.g. NCBITaxonomy.tax_id) must be kept.
+        fields = [
+            f
+            for f in _scalar_fields(model)
+            if not (f.primary_key and f.get_internal_type() in ("AutoField", "BigAutoField"))
+        ]
 
         conn = sqlite3.connect(sqlite_path)
         conn.row_factory = sqlite3.Row
