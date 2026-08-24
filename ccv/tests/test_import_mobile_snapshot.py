@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 from django.core.management import CommandError, call_command
 from django.test import TestCase
 
-from ccv.models import MetadataColumnTemplate, Species
+from ccv.models import MetadataColumnTemplate, NCBITaxonomy, Species
 
 RELEASE_JSON = {
     "tag_name": "v0.0.3",
@@ -23,6 +23,10 @@ RELEASE_JSON = {
         {
             "name": "column-template-system.sqlite.gz",
             "browser_download_url": "https://example.test/column-template-system.sqlite.gz",
+        },
+        {
+            "name": "ontology-ncbi_taxonomy.sqlite.gz",
+            "browser_download_url": "https://example.test/ontology-ncbi_taxonomy.sqlite.gz",
         },
     ],
 }
@@ -120,6 +124,30 @@ class ImportMobileSnapshotTest(TestCase):
             self._run("--dataset", "column-template")
 
         self.assertTrue(MetadataColumnTemplate.objects.filter(name="Organism", is_system_template=True).exists())
+
+    def test_ontology_table_with_natural_primary_key(self):
+        taxonomy_gz = _build_sqlite_gz(
+            "ncbi_taxonomy",
+            ["tax_id", "scientific_name", "rank"],
+            [("9606", "Homo sapiens", "species")],
+        )
+        manifest = {
+            "format_version": 1,
+            "tables": [
+                {
+                    "dataset": "ontology",
+                    "name": "ncbi_taxonomy",
+                    "file": "ontology-ncbi_taxonomy.sqlite.gz",
+                    "row_count": 1,
+                },
+            ],
+        }
+        mock_get = _mock_requests_get(manifest, {"https://example.test/ontology-ncbi_taxonomy.sqlite.gz": taxonomy_gz})
+
+        with patch("ccv.management.commands.import_mobile_snapshot.requests.get", side_effect=mock_get):
+            self._run("--dataset", "ontology", "--table", "ncbi_taxonomy")
+
+        self.assertTrue(NCBITaxonomy.objects.filter(tax_id=9606, scientific_name="Homo sapiens").exists())
 
     def test_table_requires_ontology_dataset(self):
         with self.assertRaises(CommandError):
