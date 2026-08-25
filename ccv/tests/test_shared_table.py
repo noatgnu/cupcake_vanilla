@@ -114,14 +114,14 @@ class SharedTableRetrieveTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["name"], self.table.name)
         self.assertEqual(response.data["sample_count"], self.table.sample_count)
-        self.assertIn("headers", response.data)
-        self.assertIn("rows", response.data)
+        self.assertIn("columns", response.data)
 
-    def test_response_contains_column_headers(self):
+    def test_response_contains_column_data(self):
         response = self.client.get(f"/api/v1/shared-tables/{self.token}/")
-        headers = response.data["headers"]
-        self.assertTrue(any("source name" in h.lower() for h in headers))
-        self.assertTrue(any("organism" in h.lower() for h in headers))
+        columns = response.data["columns"]
+        names = [c["name"] for c in columns]
+        self.assertIn("source name", names)
+        self.assertIn("characteristics[organism]", names)
 
     def test_invalid_token_returns_404(self):
         response = self.client.get(f"/api/v1/shared-tables/{uuid.uuid4()}/")

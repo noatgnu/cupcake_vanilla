@@ -1287,30 +1287,18 @@ class SharedTableViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=["get"], url_path=r"(?P<token>[0-9a-f-]+)")
     def retrieve_shared(self, request, token=None):
-        """Return the SDRF table data for the given share token.
+        """Return the full serialized MetadataTable for the given share token.
 
-        Response shape:
-        ``{"name": "...", "sample_count": N, "headers": [...], "rows": [[...]]}``
+        Returns the same shape as the authenticated MetadataTable retrieve endpoint
+        so the frontend can render it with the same component in read-only mode.
         """
         try:
             table = MetadataTable.objects.get(share_token=token)
         except (MetadataTable.DoesNotExist, ValueError):
             return Response({"error": "Invalid or expired share token."}, status=status.HTTP_404_NOT_FOUND)
 
-        visible_columns = list(table.columns.filter(hidden=False).order_by("column_position"))
-        result_data, _ = sort_metadata(visible_columns, table.sample_count, table)
-
-        headers = result_data[0] if result_data else []
-        rows = result_data[1:] if len(result_data) > 1 else []
-
-        return Response(
-            {
-                "name": table.name,
-                "sample_count": table.sample_count,
-                "headers": headers,
-                "rows": rows,
-            }
-        )
+        serializer = MetadataTableSerializer(table, context={"request": request})
+        return Response(serializer.data)
 
 
 class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
