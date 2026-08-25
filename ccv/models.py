@@ -139,6 +139,13 @@ class MetadataTable(BaseMetadataTable):
     implementations by extending BaseMetadataTable.
     """
 
+    share_token = models.UUIDField(
+        blank=True,
+        null=True,
+        unique=True,
+        help_text="Token for unauthenticated read-only access to this table",
+    )
+
     class Meta(BaseMetadataTable.Meta):
         app_label = "ccv"
         ordering = ["-created_at", "name"]

@@ -36,6 +36,7 @@ from .viewsets import (
     SamplePoolViewSet,
     SchemaViewSet,
     SDRFDefaultsViewSet,
+    SharedTableViewSet,
     SpeciesViewSet,
     SubcellularLocationViewSet,
     TissueViewSet,
@@ -72,6 +73,7 @@ router.register(r"ontology/doid", DiseaseOntologyTermViewSet, basename="doidterm
 router.register(r"ontology/search", OntologySearchViewSet, basename="ontologysearch")
 router.register(r"schemas", SchemaViewSet, basename="schema")
 router.register(r"sdrf-defaults", SDRFDefaultsViewSet, basename="sdrfdefaults")
+router.register(r"shared-tables", SharedTableViewSet, basename="sharedtable")
 
 # Async task endpoints
 router.register(r"async-tasks", AsyncTaskViewSet, basename="asynctask")

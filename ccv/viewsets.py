@@ -5,6 +5,7 @@ Django REST Framework ViewSets for CUPCAKE Vanilla metadata management.
 import io
 import json
 import re
+import uuid
 
 from django.contrib.auth.models import User
 from django.db import models, transaction
@@ -22,7 +23,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.filters import SearchFilter
 from rest_framework.parsers import MultiPartParser
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from sdrf_pipelines.sdrf.schemas import SchemaRegistry as SdrfSchemaRegistry
 
@@ -1249,6 +1250,67 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             return Response({"message": "Column override applied", **summary}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def generate_share_token(self, request, pk=None):
+        """Generate (or refresh) a read-only share token for this table.
+
+        Only the owner or a staff user may generate a token.  Returns the
+        shareable URL path so the frontend can build a full link.
+        """
+        table = self.get_object()
+        if table.owner != request.user and not request.user.is_staff:
+            raise PermissionDenied("Only the table owner may generate a share token.")
+        table.share_token = uuid.uuid4()
+        table.save(update_fields=["share_token"])
+        return Response({"share_token": str(table.share_token)})
+
+    @action(detail=True, methods=["delete"], permission_classes=[IsAuthenticated])
+    def revoke_share_token(self, request, pk=None):
+        """Revoke the read-only share token, making the shared link invalid."""
+        table = self.get_object()
+        if table.owner != request.user and not request.user.is_staff:
+            raise PermissionDenied("Only the table owner may revoke a share token.")
+        table.share_token = None
+        table.save(update_fields=["share_token"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SharedTableViewSet(viewsets.GenericViewSet):
+    """Public read-only viewset for shared SDRF tables.
+
+    No authentication is required.  Access is gated solely by the share token
+    embedded in the URL, which must match ``MetadataTable.share_token``.
+    """
+
+    permission_classes = [AllowAny]
+
+    @action(detail=False, methods=["get"], url_path=r"(?P<token>[0-9a-f-]+)")
+    def retrieve_shared(self, request, token=None):
+        """Return the SDRF table data for the given share token.
+
+        Response shape:
+        ``{"name": "...", "sample_count": N, "headers": [...], "rows": [[...]]}``
+        """
+        try:
+            table = MetadataTable.objects.get(share_token=token)
+        except (MetadataTable.DoesNotExist, ValueError):
+            return Response({"error": "Invalid or expired share token."}, status=status.HTTP_404_NOT_FOUND)
+
+        visible_columns = list(table.columns.filter(hidden=False).order_by("column_position"))
+        result_data, _ = sort_metadata(visible_columns, table.sample_count, table)
+
+        headers = result_data[0] if result_data else []
+        rows = result_data[1:] if len(result_data) > 1 else []
+
+        return Response(
+            {
+                "name": table.name,
+                "sample_count": table.sample_count,
+                "headers": headers,
+                "rows": rows,
+            }
+        )
 
 
 class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
