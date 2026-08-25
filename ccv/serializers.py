@@ -75,10 +75,11 @@ class MetadataTableSerializer(serializers.ModelSerializer):
             "sample_range",
             "can_edit",
             "source_app",
+            "share_token",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "share_token"]
 
     def get_columns(self, obj):
         """Get the columns for this metadata table."""
