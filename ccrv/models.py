@@ -11,7 +11,10 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import models, transaction
+from django.utils.html import escape
 
 import requests
 from bs4 import BeautifulSoup
@@ -19,6 +22,7 @@ from simple_history.models import HistoricalRecords
 
 from ccc.models import AbstractResource
 from ccm.models import Reagent
+from ccrv.export_utils import _process_annotation_file, get_html_template, render_step_description, render_step_reagents
 from ccv.models import MetadataColumn, MetadataTable
 
 
@@ -228,8 +232,6 @@ class ProtocolModel(AbstractResource):
         Returns:
             dict: Mapping of step_id to list of StepAnnotation objects
         """
-        from ccrv.models import StepAnnotation
-
         step_annotations = {}
         protocol_steps = ProtocolStep.objects.filter(step_section__protocol=self).prefetch_related(
             "step_annotations__annotation__owner"
@@ -274,88 +276,14 @@ class ProtocolModel(AbstractResource):
         Returns:
             str: HTML content for this protocol structure only
         """
-        from django.utils.html import escape
-
         sections_html = []
 
         for section in self.sections.all().order_by("order"):
             steps_html = []
 
             for step in section.get_steps_by_order():
-                reagents_html = ""
-                if step.reagents.exists():
-                    reagent_items = []
-                    for sr in step.reagents.all():
-                        unit = sr.unit or sr.reagent.unit or ""
-                        quantity_part = f" - {sr.quantity} {unit}" if sr.quantity else ""
-                        scalable_part = " (scalable)" if sr.scalable else ""
-                        reagent_items.append(f"<li>{sr.reagent.name}{quantity_part}{scalable_part}</li>")
-                    reagents_list = "".join(reagent_items)
-                    reagents_html = f"""
-                    <div class="step-reagents">
-                        <h4>Required Reagents</h4>
-                        <ul class="reagent-list">{reagents_list}</ul>
-                    </div>
-                    """
-
-                step_desc = step.step_description or ""
-
-                step_reagents = step.reagents.all().select_related("reagent")
-                for step_reagent in step_reagents:
-                    reagent = step_reagent.reagent
-                    reagent_id = step_reagent.id
-
-                    base_quantity = step_reagent.quantity or 0
-                    scaled_quantity = (
-                        step_reagent.scaled_quantity
-                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
-                        else base_quantity
-                    )
-
-                    reagent_name_escaped = escape(reagent.name)
-                    unit_value = escape(step_reagent.unit or reagent.unit or "")
-
-                    step_desc = re.sub(rf"%{reagent_id}\.quantity%", f"{{{{REAGENT_QTY_{reagent_id}}}}}", step_desc)
-                    step_desc = re.sub(
-                        rf"%{reagent_id}\.scaled_quantity%", f"{{{{REAGENT_SCALED_{reagent_id}}}}}", step_desc
-                    )
-                    step_desc = re.sub(rf"%{reagent_id}\.name%", f"{{{{REAGENT_NAME_{reagent_id}}}}}", step_desc)
-                    step_desc = re.sub(rf"%{reagent_id}\.unit%", f"{{{{REAGENT_UNIT_{reagent_id}}}}}", step_desc)
-
-                step_desc = escape(step_desc)
-
-                for step_reagent in step_reagents:
-                    reagent = step_reagent.reagent
-                    reagent_id = step_reagent.id
-
-                    base_quantity = step_reagent.quantity or 0
-                    scaled_quantity = (
-                        step_reagent.scaled_quantity
-                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
-                        else base_quantity
-                    )
-
-                    reagent_name_escaped = escape(reagent.name)
-                    unit_value = escape(step_reagent.unit or reagent.unit or "")
-
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_QTY_{reagent_id}}}}}",
-                        f'<span class="template-value" title="Reagent quantity: {reagent_name_escaped}">{base_quantity}</span>',
-                    )
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_SCALED_{reagent_id}}}}}",
-                        f'<span class="template-value template-value-scaled" title="Scaled quantity: {reagent_name_escaped}">{scaled_quantity}</span>',
-                    )
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_NAME_{reagent_id}}}}}",
-                        f'<span class="template-value template-value-name" title="Reagent name">{reagent_name_escaped or "Unknown"}</span>',
-                    )
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_UNIT_{reagent_id}}}}}",
-                        f'<span class="template-value template-value-unit" title="Reagent unit: {reagent_name_escaped}">{unit_value}</span>',
-                    )
-
-                step_desc = step_desc.replace("\n", "<br>")
+                reagents_html = render_step_reagents(step)
+                step_desc = render_step_description(step)
 
                 duration_html = ""
                 if step.step_duration:
@@ -460,34 +388,14 @@ class ProtocolModel(AbstractResource):
             steps_html = []
 
             for step in section.get_steps_by_order():
-                reagents_html = ""
-                if step.reagents.exists():
-                    reagents_list = "".join(
-                        [
-                            f"<li>{sr.reagent.name}"
-                            f"{f' - {sr.quantity}' if sr.quantity else ''}"
-                            f"{' (scalable)' if sr.scalable else ''}</li>"
-                            for sr in step.reagents.all()
-                        ]
-                    )
-                    reagents_html = f"""
-                    <div class="step-reagents">
-                        <h4>Required Reagents</h4>
-                        <ul class="reagent-list">{reagents_list}</ul>
-                    </div>
-                    """
+                reagents_html = render_step_reagents(step)
 
                 annotations_html = ""
                 if step.id in step_annotations:
                     annotations_items = []
                     for step_ann in step_annotations[step.id]:
-                        from ccrv.export_utils import _process_annotation_file
-
                         annotation = step_ann.annotation
                         file_html = _process_annotation_file(annotation) or ""
-
-                        from django.utils.html import escape
-
                         transcription_html = ""
                         if annotation.transcription:
                             trans_text = escape(annotation.transcription).replace("\n", "<br>")
@@ -504,7 +412,7 @@ class ProtocolModel(AbstractResource):
                             f"""
                         <div class="annotation">
                             <div class="annotation-meta">
-                                <strong>{annotation.owner.get_full_name() or annotation.owner.username}</strong>
+                                <strong>{escape(annotation.owner.get_full_name() or annotation.owner.username)}</strong>
                                 - {annotation.created_at.strftime('%B %d, %Y, %I:%M %p')}
                                 {f'<span class="badge badge-{annotation.annotation_type}">{annotation.annotation_type}</span>' if annotation.annotation_type else ''}
                             </div>
@@ -522,64 +430,7 @@ class ProtocolModel(AbstractResource):
                     </div>
                     """
 
-                step_desc = step.step_description or ""
-
-                step_reagents = step.reagents.all().select_related("reagent")
-                for step_reagent in step_reagents:
-                    reagent = step_reagent.reagent
-                    reagent_id = step_reagent.id
-
-                    base_quantity = step_reagent.quantity or 0
-                    scaled_quantity = (
-                        step_reagent.scaled_quantity
-                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
-                        else base_quantity
-                    )
-
-                    reagent_name_escaped = escape(reagent.name)
-                    unit_value = escape(step_reagent.unit or reagent.unit or "")
-
-                    step_desc = re.sub(rf"%{reagent_id}\.quantity%", f"{{{{REAGENT_QTY_{reagent_id}}}}}", step_desc)
-                    step_desc = re.sub(
-                        rf"%{reagent_id}\.scaled_quantity%", f"{{{{REAGENT_SCALED_{reagent_id}}}}}", step_desc
-                    )
-                    step_desc = re.sub(rf"%{reagent_id}\.name%", f"{{{{REAGENT_NAME_{reagent_id}}}}}", step_desc)
-                    step_desc = re.sub(rf"%{reagent_id}\.unit%", f"{{{{REAGENT_UNIT_{reagent_id}}}}}", step_desc)
-
-                step_desc = escape(step_desc)
-
-                for step_reagent in step_reagents:
-                    reagent = step_reagent.reagent
-                    reagent_id = step_reagent.id
-
-                    base_quantity = step_reagent.quantity or 0
-                    scaled_quantity = (
-                        step_reagent.scaled_quantity
-                        if hasattr(step_reagent, "scaled_quantity") and step_reagent.scaled_quantity is not None
-                        else base_quantity
-                    )
-
-                    reagent_name_escaped = escape(reagent.name)
-                    unit_value = escape(step_reagent.unit or reagent.unit or "")
-
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_QTY_{reagent_id}}}}}",
-                        f'<span class="template-value" title="Reagent quantity: {reagent_name_escaped}">{base_quantity}</span>',
-                    )
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_SCALED_{reagent_id}}}}}",
-                        f'<span class="template-value template-value-scaled" title="Scaled quantity: {reagent_name_escaped}">{scaled_quantity}</span>',
-                    )
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_NAME_{reagent_id}}}}}",
-                        f'<span class="template-value template-value-name" title="Reagent name">{reagent_name_escaped or "Unknown"}</span>',
-                    )
-                    step_desc = step_desc.replace(
-                        f"{{{{REAGENT_UNIT_{reagent_id}}}}}",
-                        f'<span class="template-value template-value-unit" title="Reagent unit: {reagent_name_escaped}">{unit_value}</span>',
-                    )
-
-                step_desc = step_desc.replace("\n", "<br>")
+                step_desc = render_step_description(step)
 
                 duration_html = ""
                 if step.step_duration:
@@ -647,8 +498,6 @@ class ProtocolModel(AbstractResource):
             """
             )
 
-        from django.utils.html import escape
-
         protocol_desc = escape(self.protocol_description) if self.protocol_description else ""
         protocol_desc = protocol_desc.replace("\n", "<br>") if protocol_desc else ""
         protocol_title = escape(self.protocol_title)
@@ -679,12 +528,6 @@ class ProtocolModel(AbstractResource):
         Returns:
             str: Complete HTML document
         """
-        from datetime import datetime
-
-        from django.utils.html import escape
-
-        from ccrv.export_utils import get_html_template
-
         if session:
             protocol_html = self.generate_html_for_session(session)
             session_name = escape(session.name)
@@ -735,8 +578,6 @@ class ProtocolModel(AbstractResource):
         Returns:
             str: Signed token containing protocol ID, user ID, and optional session ID
         """
-        from django.core.signing import TimestampSigner
-
         signer = TimestampSigner()
         if session_id:
             payload = f"protocol:{self.id}:{user.id}:{session_id}"
@@ -752,10 +593,6 @@ class ProtocolModel(AbstractResource):
         Returns:
             tuple: (protocol, user, session_id or None) or (None, None, None) if invalid
         """
-        from django.conf import settings
-        from django.contrib.auth import get_user_model
-        from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
-
         User = get_user_model()
         signer = TimestampSigner()
 
@@ -933,8 +770,6 @@ class Session(AbstractResource):
         Returns:
             QuerySet: SessionAnnotation objects for this session
         """
-        from ccrv.models import SessionAnnotation
-
         return (
             SessionAnnotation.objects.filter(session=self)
             .select_related("annotation", "annotation__owner")
@@ -966,16 +801,8 @@ class Session(AbstractResource):
         Returns:
             str: Complete HTML document with all protocols and annotations
         """
-        from datetime import datetime
-
-        from django.utils.html import escape
-
-        from ccrv.export_utils import get_html_template
-
         session_annotations_html = []
         for sa in self.get_session_annotations():
-            from ccrv.export_utils import _process_annotation_file
-
             annotation = sa.annotation
             file_html = _process_annotation_file(annotation) or ""
 
@@ -1059,8 +886,6 @@ class Session(AbstractResource):
         Returns:
             str: Signed token containing session ID and user ID
         """
-        from django.core.signing import TimestampSigner
-
         signer = TimestampSigner()
         payload = f"session:{self.id}:{user.id}"
         return signer.sign(payload)
@@ -1073,10 +898,6 @@ class Session(AbstractResource):
         Returns:
             tuple: (session, user) or (None, None) if invalid
         """
-        from django.conf import settings
-        from django.contrib.auth import get_user_model
-        from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
-
         User = get_user_model()
         signer = TimestampSigner()
 

@@ -1,12 +1,125 @@
 import base64
 import mimetypes
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
 from django.utils.html import escape
+
+import nh3
+from choux.draft import number_text
+
+REAGENT_TEMPLATE = re.compile(r"%(?P<id>\d+)\.(?P<property>name|quantity|scaled_quantity|unit)%")
+
+STEP_HTML_TAGS = {
+    "p",
+    "br",
+    "div",
+    "span",
+    "strong",
+    "b",
+    "em",
+    "i",
+    "u",
+    "s",
+    "sup",
+    "sub",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "a",
+    "blockquote",
+    "pre",
+    "code",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
+    "img",
+}
+STEP_HTML_ATTRIBUTES = {
+    "*": {"class"},
+    "a": {"href", "title"},
+    "img": {"src", "alt", "width", "height"},
+    "td": {"colspan", "rowspan"},
+    "th": {"colspan", "rowspan"},
+}
+STEP_HTML_URL_SCHEMES = {"http", "https", "mailto"}
+
+
+def sanitize_html(content):
+    """Keep the formatting markup of the step editor and remove anything a browser could run."""
+    return nh3.clean(
+        content or "", tags=STEP_HTML_TAGS, attributes=STEP_HTML_ATTRIBUTES, url_schemes=STEP_HTML_URL_SCHEMES
+    )
+
+
+def reagent_scaled_quantity(step_reagent):
+    """Return the quantity of a step reagent after applying its scalable factor."""
+    quantity = step_reagent.quantity or 0
+    if step_reagent.scalable and step_reagent.scalable_factor:
+        return quantity * step_reagent.scalable_factor
+    return quantity
+
+
+def render_step_reagents(step):
+    """Render the list of reagents a step requires, or an empty string when it has none."""
+    items = []
+    for step_reagent in step.reagents.select_related("reagent"):
+        reagent = step_reagent.reagent
+        unit = f" {escape(reagent.unit)}" if reagent.unit else ""
+        quantity = f" - {number_text(step_reagent.quantity)}{unit}" if step_reagent.quantity else ""
+        scalable = " (scalable)" if step_reagent.scalable else ""
+        items.append(f"<li>{escape(reagent.name)}{quantity}{scalable}</li>")
+    if not items:
+        return ""
+    return f"""
+                    <div class="step-reagents">
+                        <h4>Required Reagents</h4>
+                        <ul class="reagent-list">{"".join(items)}</ul>
+                    </div>
+                    """
+
+
+def render_step_description(step):
+    """
+    Render the text of a step with its ``%<id>.<property>%`` reagent templates filled in.
+
+    The step HTML is sanitized, then each template naming a reagent of the step is replaced by
+    the reagent name, unit, quantity or scaled quantity. Other templates are kept as written.
+    """
+    step_reagents = {step_reagent.id: step_reagent for step_reagent in step.reagents.select_related("reagent")}
+
+    def fill(match):
+        step_reagent = step_reagents.get(int(match.group("id")))
+        if step_reagent is None:
+            return escape(match.group(0))
+        reagent = step_reagent.reagent
+        name = escape(reagent.name)
+        prop = match.group("property")
+        if prop == "name":
+            return f'<span class="template-value template-value-name" title="Reagent name">{name or "Unknown"}</span>'
+        if prop == "unit":
+            unit = escape(reagent.unit or "")
+            return f'<span class="template-value template-value-unit" title="Reagent unit: {name}">{unit}</span>'
+        if prop == "scaled_quantity":
+            value = number_text(reagent_scaled_quantity(step_reagent))
+            return f'<span class="template-value template-value-scaled" title="Scaled quantity: {name}">{value}</span>'
+        value = number_text(step_reagent.quantity or 0)
+        return f'<span class="template-value" title="Reagent quantity: {name}">{value}</span>'
+
+    return REAGENT_TEMPLATE.sub(fill, sanitize_html(step.step_description)).replace("\n", "<br>")
 
 
 def get_mime_type(file_path):

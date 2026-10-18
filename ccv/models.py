@@ -3923,6 +3923,33 @@ class DiseaseOntologyTerm(models.Model):
         return f"{self.name} ({self.identifier})"
 
 
+class ExternalTerm(models.Model):
+    """Controlled vocabulary term from an external platform, cached locally for search and offline use."""
+
+    platform = models.CharField(max_length=50, help_text="Platform the term comes from, for example protocols_io")
+    kind = models.CharField(max_length=50, help_text="Kind of term, for example reagent or unit")
+    external_id = models.CharField(max_length=255, help_text="Identifier of the term on the platform")
+    name = models.TextField()
+    description = models.TextField(blank=True, default="")
+    synonyms = models.TextField(blank=True, default="", help_text="Semicolon-separated other names")
+    data = models.JSONField(default=dict, blank=True, help_text="Full record from the platform")
+    fetched_at = models.DateTimeField(help_text="When the term was last received from the platform")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "ccv"
+        ordering = ["name"]
+        verbose_name = "External Term"
+        verbose_name_plural = "External Terms"
+        constraints = [
+            models.UniqueConstraint(fields=["platform", "kind", "external_id"], name="unique_external_term"),
+        ]
+        indexes = [models.Index(fields=["platform", "kind", "name"])]
+
+    def __str__(self):
+        return f"{self.name} ({self.platform} {self.kind} {self.external_id})"
+
+
 class MetadataColumnTemplateShare(models.Model):
     """
     Through model for sharing templates between users.

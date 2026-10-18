@@ -138,6 +138,8 @@ sdrf-pipelines = "^0.1.6"
 drf-chunked-upload = "^0.6.0"
 pronto = "^2.5.7"
 requests = "^2.32.0"
+nh3 = "^0.3.7"
+choux = {path = "packages/choux", develop = true}
 djangorestframework-simplejwt = "^5.5.1"
 requests-oauthlib = "^2.0.0"
 python-social-auth = {extras = ["django"], version = "^0.3.6"}

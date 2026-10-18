@@ -121,7 +121,9 @@ jobs:
         fi
 
         $PYTHON_BIN -m pip install --upgrade pip
-        $PYTHON_BIN -m pip install -r requirements.txt
+        $PYTHON_BIN -m pip install ./packages/choux
+        grep -v "packages/choux" requirements.txt > requirements-portable.txt
+        $PYTHON_BIN -m pip install -r requirements-portable.txt
 
     - name: Create portable distribution
       shell: bash

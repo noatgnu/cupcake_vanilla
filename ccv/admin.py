@@ -14,6 +14,7 @@ from .models import (
     CellOntology,
     ChEBICompound,
     DiseaseOntologyTerm,
+    ExternalTerm,
     FavouriteMetadataOption,
     HumanDisease,
     MetadataColumn,
@@ -592,6 +593,17 @@ class CellOntologyAdmin(admin.ModelAdmin):
         base_display = list(self.list_display)
         # Could add user-specific customizations here
         return base_display
+
+
+@admin.register(ExternalTerm)
+class ExternalTermAdmin(admin.ModelAdmin):
+    """Admin interface for terms cached from external platforms."""
+
+    list_display = ["name", "platform", "kind", "external_id", "description", "fetched_at"]
+    list_filter = ["platform", "kind"]
+    search_fields = ["name", "external_id", "synonyms", "description"]
+    ordering = ["platform", "kind", "name"]
+    readonly_fields = ["fetched_at", "created_at"]
 
 
 @admin.register(MetadataColumnTemplate)

@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "choux"
+version = "0.1.0"
+description = "Python client for the protocols.io API with Draft.js content building and validation"
+authors = ["Toan Phung <toan.phung@proteo.info>"]
+license = "MIT"
+keywords = ["protocols.io", "protocols", "lab-notebook", "draft-js", "api-client"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+packages = [{include = "choux", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+httpx = ">=0.27,<1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+respx = ">=0.21,<1"
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

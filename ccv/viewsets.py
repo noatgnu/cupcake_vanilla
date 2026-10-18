@@ -29,6 +29,7 @@ from sdrf_pipelines.sdrf.schemas import SchemaRegistry as SdrfSchemaRegistry
 
 from ccc.models import LabGroup, ResourceRole, ResourceVisibility
 
+from .external_vocabularies.tasks import request_refresh
 from .models import (
     BTOTerm,
     CellOntology,
@@ -1417,6 +1418,7 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        remote_pending = request_refresh(column.ontology_type, search_term, user_id=request.user.id)
         try:
             suggestions = column.get_ontology_suggestions(search_term, limit, search_type)
         except Exception as e:
@@ -1439,6 +1441,7 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
                 "count": len(suggestions),
                 "custom_filters": column.custom_ontology_filters,
                 "has_more": len(suggestions) >= limit,  # Indicate if there might be more results
+                "remote_pending": remote_pending,
             }
         )
 
@@ -5007,7 +5010,7 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             )
 
         try:
-            # Use the template's own method for getting suggestions
+            remote_pending = request_refresh(template.ontology_type, search_term, user_id=request.user.id)
             suggestions = template.get_ontology_suggestions(search_term, limit, search_type)
             total_count = len(suggestions)
 
@@ -5024,6 +5027,7 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                     "ontology_type": template.ontology_type,
                     "search_term": search_term,
                     "search_type": search_type,
+                    "remote_pending": remote_pending,
                 }
             )
 
@@ -5747,6 +5751,7 @@ class OntologySearchViewSet(viewsets.ViewSet):
         search_type = "istartswith" if match_type == "startswith" else "icontains"
 
         suggestions_with_types = []
+        remote_pending = request_refresh(ontology_type, query, user_id=request.user.id)
 
         # If specific ontology type requested, use unified search
         if ontology_type:
@@ -5793,6 +5798,7 @@ class OntologySearchViewSet(viewsets.ViewSet):
                 "count": len(formatted_results),
                 "custom_filters": custom_filters if custom_filters else None,
                 "has_more": len(formatted_results) >= limit,
+                "remote_pending": remote_pending,
             }
         )
 

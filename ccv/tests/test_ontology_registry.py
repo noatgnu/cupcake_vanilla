@@ -2,7 +2,7 @@
 Tests for ccv/ontology_registry.py and its integration with configure_ontology_options.
 
 Covers:
-- Registry completeness: all 14 types and all SDRF names registered
+- Registry completeness: all 16 types and all SDRF names registered
 - Descriptor field correctness against the actual DB schema
 - SdrfMapping.resolve_filter() for all column-name-hint cases
 - OntologyDescriptor.serialize() output shape and Unimod custom serializer
@@ -49,6 +49,8 @@ EXPECTED_TYPE_KEYS = [
     "psi_ms",
     "bto",
     "doid",
+    "protocols_io_reagent",
+    "protocols_io_unit",
 ]
 
 EXPECTED_SDRF_NAMES = [

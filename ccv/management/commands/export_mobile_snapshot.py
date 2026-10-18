@@ -180,11 +180,11 @@ class Command(BaseCommand):
         if dataset in ("ontology", "all"):
             type_keys = [table] if table else [key for key, _ in registry.choices()]
             for type_key in type_keys:
-                model = registry.get_model(type_key)
-                if model is None:
+                descriptor = registry.get(type_key)
+                if descriptor is None:
                     raise CommandError(f"Unknown ontology type_key: {type_key}")
                 sqlite_path = output_dir / f"ontology-{type_key}.sqlite"
-                row_count = _dump_queryset(model.objects.all(), type_key, sqlite_path)
+                row_count = _dump_queryset(descriptor.base_queryset(), type_key, sqlite_path)
                 manifest.append(self._manifest_entry("ontology", type_key, sqlite_path, row_count))
 
         if dataset in ("schema", "all"):

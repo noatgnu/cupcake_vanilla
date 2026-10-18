@@ -7,6 +7,8 @@ from typing import Callable
 from django.db import models as django_models
 from django.db.models import Case, IntegerField, Value, When
 
+from ccv.external_vocabularies import ExternalVocabularySource, sources
+
 
 def _parse_unimod_additional_data(additional_data: list) -> tuple[dict, dict]:
     """Unpack Unimod additional_data into general properties and spec-grouped dicts."""
@@ -74,6 +76,8 @@ class OntologyDescriptor:
     sort_field: str | None = None
     obsolete_filter: bool = False
     custom_serializer: Callable[[dict, str], dict] | None = None
+    base_filter: dict | None = None
+    remote_source: str | None = None
 
     @cached_property
     def model(self):
@@ -113,7 +117,7 @@ class OntologyDescriptor:
         custom_filters: dict | None = None,
     ):
         """Build a filtered, optionally annotated queryset for this ontology type."""
-        queryset = self.model.objects.all()
+        queryset = self.base_queryset()
 
         if self.obsolete_filter:
             queryset = queryset.filter(obsolete=False)
@@ -144,6 +148,13 @@ class OntologyDescriptor:
                 priority=Case(*whens, default=Value(len(pf) + 1), output_field=IntegerField())
             ).order_by("priority", self.sort_field or pf[0])
 
+        return queryset
+
+    def base_queryset(self):
+        """Return every term of this ontology type, without search or obsolete filtering."""
+        queryset = self.model.objects.all()
+        if self.base_filter:
+            queryset = queryset.filter(**self.base_filter)
         return queryset
 
     def get_suggestions(
@@ -558,6 +569,50 @@ registry.register(
         obsolete_filter=True,
     )
 )
+
+
+def _serialize_external_term(data: dict, type_key: str) -> dict:
+    """Serializer for terms cached from external platforms."""
+    return {
+        "id": data.get("external_id", ""),
+        "value": data.get("name", ""),
+        "display_name": data.get("name", ""),
+        "description": data.get("description", "") or "",
+        "ontology_type": type_key,
+        "full_data": {
+            "platform": data.get("platform", ""),
+            "kind": data.get("kind", ""),
+            "external_id": data.get("external_id", ""),
+            "name": data.get("name", ""),
+            "description": data.get("description", ""),
+            "synonyms": data.get("synonyms", ""),
+            "data": data.get("data") or {},
+        },
+    }
+
+
+def external_descriptor(source: ExternalVocabularySource) -> OntologyDescriptor:
+    """Build the ontology descriptor for an external vocabulary source."""
+    return OntologyDescriptor(
+        type_key=source.key,
+        label=source.label,
+        model_label="ccv.ExternalTerm",
+        search_fields=["name", "synonyms", "external_id", "description"],
+        id_field="external_id",
+        value_field="name",
+        display_field="name",
+        description_field="description",
+        full_data_fields=["platform", "kind", "external_id", "name", "description", "synonyms", "data"],
+        priority_fields=["name", "synonyms"],
+        sort_field="name",
+        custom_serializer=_serialize_external_term,
+        base_filter={"platform": source.platform, "kind": source.kind},
+        remote_source=source.key if source.searchable else None,
+    )
+
+
+for external_source in sources.all():
+    registry.register(external_descriptor(external_source))
 
 # ---------------------------------------------------------------------------
 # SDRF ontology short-name → internal type mappings

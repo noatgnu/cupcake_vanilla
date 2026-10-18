@@ -121,15 +121,17 @@ class Command(BaseCommand):
 
     def _import_entry(self, entry, sqlite_path):
         if entry["dataset"] == "ontology":
-            model = registry.get_model(entry["name"])
-            if model is None:
+            descriptor = registry.get(entry["name"])
+            if descriptor is None:
                 raise CommandError(f"Unknown ontology type_key: {entry['name']}")
-            return self._import_scalar_table(model, entry["name"], sqlite_path)
+            return self._import_scalar_table(
+                descriptor.model, entry["name"], sqlite_path, replaced=descriptor.base_queryset()
+            )
         if entry["dataset"] == "column-template":
             return self._import_scalar_table(MetadataColumnTemplate, "column_template", sqlite_path)
         raise CommandError(f"Unsupported dataset for import: {entry['dataset']}")
 
-    def _import_scalar_table(self, model, sqlite_table, sqlite_path, batch_size=2000):
+    def _import_scalar_table(self, model, sqlite_table, sqlite_path, batch_size=2000, replaced=None):
         """Stream rows from the sqlite table in batches rather than materializing the whole
         table as model instances at once -- ncbi_taxonomy alone is ~2.9M rows, so building
         every instance in memory before a single bulk_create would risk the exact kind of OOM
@@ -150,7 +152,7 @@ class Command(BaseCommand):
             total = 0
 
             with transaction.atomic():
-                model.objects.all().delete()
+                (replaced if replaced is not None else model.objects.all()).delete()
 
                 while True:
                     rows = cursor.fetchmany(batch_size)

@@ -112,4 +112,4 @@ class ExportMobileSnapshotTest(TestCase):
         self.assertIn("species", names)
         self.assertIn("sdrf", names)
         self.assertIn("system", names)
-        self.assertEqual(len(manifest["tables"]), 14 + 2)
+        self.assertEqual(len(manifest["tables"]), 16 + 2)
