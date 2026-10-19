@@ -45,7 +45,7 @@ class DraftValidationError(ChouxError):
     Raised when content fails validation before it is sent.
 
     Attributes:
-        issues: Every problem found, including warnings, so callers can show the full list at once.
+        issues: Every problem found, including warnings.
     """
 
     def __init__(self, issues: list[Issue]):

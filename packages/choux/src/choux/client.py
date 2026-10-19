@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 import time
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
@@ -23,7 +24,6 @@ CONTENT_HOST = "https://content.protocols.io"
 STORAGE_PREFIX = "files/"
 CACHE_CONTROL = "max-age=31536000"
 RETRY_STATUSES = frozenset({429, 502, 503, 504})
-DRAFT_PROTOCOL_FIELDS = frozenset({"description", "before_start", "guidelines", "warning"})
 
 
 class ProtocolsIO:
@@ -178,6 +178,34 @@ class ProtocolsIO:
         """
         return self.request("GET", f"/v4/filemanager/folders/{folder_guid}/search", params=query)["payload"]
 
+    def search_all(self, search_key: str, **query: Any) -> dict[str, Any]:
+        """
+        Search every workspace the account can see.
+
+        Args:
+            search_key: Search text.
+            query: Other file manager search parameters such as ``page_size`` or ``content_types[]``.
+
+        Returns:
+            A dictionary with ``items`` and ``pagination``.
+
+        Raises:
+            ValueError: When ``search_key`` is blank.
+        """
+        if not search_key or not search_key.strip():
+            raise ValueError("a search key is required")
+        params = {"search_key": search_key.strip(), **query}
+        return self.request("GET", "/v4/filemanager/search", params=params)["payload"]
+
+    def get_protocol_v3(self, protocol: int | str) -> dict[str, Any]:
+        """
+        Return a protocol in the v3 format, with each step's section and text as components.
+
+        Args:
+            protocol: Protocol id or URI.
+        """
+        return self.request("GET", f"/v3/protocols/{protocol}")["protocol"]
+
     def get_protocol(self, protocol: int | str, *, content_format: str = "json") -> dict[str, Any]:
         """
         Return a protocol with its steps, materials and units.
@@ -246,43 +274,24 @@ class ProtocolsIO:
         """
         return self.request("POST", f"/v3/protocols/{guid}", data={"type_id": type_id})["protocol"]
 
-    def update_protocol(
-        self,
-        protocol: int | str,
-        *,
-        validate: bool = True,
-        units: Units | None = None,
-        **fields: Any,
-    ) -> list[Issue]:
+    def update_protocol(self, protocol: int | str, **fields: Any) -> None:
         """
         Update protocol fields.
 
-        ``description``, ``before_start``, ``guidelines`` and ``warning`` accept a :class:`Draft`.
+        Text fields such as ``description``, ``guidelines`` or ``materials_text`` take plain text;
+        each line becomes a paragraph.
 
         Args:
             protocol: Protocol id, URI or GUID.
-            validate: Check rich text fields before sending; pass ``False`` to send them unchecked.
-            units: Unit ids or units of the protocol, used to check units in rich text fields.
-            fields: Fields to change, for example ``title`` or ``keywords``.
-
-        Returns:
-            Validation warnings.
+            fields: Fields to change, for example ``title``, ``description`` or ``keywords``.
 
         Raises:
-            DraftValidationError: When ``validate`` is on and a rich text field has errors.
+            TypeError: When a field is given a :class:`Draft`.
         """
-        body: dict[str, Any] = {}
-        issues: list[Issue] = []
         for name, value in fields.items():
-            if name in DRAFT_PROTOCOL_FIELDS and isinstance(value, Draft):
-                if validate:
-                    issues.extend(validate_draft(value, units=units, path=name))
-                value = value.to_json()
-            body[name] = value
-        if validate:
-            raise_for_issues(issues)
-        self.request("PUT", f"/v4/protocols/{protocol}", json=body)
-        return issues
+            if isinstance(value, Draft):
+                raise TypeError(f"{name} takes plain text, not a Draft")
+        self.request("PUT", f"/v4/protocols/{protocol}", json=dict(fields))
 
     def get_steps(self, protocol: int | str, *, content_format: str = "json") -> list[dict[str, Any]]:
         """
@@ -346,6 +355,60 @@ class ProtocolsIO:
             logger.warning("%s: %s", issue.path, issue.message)
         self.request("POST", f"/v4/protocols/{protocol}/steps", json={"steps": [step.to_api() for step in ordered]})
         return issues
+
+    def apply_actions(self, protocol_guid: str, actions: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """
+        Apply protocol actions built with :func:`protocol_action`.
+
+        Args:
+            protocol_guid: Protocol GUID, not its id or URI.
+            actions: Actions in the order they should be applied.
+
+        Returns:
+            Actions protocols.io applied on its side as a result, if any.
+        """
+        payload = self.request("PUT", f"/v3/protocols/{protocol_guid}", json={"actions": list(actions)})
+        return payload.get("actions") or []
+
+    def set_step_durations(self, protocol: int | str, durations: Mapping[str, int]) -> None:
+        """
+        Set the step time of each step and the total of every section containing one of them.
+
+        A section total is the sum of the step times in the section and is stored on its first step.
+        Steps and sections that already have the given values are left unchanged.
+
+        Args:
+            protocol: Protocol id, URI or GUID.
+            durations: Step time in whole seconds, by step GUID.
+
+        Raises:
+            ValueError: When a step GUID is not in the protocol or a duration is negative.
+        """
+        if not durations:
+            return
+        steps = self.get_steps(protocol)
+        current = {step["guid"]: step.get("duration") or 0 for step in steps}
+        actions = []
+        for step_guid, seconds in durations.items():
+            if step_guid not in current:
+                raise ValueError(f"step {step_guid} is not in protocol {protocol}")
+            if seconds < 0:
+                raise ValueError(f"step {step_guid} cannot have a negative duration")
+            if int(seconds) != current[step_guid]:
+                path = ["steps", step_guid, "duration"]
+                actions.append(protocol_action("step:set-duration", path, int(seconds), current[step_guid]))
+        updated = {**current, **{guid: int(seconds) for guid, seconds in durations.items()}}
+        for section in section_runs(steps):
+            if not any(step["guid"] in durations for step in section):
+                continue
+            first = section[0]
+            total = sum(updated[step["guid"]] for step in section)
+            previous = first.get("section_duration") or 0
+            if total != previous:
+                path = ["steps", first["guid"], "section_duration"]
+                actions.append(protocol_action("step:set-section-duration", path, total, previous))
+        if actions:
+            self.apply_actions(self.get_protocol(protocol)["guid"], actions)
 
     def delete_steps(self, protocol: int | str, guids: Iterable[str]) -> None:
         """
@@ -545,6 +608,47 @@ class ProtocolsIO:
                 payload=response.text,
             )
         return body
+
+
+def section_runs(steps: Iterable[Mapping[str, Any]]) -> list[list[Mapping[str, Any]]]:
+    """
+    Group steps in order into sections: consecutive steps with the same section name.
+
+    Args:
+        steps: Steps in protocol order, from :meth:`ProtocolsIO.get_steps`.
+
+    Returns:
+        One list of steps per section. Steps without a section are left out.
+    """
+    runs: list[list[Mapping[str, Any]]] = []
+    previous_name = None
+    for step in steps:
+        name = step.get("section") or None
+        if name and name == previous_name:
+            runs[-1].append(step)
+        elif name:
+            runs.append([step])
+        previous_name = name
+    return runs
+
+
+def protocol_action(marker: str, path: list[str], value: Any, previous: Any) -> dict[str, Any]:
+    """
+    Build one protocol action for :meth:`ProtocolsIO.apply_actions`.
+
+    Args:
+        marker: Editor action marker, for example ``step:set-duration``.
+        path: Location of the changed value in the protocol object.
+        value: New value.
+        previous: Value before the change.
+    """
+    return {
+        "guid": uuid.uuid4().hex.upper(),
+        "up": [{"path": path, "value": value}],
+        "down": [{"path": path, "value": previous}],
+        "marker": marker,
+        "microtime": int(time.time() * 1000),
+    }
 
 
 def _guess_type(filename: str) -> str:

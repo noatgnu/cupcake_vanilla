@@ -92,9 +92,9 @@ class Draft:
     """
     A Draft.js document as used for protocols.io step text, descriptions and notes.
 
-    Inline entities such as amounts and durations take one placeholder character in the text and
-    protocols.io renders their value in its place, so text around an entity should not repeat
-    the value. Images and note boxes go in their own block through :meth:`block_entity`.
+    Inline entities such as amounts and durations take one placeholder character in the text, and
+    protocols.io renders their value in its place. Images and note boxes go in their own block
+    through :meth:`block_entity`.
 
     Example:
         >>> draft = Draft()

@@ -210,9 +210,9 @@ class UserOrcidProfileAdmin(admin.ModelAdmin):
         (
             "OAuth Tokens",
             {
-                "fields": ("access_token", "refresh_token", "token_expires_at"),
+                "fields": ("token_expires_at",),
                 "classes": ("collapse",),
-                "description": "OAuth tokens for API access (encrypted)",
+                "description": "Tokens are stored encrypted and are not shown",
             },
         ),
         ("Audit Information", {"fields": ("linked_at",), "classes": ("collapse",)}),

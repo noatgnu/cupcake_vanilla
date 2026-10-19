@@ -10,8 +10,7 @@ class UploadedFile:
     """
     A file stored in protocols.io file storage and ready to be referenced from content.
 
-    Files are stored with public read access, so anyone holding ``source`` can download the file
-    even when the protocol that uses it is private.
+    The file is publicly readable at ``source``, including when the protocol using it is private.
 
     Attributes:
         id: protocols.io file id.

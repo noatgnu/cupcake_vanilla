@@ -69,6 +69,7 @@ def test_duration_rounds_to_whole_seconds_and_has_timer_fields():
     assert entity.data["preset"] == []
     assert entity.data["pause"] is None
     assert entity.data["start"] is None
+    assert entity.data["isNotInTotal"] is False
 
 
 def test_file_attachment_uses_upload_details(uploaded_file):

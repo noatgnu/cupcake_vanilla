@@ -20,9 +20,11 @@ import requests
 from bs4 import BeautifulSoup
 from simple_history.models import HistoricalRecords
 
+from ccc.encryption import EncryptedTextField
 from ccc.models import AbstractResource
 from ccm.models import Reagent
 from ccrv.export_utils import _process_annotation_file, get_html_template, render_step_description, render_step_reagents
+from ccrv.protocols_io.importer import group_into_sections
 from ccv.models import MetadataColumn, MetadataTable
 
 
@@ -177,50 +179,70 @@ class ProtocolModel(AbstractResource):
         if protocol_meta.status_code == 200:
             protocol_meta = protocol_meta.json()
             if protocol_meta:
-                with transaction.atomic():
-                    sections_dict = {}
-                    protocol = ProtocolModel()
-                    protocol.protocol_id = protocol_meta["protocol"]["id"]
-                    # convert unix timestamp to datetime
-                    protocol.protocol_created_on = datetime.fromtimestamp(protocol_meta["protocol"]["created_on"])
-                    protocol.protocol_doi = protocol_meta["protocol"]["doi"]
-                    protocol.protocol_title = protocol_meta["protocol"]["title"]
-                    protocol.protocol_description = protocol_meta["protocol"]["description"]
-                    protocol.protocol_url = url
-                    protocol.protocol_version_uri = protocol_meta["protocol"]["version_uri"]
-                    protocol.save()
-
-                    for step in protocol_meta["protocol"]["steps"]:
-                        protocol_step = ProtocolStep()
-                        for c in step["components"]:
-                            if c["title"] == "Section":
-                                if c["source"]["title"] not in sections_dict:
-                                    section = ProtocolSection()
-                                    section.protocol = protocol
-                                    section.section_description = c["source"]["title"]
-                                    section.section_duration = step["section_duration"]
-                                    section.save()
-                                    sections_dict[c["source"]["title"]] = section
-                                protocol_step.step_section = sections_dict[c["source"]["title"]]
-
-                            elif c["title"] == "description":
-                                protocol_step.step_description = c["source"]["description"]
-                        protocol_step.protocol = protocol
-                        protocol_step.step_id = step["id"]
-                        protocol_step.step_duration = step["duration"]
-                        protocol_step.save()
-
-                with transaction.atomic():
-                    for step in protocol_meta["protocol"]["steps"]:
-                        protocol_step = protocol.steps.get(step_id=step["id"])
-                        if step["previous_id"] != 0:
-                            protocol_step.previous_step = protocol.steps.get(step_id=step["previous_id"])
-                        protocol_step.save()
-                return protocol
+                return ProtocolModel.create_protocol_from_payload(protocol_meta["protocol"], url)
         else:
             raise ValueError(f"Could not find protocol.io protocol with url {url}")
 
         raise ValueError("Failed to import protocol from protocols.io")
+
+    @staticmethod
+    def create_protocol_from_payload(data, url):
+        """
+        Create a protocol from a protocols.io protocol in the v3 format.
+
+        Every step is placed in a section: consecutive steps without a section on protocols.io
+        form an untitled section at their position.
+
+        Args:
+            data: The ``protocol`` object of the protocols.io v3 protocol response.
+            url: Address of the protocol on protocols.io.
+
+        Returns:
+            The created :class:`ProtocolModel`.
+        """
+        with transaction.atomic():
+            protocol = ProtocolModel()
+            protocol.protocol_id = data["id"]
+            protocol.protocol_created_on = datetime.fromtimestamp(data["created_on"])
+            protocol.protocol_doi = data["doi"]
+            protocol.protocol_title = data["title"]
+            protocol.protocol_description = data["description"]
+            protocol.protocol_url = url
+            protocol.protocol_version_uri = data["version_uri"]
+            protocol.save()
+
+            imported_steps = data["steps"] or []
+            created = {}
+            for section_order, imported in enumerate(group_into_sections(imported_steps)):
+                section = ProtocolSection.objects.create(
+                    protocol=protocol,
+                    section_description=imported.title,
+                    section_duration=imported.duration,
+                    order=section_order,
+                )
+                for step_order, step in enumerate(imported.steps):
+                    description = next(
+                        (
+                            (component.get("source") or {}).get("description") or ""
+                            for component in step.get("components") or []
+                            if component.get("title") == "description"
+                        ),
+                        "",
+                    )
+                    created[step["id"]] = ProtocolStep.objects.create(
+                        protocol=protocol,
+                        step_section=section,
+                        step_id=step["id"],
+                        step_duration=step.get("duration"),
+                        step_description=description,
+                        order=step_order,
+                    )
+            for step in imported_steps:
+                previous = created.get(step.get("previous_id"))
+                if previous is not None:
+                    created[step["id"]].previous_step = previous
+                    created[step["id"]].save(update_fields=["previous_step"])
+        return protocol
 
     def get_session_annotations(self, session):
         """
@@ -619,6 +641,26 @@ class ProtocolModel(AbstractResource):
 
         except (BadSignature, SignatureExpired, ValueError, User.DoesNotExist, cls.DoesNotExist):
             return None, None, None
+
+
+class ProtocolsIOAccount(models.Model):
+    """A user's protocols.io access token and the protocols.io account it belongs to."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="protocols_io_account")
+    access_token = EncryptedTextField(help_text="protocols.io access token, stored encrypted")
+    username = models.CharField(max_length=255, help_text="protocols.io username the token belongs to")
+    name = models.CharField(max_length=255, blank=True, default="", help_text="protocols.io display name")
+    connected_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_used_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        app_label = "ccrv"
+        verbose_name = "protocols.io account"
+        verbose_name_plural = "protocols.io accounts"
+
+    def __str__(self):
+        return f"{self.user} - {self.username}"
 
 
 class Session(AbstractResource):

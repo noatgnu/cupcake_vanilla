@@ -105,8 +105,8 @@ def refresh_from_platform(source_key: str, term: str) -> int:
     """
     Search the platform for ``term`` and store the results, unless that search ran recently.
 
-    Failures are logged and leave the cache unchanged, so local suggestions keep working when
-    the platform cannot be reached. The queued marker for ``term`` is cleared in every case.
+    Failures are logged and leave the cache unchanged. The queued marker for ``term`` is cleared
+    in every case.
 
     Args:
         source_key: Key of the source.

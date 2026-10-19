@@ -22,6 +22,7 @@ from .models import (
     ProtocolRating,
     ProtocolReagent,
     ProtocolSection,
+    ProtocolsIOAccount,
     ProtocolStep,
     Session,
     SessionAnnotation,
@@ -1001,3 +1002,18 @@ class InstrumentUsageSessionAnnotationSerializer(serializers.ModelSerializer):
             "instrument_name",
             "created_at",
         ]
+
+
+class ProtocolsIOAccountSerializer(serializers.ModelSerializer):
+    """Connection status of a user's protocols.io account, without the token."""
+
+    class Meta:
+        model = ProtocolsIOAccount
+        fields = ["username", "name", "connected_at", "last_used_at"]
+        read_only_fields = fields
+
+
+class ProtocolsIOConnectSerializer(serializers.Serializer):
+    """protocols.io access token to connect."""
+
+    access_token = serializers.CharField(write_only=True, trim_whitespace=True)

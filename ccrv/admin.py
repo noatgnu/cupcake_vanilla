@@ -19,6 +19,7 @@ from .models import (
     ProtocolRating,
     ProtocolReagent,
     ProtocolSection,
+    ProtocolsIOAccount,
     ProtocolStep,
     Session,
     StepReagent,
@@ -483,3 +484,17 @@ class TimeKeeperAdmin(SimpleHistoryAdmin):
     def get_queryset(self, request):
         """Optimize queryset."""
         return super().get_queryset(request).select_related("session", "step", "user", "remote_host")
+
+
+@admin.register(ProtocolsIOAccount)
+class ProtocolsIOAccountAdmin(admin.ModelAdmin):
+    """Admin interface for users' protocols.io accounts. Tokens are not shown."""
+
+    list_display = ["user", "username", "name", "connected_at", "last_used_at"]
+    search_fields = ["user__username", "username", "name"]
+    fields = ["user", "username", "name", "connected_at", "updated_at", "last_used_at"]
+    readonly_fields = fields
+
+    def has_add_permission(self, request):
+        """Accounts cannot be added from the admin."""
+        return False

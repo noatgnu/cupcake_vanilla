@@ -125,7 +125,7 @@ def concentration(value: int | float | str | Decimal, unit: int, label: str = ""
 
 def duration(seconds: int | float, label: str = "") -> Entity:
     """
-    Build a duration, which protocols.io shows with a timer.
+    Build a duration.
 
     Args:
         seconds: Length in seconds, rounded to a whole second.
@@ -137,6 +137,7 @@ def duration(seconds: int | float, label: str = "") -> Entity:
             "duration": int(round(seconds)),
             "guid": new_guid(),
             "id": 0,
+            "isNotInTotal": False,
             "label": label,
             "pause": None,
             "preset": [],

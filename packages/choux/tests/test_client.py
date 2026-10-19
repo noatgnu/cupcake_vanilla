@@ -4,7 +4,8 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 import respx
-from choux import Draft, ProtocolsIO, RateLimiter, Step, chain, records
+from choux import Draft, ProtocolsIO, RateLimiter, Step, chain, protocol_action, records
+from choux.client import section_runs
 from choux.draft import amount, duration
 from choux.exceptions import APIError, DraftValidationError, RateLimitError, UploadError
 
@@ -220,20 +221,18 @@ def test_delete_steps(client, api):
     assert sent_json(route) == {"steps": ["A" * 32]}
 
 
-def test_update_protocol_serialises_and_validates_rich_text(client, api):
-    """Update protocol serialises and validates rich text."""
+def test_update_protocol_sends_plain_text_fields(client, api):
+    """Update protocol sends plain text fields."""
     route = api.put(f"{API}/v4/protocols/340067").mock(return_value=ok())
-    client.update_protocol(340067, title="Lysis", description=Draft().paragraph("About"))
-    sent = sent_json(route)
-    assert sent["title"] == "Lysis"
-    assert json.loads(sent["description"])["blocks"][0]["text"] == "About"
+    client.update_protocol(340067, title="Lysis", description="First line\nSecond line", keywords="lysis")
+    assert sent_json(route) == {"title": "Lysis", "description": "First line\nSecond line", "keywords": "lysis"}
 
 
-def test_update_protocol_refuses_invalid_rich_text(client, api):
-    """Update protocol refuses invalid rich text."""
+def test_update_protocol_refuses_drafts(client, api):
+    """Update protocol refuses drafts."""
     route = api.put(f"{API}/v4/protocols/340067").mock(return_value=ok())
-    with pytest.raises(DraftValidationError):
-        client.update_protocol(340067, description=Draft().paragraph(amount(5, unit=99)), units={1})
+    with pytest.raises(TypeError):
+        client.update_protocol(340067, description=Draft().paragraph("About"))
     assert not route.called
 
 
@@ -385,3 +384,130 @@ def test_record_notes():
     """Record notes."""
     assert records.add_note("hi", step_id=4) == {"type": "notes", "data": {"id": None, "note": "hi", "step_id": 4}}
     assert records.edit_note(9, "new") == {"type": "notes", "data": {"id": 9, "note": "new"}}
+
+
+def test_protocol_action_records_new_and_previous_values():
+    """Protocol action records new and previous values."""
+    action = protocol_action("step:set-duration", ["steps", "S" * 32, "duration"], 600, 0)
+    assert action["marker"] == "step:set-duration"
+    assert action["up"] == [{"path": ["steps", "S" * 32, "duration"], "value": 600}]
+    assert action["down"] == [{"path": ["steps", "S" * 32, "duration"], "value": 0}]
+    assert len(action["guid"]) == 32
+    assert action["microtime"] > 0
+
+
+def test_apply_actions_sends_actions_to_the_protocol_guid(client, api):
+    """Apply actions sends actions to the protocol guid."""
+    route = api.put(f"{API}/v3/protocols/{'P' * 32}").mock(return_value=ok(actions=[{"actions": [], "limited": False}]))
+    action = protocol_action("step:set-duration", ["steps", "S", "duration"], 1, 0)
+    assert client.apply_actions("P" * 32, [action]) == [{"actions": [], "limited": False}]
+    assert sent_json(route) == {"actions": [action]}
+
+
+def test_set_step_durations_reads_current_values_and_sends_one_request(client, api):
+    """Set step durations reads current values and sends one request."""
+    api.get(f"{API}/v4/protocols/340067/steps").mock(
+        return_value=ok(payload=[{"guid": "A" * 32, "duration": 36000}, {"guid": "B" * 32, "duration": 0}])
+    )
+    api.get(f"{API}/v4/protocols/340067").mock(return_value=ok(payload={"guid": "P" * 32}))
+    route = api.put(f"{API}/v3/protocols/{'P' * 32}").mock(return_value=ok(actions=[]))
+    client.set_step_durations(340067, {"A" * 32: 600, "B" * 32: 120})
+    actions = sent_json(route)["actions"]
+    assert [(item["up"][0]["value"], item["down"][0]["value"]) for item in actions] == [(600, 36000), (120, 0)]
+    assert {item["marker"] for item in actions} == {"step:set-duration"}
+
+
+def test_set_step_durations_updates_totals_of_changed_sections_on_their_first_step(client, api):
+    """Set step durations updates totals of changed sections on their first step."""
+    steps = [
+        {"guid": "A" * 32, "duration": 0, "section": "Prep", "section_duration": 300},
+        {"guid": "B" * 32, "duration": 300, "section": "Prep", "section_duration": 300},
+        {"guid": "C" * 32, "duration": 60, "section": "Run", "section_duration": 60},
+        {"guid": "D" * 32, "duration": 0, "section": None, "section_duration": 0},
+    ]
+    api.get(f"{API}/v4/protocols/340067/steps").mock(return_value=ok(payload=steps))
+    api.get(f"{API}/v4/protocols/340067").mock(return_value=ok(payload={"guid": "P" * 32}))
+    route = api.put(f"{API}/v3/protocols/{'P' * 32}").mock(return_value=ok(actions=[]))
+    client.set_step_durations(340067, {"B" * 32: 600, "D" * 32: 30})
+    actions = sent_json(route)["actions"]
+    assert [
+        (item["marker"], item["up"][0]["path"], item["up"][0]["value"], item["down"][0]["value"]) for item in actions
+    ] == [
+        ("step:set-duration", ["steps", "B" * 32, "duration"], 600, 300),
+        ("step:set-duration", ["steps", "D" * 32, "duration"], 30, 0),
+        ("step:set-section-duration", ["steps", "A" * 32, "section_duration"], 600, 300),
+    ]
+
+
+def test_set_step_durations_leaves_unchanged_section_totals_alone(client, api):
+    """Set step durations leaves unchanged section totals alone."""
+    steps = [
+        {"guid": "A" * 32, "duration": 0, "section": "Prep", "section_duration": 600},
+        {"guid": "B" * 32, "duration": 300, "section": "Prep", "section_duration": 600},
+    ]
+    api.get(f"{API}/v4/protocols/340067/steps").mock(return_value=ok(payload=steps))
+    api.get(f"{API}/v4/protocols/340067").mock(return_value=ok(payload={"guid": "P" * 32}))
+    route = api.put(f"{API}/v3/protocols/{'P' * 32}").mock(return_value=ok(actions=[]))
+    client.set_step_durations(340067, {"B" * 32: 600})
+    assert [item["marker"] for item in sent_json(route)["actions"]] == ["step:set-duration"]
+
+
+def test_set_step_durations_sends_nothing_when_values_already_match(client, api):
+    """Set step durations sends nothing when values already match."""
+    steps = [{"guid": "A" * 32, "duration": 300, "section": "Prep", "section_duration": 300}]
+    api.get(f"{API}/v4/protocols/340067/steps").mock(return_value=ok(payload=steps))
+    route = api.put(f"{API}/v3/protocols/{'P' * 32}").mock(return_value=ok(actions=[]))
+    client.set_step_durations(340067, {"A" * 32: 300})
+    assert not route.called
+
+
+def test_section_runs_splits_on_name_changes_and_steps_without_a_section():
+    """Section runs splits on name changes and steps without a section."""
+    steps = [
+        {"guid": "1", "section": "A"},
+        {"guid": "2", "section": "A"},
+        {"guid": "3", "section": None},
+        {"guid": "4", "section": "A"},
+        {"guid": "5", "section": "B"},
+    ]
+    assert [[step["guid"] for step in run] for run in section_runs(steps)] == [["1", "2"], ["4"], ["5"]]
+
+
+def test_set_step_durations_rejects_unknown_steps_and_negative_values(client, api):
+    """Set step durations rejects unknown steps and negative values."""
+    api.get(f"{API}/v4/protocols/340067/steps").mock(return_value=ok(payload=[{"guid": "A" * 32, "duration": 0}]))
+    route = api.put(f"{API}/v3/protocols/{'P' * 32}").mock(return_value=ok(actions=[]))
+    with pytest.raises(ValueError):
+        client.set_step_durations(340067, {"Z" * 32: 60})
+    with pytest.raises(ValueError):
+        client.set_step_durations(340067, {"A" * 32: -1})
+    assert not route.called
+
+
+def test_set_step_durations_with_nothing_to_set_sends_nothing(client, api):
+    """Set step durations with nothing to set sends nothing."""
+    client.set_step_durations(340067, {})
+    assert not api.calls
+
+
+def test_search_all_sends_the_search_key_and_filters(client, api):
+    """Search all sends the search key and filters."""
+    route = api.get(f"{API}/v4/filemanager/search").mock(
+        return_value=ok(payload={"items": [{"uri": "lysis"}], "pagination": {"total_results": 1}})
+    )
+    result = client.search_all(" lysis ", **{"content_types[]": [1], "page_size": 10})
+    assert result == {"items": [{"uri": "lysis"}], "pagination": {"total_results": 1}}
+    params = route.calls[0].request.url.params
+    assert (params["search_key"], params.get_list("content_types[]"), params["page_size"]) == ("lysis", ["1"], "10")
+
+
+def test_search_all_needs_a_search_key(client):
+    """Search all needs a search key."""
+    with pytest.raises(ValueError):
+        client.search_all("  ")
+
+
+def test_get_protocol_v3(client, api):
+    """Get protocol v3."""
+    api.get(f"{API}/v3/protocols/lysis-abc").mock(return_value=ok(protocol={"id": 1, "steps": []}))
+    assert client.get_protocol_v3("lysis-abc") == {"id": 1, "steps": []}

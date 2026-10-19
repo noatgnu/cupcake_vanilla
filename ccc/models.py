@@ -5,6 +5,7 @@ This module contains the core user management, lab group collaboration,
 and site administration functionality that can be reused across CUPCAKE applications.
 """
 
+import logging
 import os
 import uuid
 
@@ -17,6 +18,10 @@ from django.utils import timezone
 from django.utils.crypto import get_random_string
 
 from simple_history.models import HistoricalRecords
+
+from ccc.encryption import EncryptedTextField
+
+logger = logging.getLogger(__name__)
 
 
 class ResourceType(models.TextChoices):
@@ -1343,9 +1348,9 @@ class UserOrcidProfile(models.Model):
     linked_at = models.DateTimeField(auto_now_add=True, help_text="When this ORCID was linked to the user account")
 
     # OAuth tokens (optional, for future API access)
-    access_token = models.TextField(blank=True, null=True, help_text="ORCID OAuth access token (encrypted)")
+    access_token = EncryptedTextField(blank=True, null=True, help_text="ORCID OAuth access token, stored encrypted")
 
-    refresh_token = models.TextField(blank=True, null=True, help_text="ORCID OAuth refresh token (encrypted)")
+    refresh_token = EncryptedTextField(blank=True, null=True, help_text="ORCID OAuth refresh token, stored encrypted")
 
     token_expires_at = models.DateTimeField(blank=True, null=True, help_text="When the access token expires")
 
@@ -1793,6 +1798,7 @@ class AsyncTaskStatus(models.Model):
         ("REORDER_TEMPLATE_COLUMNS", "Reorder Template Columns"),
         ("TRANSCRIBE_AUDIO", "Transcribe Audio"),
         ("TRANSCRIBE_VIDEO", "Transcribe Video"),
+        ("EXPORT_PROTOCOLS_IO", "Export to protocols.io"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1834,12 +1840,12 @@ class AsyncTaskStatus(models.Model):
         return f"{self.get_task_type_display()} - {self.get_status_display()}"
 
     def save(self, *args, **kwargs):
-        """Override save to send WebSocket updates on creation."""
-        is_new = self.pk is None
+        """Save the task and send a WebSocket update when it is first created."""
+        is_new = self._state.adding
         super().save(*args, **kwargs)
 
         if is_new:
-            print(f"[DEBUG] New AsyncTaskStatus created: {self.id}, sending WebSocket update")
+            logger.debug("New AsyncTaskStatus %s created, sending WebSocket update", self.id)
             self.send_websocket_update()
 
     @property
@@ -1911,7 +1917,7 @@ class AsyncTaskStatus(models.Model):
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
-                print(f"[DEBUG] No channel layer available for task {self.id}")
+                logger.debug("No channel layer available for task %s", self.id)
                 return
 
             download_url = None
@@ -1936,17 +1942,17 @@ class AsyncTaskStatus(models.Model):
                 "timestamp": timezone.now().isoformat(),
             }
 
-            print(f"[DEBUG] Sending WebSocket update for task {self.id} to group {user_group_name}")
-            print(f"[DEBUG] Message data: {message_data}")
+            logger.debug("Sending WebSocket update for task %s to group %s", self.id, user_group_name)
+            logger.debug("Message data: %s", message_data)
 
             async_to_sync(channel_layer.group_send)(
                 user_group_name,
                 message_data,
             )
 
-            print(f"[DEBUG] WebSocket update sent successfully for task {self.id}")
+            logger.debug("WebSocket update sent for task %s", self.id)
         except Exception as e:
-            print(f"[ERROR] Error sending WebSocket update for task {self.id}: {e}")
+            logger.error("Error sending WebSocket update for task %s: %s", self.id, e)
             import traceback
 
             traceback.print_exc()
