@@ -19,14 +19,20 @@ from ccrv.models import (
     ProtocolModel,
     ProtocolReagent,
     ProtocolSection,
-    ProtocolsIOExport,
     ProtocolStep,
     Session,
     StepReagent,
     StepVariation,
 )
-from ccrv.protocols_io import ExportResult, export_protocol, export_step_guid, ordered_steps
-from ccrv.protocols_io.exporter import materials_text, plain_text
+from cupcake_protocols_io.exporter import (
+    ExportResult,
+    export_protocol,
+    export_step_guid,
+    materials_text,
+    ordered_steps,
+    plain_text,
+)
+from cupcake_protocols_io.models import ProtocolsIOExport
 
 TARGET_GUID = "B5A1B28296954BDF8F34C4C693D95643"
 UNITS = [
@@ -251,7 +257,7 @@ class ExportProtocolTest(ExportTestCase):
     def test_invalid_content_changes_nothing_on_protocols_io(self):
         """Invalid content changes nothing on protocols io."""
         broken = {"blocks": [], "entityMap": {}}
-        with patch("ccrv.protocols_io.exporter.step_to_draft", return_value=(broken, [])):
+        with patch("cupcake_protocols_io.exporter.step_to_draft", return_value=(broken, [])):
             with self.assertRaises(DraftValidationError):
                 self.export()
         self.assertEqual({method for method, _ in self.fake.calls}, {"GET"})
@@ -338,7 +344,10 @@ class ExportCommandTest(ExportTestCase):
             warnings=["note"],
         )
         out = StringIO()
-        with patch("ccrv.management.commands.export_protocol_to_protocols_io.export_protocol", return_value=result):
+        with patch(
+            "cupcake_protocols_io.management.commands.export_protocol_to_protocols_io.export_protocol",
+            return_value=result,
+        ):
             call_command(
                 "export_protocol_to_protocols_io", str(self.protocol.pk), "--target", "cupcake-export-test", stdout=out
             )

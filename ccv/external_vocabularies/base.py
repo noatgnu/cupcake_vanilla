@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
+
+
+class ExternalVocabularyError(Exception):
+    """Raised by a source when its platform cannot be reached or rejects a request."""
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,7 @@ class SourceRegistry:
     def __init__(self) -> None:
         """Start with no registered sources."""
         self._sources: dict[str, ExternalVocabularySource] = {}
+        self._listeners: list[Callable[[ExternalVocabularySource], None]] = []
 
     def register(self, source: ExternalVocabularySource) -> ExternalVocabularySource:
         """
@@ -101,7 +106,20 @@ class SourceRegistry:
         if source.key in self._sources:
             raise ValueError(f"an external vocabulary source with key {source.key!r} is already registered")
         self._sources[source.key] = source
+        for listener in self._listeners:
+            listener(source)
         return source
+
+    def on_register(self, listener: Callable[[ExternalVocabularySource], None]) -> None:
+        """
+        Call ``listener`` with every registered source, now and whenever another source is registered.
+
+        Args:
+            listener: Called with one source at a time.
+        """
+        self._listeners.append(listener)
+        for source in self.all():
+            listener(source)
 
     def get(self, key: str) -> ExternalVocabularySource | None:
         """Return the source with ``key``, or ``None``."""

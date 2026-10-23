@@ -21,8 +21,6 @@ from .viewsets import (
     ProtocolRatingViewSet,
     ProtocolReagentViewSet,
     ProtocolSectionViewSet,
-    ProtocolsIOAccountViewSet,
-    ProtocolsIOBrowseViewSet,
     ProtocolStepViewSet,
     RemoteHostViewSet,
     SessionAnnotationFolderViewSet,
@@ -40,8 +38,6 @@ router = DefaultRouter()
 router.register("projects", ProjectViewSet, basename="project")
 router.register("protocols", ProtocolModelViewSet, basename="protocolmodel")
 router.register("sessions", SessionViewSet, basename="session")
-router.register("protocols-io/account", ProtocolsIOAccountViewSet, basename="protocolsioaccount")
-router.register("protocols-io/browse", ProtocolsIOBrowseViewSet, basename="protocolsiobrowse")
 router.register("session-annotations", SessionAnnotationViewSet, basename="sessionannotation")
 router.register("ratings", ProtocolRatingViewSet, basename="protocolrating")
 router.register("sections", ProtocolSectionViewSet, basename="protocolsection")

@@ -20,7 +20,7 @@ from django.conf import settings
 from choux import ProtocolsIO, Step, chain, html_to_draft, image_dimensions
 from choux.draft import Entity, image, number_text, raise_for_issues
 
-from ccrv.protocols_io.step_templates import step_to_draft
+from cupcake_protocols_io.step_templates import step_to_draft
 
 logger = logging.getLogger(__name__)
 

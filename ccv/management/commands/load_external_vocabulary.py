@@ -4,9 +4,7 @@ Management command to load a complete external vocabulary into the local cache.
 
 from django.core.management.base import BaseCommand, CommandError
 
-from choux import ChouxError
-
-from ccv.external_vocabularies import sources, store_terms
+from ccv.external_vocabularies import ExternalVocabularyError, sources, store_terms
 
 
 class Command(BaseCommand):
@@ -39,7 +37,7 @@ class Command(BaseCommand):
             terms = list(source.load_all(**source_options))
         except NotImplementedError as error:
             raise CommandError(str(error)) from error
-        except (ValueError, ChouxError) as error:
+        except (ValueError, ExternalVocabularyError) as error:
             raise CommandError(f"Loading {source.key} failed: {error}") from error
         stored = store_terms(source, terms)
         self.stdout.write(self.style.SUCCESS(f"Stored {stored} {source.label} term(s)"))

@@ -11,9 +11,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
-from choux import ChouxError
-
-from ccv.external_vocabularies.base import ExternalTermData, ExternalVocabularySource, sources
+from ccv.external_vocabularies.base import ExternalTermData, ExternalVocabularyError, ExternalVocabularySource, sources
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +125,7 @@ def refresh_from_platform(source_key: str, term: str) -> int:
             return 0
         try:
             found = source.search(text, source.page_size)
-        except ChouxError as error:
+        except ExternalVocabularyError as error:
             logger.warning("External vocabulary search %s for %r failed: %s", source.key, text, error)
             cache.set(cache_key, True, settings.EXTERNAL_VOCABULARY_FAILURE_TTL)
             return 0

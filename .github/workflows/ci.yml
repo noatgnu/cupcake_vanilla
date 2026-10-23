@@ -96,6 +96,7 @@ jobs:
           ccmc.tests \
           ccrv.tests \
           ccsc.tests \
+          packages/cupcake-protocols-io/tests \
           --verbosity=2
 
   test-wails:

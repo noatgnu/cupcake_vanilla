@@ -31,6 +31,7 @@ for _cupcake_app in [
     "ccmc.apps.CcmcConfig",
     "ccsc.apps.CcscConfig",
     "ccrv.apps.CcrvConfig",
+    "cupcake_protocols_io.apps.ProtocolsIOConfig",
 ]:
     if _cupcake_app not in INSTALLED_APPS:  # noqa: F405
         INSTALLED_APPS.append(_cupcake_app)  # noqa: F405

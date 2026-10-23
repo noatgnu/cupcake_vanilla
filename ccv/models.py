@@ -17,7 +17,7 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from ccc.models import AbstractResource, LabGroup, ResourceType
-from ccv.ontology_registry import registry
+from ccv.ontology_registry import ontology_type_choices, registry
 
 
 class BaseMetadataTable(AbstractResource):
@@ -1344,7 +1344,7 @@ class MetadataColumn(models.Model):
         max_length=50,
         blank=True,
         null=True,
-        choices=registry.choices(),
+        choices=ontology_type_choices,
         help_text="Type of ontology to use for validation and suggestions",
     )
 
@@ -3535,7 +3535,7 @@ class MetadataColumnTemplate(AbstractResource):
         max_length=50,
         blank=True,
         null=True,
-        choices=registry.choices(),
+        choices=ontology_type_choices,
         help_text="Type of ontology to use for validation and suggestions",
     )
 

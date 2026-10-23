@@ -11,8 +11,8 @@ from choux import APIError
 from rest_framework.test import APIClient
 
 from ccrv.models import ProtocolModel
-from ccrv.protocols_io.accounts import ProtocolsIOAccountMissing
-from ccrv.protocols_io.browser import (
+from cupcake_protocols_io.accounts import ProtocolsIOAccountMissing
+from cupcake_protocols_io.browser import (
     browse_item,
     folder_items,
     list_workspaces,
@@ -148,8 +148,8 @@ class BrowseEndpointTest(TestCase):
     def get(self, name, client=None, side_effect=None, **params):
         """Call a browse endpoint with a fake protocols.io client."""
         patch_options = {"side_effect": side_effect} if side_effect else {"return_value": nullcontext(client or Mock())}
-        with patch("ccrv.viewsets.client_for", **patch_options):
-            return self.client.get(reverse(f"ccrv:protocolsiobrowse-{name}"), params)
+        with patch("cupcake_protocols_io.views.client_for", **patch_options):
+            return self.client.get(reverse(f"protocols_io:browse-{name}"), params)
 
     def test_workspaces(self):
         """Workspaces."""
@@ -200,7 +200,7 @@ class BrowseEndpointTest(TestCase):
     def test_without_an_account_nothing_uses_the_server_token(self):
         """Without an account nothing uses the server token."""
         with patch("choux.ProtocolsIO.request") as request:
-            response = self.client.get(reverse("ccrv:protocolsiobrowse-workspaces"))
+            response = self.client.get(reverse("protocols_io:browse-workspaces"))
         self.assertEqual(response.status_code, 400)
         request.assert_not_called()
 
@@ -210,7 +210,7 @@ class ImportFromAccountTest(TestCase):
         self.user = get_user_model().objects.create_user("import-user", password="x")
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-        self.url = reverse("ccrv:protocolmodel-import-from-protocols-io-account")
+        self.url = reverse("protocols_io:protocol-import-from-account")
         self.data = {
             "id": 340067,
             "uri": "cupcake-export-test-kqcbcvssp",
@@ -248,7 +248,7 @@ class ImportFromAccountTest(TestCase):
             client.get_protocol_v3.side_effect = side_effect
         else:
             client.get_protocol_v3.return_value = data or self.data
-        with patch("ccrv.viewsets.client_for", return_value=nullcontext(client)):
+        with patch("cupcake_protocols_io.views.client_for", return_value=nullcontext(client)):
             return self.client.post(self.url, body, format="json"), client
 
     def test_imports_a_private_protocol_into_sections(self):

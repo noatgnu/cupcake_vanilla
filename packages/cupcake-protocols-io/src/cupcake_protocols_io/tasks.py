@@ -12,10 +12,11 @@ from choux import ChouxError, DraftValidationError
 from django_rq import job
 
 from ccc.models import AsyncTaskStatus
-from ccrv.models import ProtocolModel, ProtocolsIOExport, Session
-from ccrv.protocols_io import export_protocol
-from ccrv.protocols_io.accounts import ProtocolsIOAccountMissing, client_for
-from ccrv.protocols_io.session_export import SessionExportError, export_session_protocols
+from ccrv.models import ProtocolModel, Session
+from cupcake_protocols_io.accounts import ProtocolsIOAccountMissing, client_for
+from cupcake_protocols_io.exporter import export_protocol
+from cupcake_protocols_io.models import ProtocolsIOExport
+from cupcake_protocols_io.session_export import SessionExportError, export_session_protocols
 
 logger = logging.getLogger(__name__)
 

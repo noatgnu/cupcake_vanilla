@@ -2,13 +2,14 @@
 Management command to export a Cupcake protocol into an existing protocols.io protocol.
 """
 
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from choux import ChouxError, ProtocolsIO
 
-from ccrv.models import ProtocolModel, ProtocolsIOExport
-from ccrv.protocols_io import export_protocol
+from ccrv.models import ProtocolModel
+from cupcake_protocols_io import conf
+from cupcake_protocols_io.exporter import export_protocol
+from cupcake_protocols_io.models import ProtocolsIOExport
 
 
 class Command(BaseCommand):
@@ -20,13 +21,13 @@ class Command(BaseCommand):
         parser.add_argument("--scaling-factor", type=float, default=1.0, help="Factor for scalable reagents")
 
     def handle(self, *args, **options):
-        if not settings.PROTOCOLS_IO_ACCESS_TOKEN:
+        if not conf.access_token():
             raise CommandError("PROTOCOLS_IO_ACCESS_TOKEN is not set")
         try:
             protocol = ProtocolModel.objects.get(pk=options["protocol_id"])
         except ProtocolModel.DoesNotExist as error:
             raise CommandError(f"Protocol {options['protocol_id']} does not exist") from error
-        with ProtocolsIO(settings.PROTOCOLS_IO_ACCESS_TOKEN) as client:
+        with ProtocolsIO(conf.access_token()) as client:
             try:
                 result = export_protocol(protocol, client, options["target"], scaling_factor=options["scaling_factor"])
             except ChouxError as error:

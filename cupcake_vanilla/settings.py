@@ -33,6 +33,7 @@ ENABLE_CUPCAKE_MACARON = os.environ.get("ENABLE_CUPCAKE_MACARON", "True").lower(
 ENABLE_CUPCAKE_MINT_CHOCOLATE = os.environ.get("ENABLE_CUPCAKE_MINT_CHOCOLATE", "False").lower() == "true"
 ENABLE_CUPCAKE_SALTED_CARAMEL = os.environ.get("ENABLE_CUPCAKE_SALTED_CARAMEL", "True").lower() == "true"
 ENABLE_CUPCAKE_RED_VELVET = os.environ.get("ENABLE_CUPCAKE_RED_VELVET", "True").lower() == "true"
+ENABLE_CUPCAKE_PROTOCOLS_IO = os.environ.get("ENABLE_CUPCAKE_PROTOCOLS_IO", "True").lower() == "true"
 
 # Application definition
 
@@ -70,6 +71,9 @@ if ENABLE_CUPCAKE_SALTED_CARAMEL:
 
 if ENABLE_CUPCAKE_RED_VELVET:
     INSTALLED_APPS.append("ccrv.apps.CcrvConfig")
+
+if ENABLE_CUPCAKE_RED_VELVET and ENABLE_CUPCAKE_PROTOCOLS_IO:
+    INSTALLED_APPS.append("cupcake_protocols_io.apps.ProtocolsIOConfig")
 
 MIDDLEWARE = [
     "django.middleware.gzip.GZipMiddleware",

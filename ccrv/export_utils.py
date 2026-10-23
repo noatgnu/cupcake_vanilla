@@ -4,15 +4,36 @@ import os
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from django.conf import settings
 from django.utils.html import escape
 
 import nh3
-from choux.draft import number_text
 
 REAGENT_TEMPLATE = re.compile(r"%(?P<id>\d+)\.(?P<property>name|quantity|scaled_quantity|unit)%")
+
+
+def number_text(value) -> str:
+    """
+    Format a quantity as plain decimal text.
+
+    Args:
+        value: Number or numeric string.
+
+    Returns:
+        Text without exponent or trailing zeros, for example ``"0.0005"`` or ``"50"``.
+
+    Raises:
+        ValueError: When the value is not a finite number.
+    """
+    number = Decimal(str(value))
+    if not number.is_finite():
+        raise ValueError(f"{value!r} is not a finite number")
+    text = format(number.normalize(), "f")
+    return "0" if text in ("-0", "") else text
+
 
 STEP_HTML_TAGS = {
     "p",

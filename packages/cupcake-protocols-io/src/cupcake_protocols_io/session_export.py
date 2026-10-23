@@ -13,9 +13,10 @@ from typing import Any
 from choux import APIError, Draft, DraftValidationError, ProtocolsIO, UploadError, records
 from choux.draft import bold, hyperlink
 
-from ccrv.models import ProtocolsIOExport, ProtocolsIORun, ProtocolsIORunComment, StepAnnotation, StepVariation
-from ccrv.protocols_io.annotations import annotation_comment, annotation_digest
-from ccrv.protocols_io.exporter import export_protocol, export_step_guid, ordered_steps, plain_text
+from ccrv.models import StepAnnotation, StepVariation
+from cupcake_protocols_io.annotations import annotation_comment, annotation_digest
+from cupcake_protocols_io.exporter import export_protocol, export_step_guid, ordered_steps, plain_text
+from cupcake_protocols_io.models import ProtocolsIOExport, ProtocolsIORun, ProtocolsIORunComment
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ def protocol_copy(
         client: Client for the exporting user's account.
         variations: Step variations of the session by step id.
         user: The exporting user.
-        progress: Passed to :func:`ccrv.protocols_io.export_protocol`.
+        progress: Passed to :func:`cupcake_protocols_io.exporter.export_protocol`.
     """
     digest = variation_hash(variations)
     existing = protocol.protocols_io_exports.filter(session=session, exported_by=user, variation_hash=digest).first()

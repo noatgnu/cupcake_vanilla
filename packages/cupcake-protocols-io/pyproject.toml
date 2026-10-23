@@ -1,0 +1,47 @@
+[tool.poetry]
+name = "cupcake-protocols-io"
+version = "0.1.0"
+description = "protocols.io integration for Cupcake: user accounts, browsing, protocol import and export, and session runs"
+authors = ["Toan Phung <toan.phung@proteo.info>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/noatgnu/cupcake_vanilla"
+repository = "https://github.com/noatgnu/cupcake_vanilla"
+keywords = ["protocols.io", "cupcake", "django", "lab-notebook", "protocols"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+packages = [{include = "cupcake_protocols_io", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+django = "^6.0.0"
+djangorestframework = "^3.17.0"
+django-rq = "^4.0.0"
+requests = "^2.32.0"
+beautifulsoup4 = "^4.13.5"
+choux = "^0.1.0"
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 120
+known_django = ["django"]
+known_first_party = ["ccc", "ccv", "ccrv", "cupcake_protocols_io"]
+sections = ["FUTURE", "STDLIB", "DJANGO", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

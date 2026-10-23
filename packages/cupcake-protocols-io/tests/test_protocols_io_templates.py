@@ -7,7 +7,7 @@ from choux import html_to_draft, validate_draft
 
 from ccm.models import Reagent
 from ccrv.models import ProtocolModel, ProtocolStep, StepReagent
-from ccrv.protocols_io import StepTemplateResolver, TemplateReagent, step_to_draft
+from cupcake_protocols_io.step_templates import StepTemplateResolver, TemplateReagent, step_to_draft
 
 UNITS = [
     {"id": 1, "type_id": 3, "name": "µL", "aliases": ["uL", "ul", "microliter"]},

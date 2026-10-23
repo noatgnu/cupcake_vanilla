@@ -10,8 +10,15 @@ from django.urls import reverse
 from choux import APIError
 from rest_framework.test import APIClient
 
-from ccrv.models import ProtocolModel, ProtocolsIOAccount, ProtocolStep
-from ccrv.protocols_io.importer import UNTITLED_SECTION, group_into_sections, step_section_title, steps_in_order
+from ccrv.models import ProtocolModel, ProtocolStep
+from cupcake_protocols_io.importer import (
+    UNTITLED_SECTION,
+    group_into_sections,
+    import_protocol_from_url,
+    step_section_title,
+    steps_in_order,
+)
+from cupcake_protocols_io.models import ProtocolsIOAccount
 
 
 def v3_step(step_id, previous_id, section=None, text="", duration=0, section_duration=0):
@@ -104,8 +111,8 @@ class CreateProtocolFromUrlTest(TestCase):
                 "steps": steps,
             }
         }
-        with patch("ccrv.models.requests.get", side_effect=[page, api]):
-            return ProtocolModel.create_protocol_from_url("https://www.protocols.io/view/lysis-abc123")
+        with patch("cupcake_protocols_io.importer.requests.get", side_effect=[page, api]):
+            return import_protocol_from_url("https://www.protocols.io/view/lysis-abc123")
 
     def test_every_step_lands_in_an_ordered_section(self):
         """Every step lands in an ordered section."""
@@ -150,7 +157,7 @@ class ImportFromAddressEndpointTest(TestCase):
         self.user = get_user_model().objects.create_user("address-import-user", password="x")
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-        self.url = reverse("ccrv:protocolmodel-import-from-protocols-io")
+        self.url = reverse("protocols_io:protocol-import-protocol")
         self.payload = {
             "id": 340067,
             "created_on": 1792341267,
@@ -167,8 +174,8 @@ class ImportFromAddressEndpointTest(TestCase):
         ProtocolsIOAccount.objects.create(user=self.user, access_token="personal-token", username="toan-phung")
         client = Mock()
         client.get_protocol_v3.return_value = self.payload
-        with patch("ccrv.models.requests.get", return_value=self.page) as get:
-            with patch("ccrv.viewsets.client_for", return_value=nullcontext(client)) as client_for:
+        with patch("cupcake_protocols_io.importer.requests.get", return_value=self.page) as get:
+            with patch("cupcake_protocols_io.views.client_for", return_value=nullcontext(client)) as client_for:
                 response = self.client.post(
                     self.url, {"url": "https://doi.org/10.17504/protocols.io.abc"}, format="json"
                 )
@@ -185,8 +192,8 @@ class ImportFromAddressEndpointTest(TestCase):
         """Users without an account import with the server token."""
         api = Mock(status_code=200)
         api.json.return_value = {"protocol": self.payload}
-        with patch("ccrv.models.requests.get", side_effect=[self.page, api]) as get:
-            with patch("ccrv.viewsets.client_for") as client_for:
+        with patch("cupcake_protocols_io.importer.requests.get", side_effect=[self.page, api]) as get:
+            with patch("cupcake_protocols_io.views.client_for") as client_for:
                 response = self.client.post(
                     self.url, {"url": "https://www.protocols.io/view/lysis-abc123/v2"}, format="json"
                 )
@@ -201,8 +208,8 @@ class ImportFromAddressEndpointTest(TestCase):
         ProtocolsIOAccount.objects.create(user=self.user, access_token="personal-token", username="toan-phung")
         client = Mock()
         client.get_protocol_v3.side_effect = APIError("protocol does not exist", http_status=404)
-        with patch("ccrv.models.requests.get", return_value=self.page):
-            with patch("ccrv.viewsets.client_for", return_value=nullcontext(client)):
+        with patch("cupcake_protocols_io.importer.requests.get", return_value=self.page):
+            with patch("cupcake_protocols_io.views.client_for", return_value=nullcontext(client)):
                 response = self.client.post(
                     self.url, {"url": "https://www.protocols.io/view/lysis-abc123"}, format="json"
                 )
@@ -211,7 +218,7 @@ class ImportFromAddressEndpointTest(TestCase):
 
     def test_server_token_not_finding_the_protocol(self):
         """Server token not finding the protocol."""
-        with patch("ccrv.models.requests.get", side_effect=[self.page, Mock(status_code=404)]):
+        with patch("cupcake_protocols_io.importer.requests.get", side_effect=[self.page, Mock(status_code=404)]):
             response = self.client.post(self.url, {"url": "https://www.protocols.io/view/lysis-abc123"}, format="json")
         self.assertEqual(response.status_code, 400)
 

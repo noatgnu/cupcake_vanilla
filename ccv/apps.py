@@ -3,6 +3,7 @@ CUPCAKE Vanilla (CCV) Django App Configuration.
 """
 
 from django.apps import AppConfig
+from django.utils.module_loading import autodiscover_modules
 
 
 class CcvConfig(AppConfig):
@@ -19,9 +20,10 @@ class CcvConfig(AppConfig):
 
     def ready(self):
         """
-        Import signal handlers when the app is ready.
+        Import signal handlers and the ``external_vocabularies`` module of every installed app.
         """
         try:
             import ccv.signals  # noqa F401
         except ImportError:
             pass
+        autodiscover_modules("external_vocabularies")

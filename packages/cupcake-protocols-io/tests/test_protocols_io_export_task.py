@@ -12,11 +12,11 @@ from choux.draft import Issue
 from rest_framework.test import APIClient
 
 from ccc.models import AsyncTaskStatus
-from ccrv.models import ProtocolModel, ProtocolsIOAccount, ProtocolsIOExport
-from ccrv.protocols_io import ExportResult
-from ccrv.protocols_io.accounts import ProtocolsIOAccountMissing
-from ccrv.protocols_io.exporter import protocol_reference
-from ccrv.tasks.protocols_io_tasks import export_protocol_to_protocols_io_task
+from ccrv.models import ProtocolModel
+from cupcake_protocols_io.accounts import ProtocolsIOAccountMissing
+from cupcake_protocols_io.exporter import ExportResult, protocol_reference
+from cupcake_protocols_io.models import ProtocolsIOAccount, ProtocolsIOExport
+from cupcake_protocols_io.tasks import export_protocol_to_protocols_io_task
 
 
 class ProtocolReferenceTest(SimpleTestCase):
@@ -42,7 +42,7 @@ class ExportEndpointTest(TestCase):
         self.protocol = ProtocolModel.objects.create(protocol_title="Lysis", owner=self.user)
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-        self.url = reverse("ccrv:protocolmodel-export-to-protocols-io", args=[self.protocol.pk])
+        self.url = reverse("protocols_io:protocol-export", args=[self.protocol.pk])
 
     def connect(self):
         """Give the user a protocols.io account."""
@@ -102,9 +102,9 @@ class ExportTaskTest(TestCase):
         """Run the export job synchronously with the given patches."""
         client = patches.pop("client", nullcontext(Mock()))
         with patch(
-            "ccrv.tasks.protocols_io_tasks.client_for", **({"return_value": client} | patches.pop("client_for", {}))
+            "cupcake_protocols_io.tasks.client_for", **({"return_value": client} | patches.pop("client_for", {}))
         ):
-            with patch("ccrv.tasks.protocols_io_tasks.export_protocol", **patches) as export:
+            with patch("cupcake_protocols_io.tasks.export_protocol", **patches) as export:
                 outcome = export_protocol_to_protocols_io_task(
                     self.protocol.pk, self.user.pk, "lysis-abc", str(self.task.id), 1.5
                 )
@@ -179,7 +179,7 @@ class ExportTaskTest(TestCase):
 
     def test_unexpected_errors_are_reported(self):
         """Unexpected errors are reported."""
-        with self.assertLogs("ccrv.tasks.protocols_io_tasks", level="ERROR"):
+        with self.assertLogs("cupcake_protocols_io.tasks", level="ERROR"):
             self.run_task(side_effect=RuntimeError("boom"))
         self.assertEqual((self.task.status, self.task.error_message), ("FAILURE", "protocols.io export failed: boom"))
 
@@ -188,7 +188,7 @@ class ExportListTest(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user("export-list-user", password="x")
         self.protocol = ProtocolModel.objects.create(protocol_title="Lysis", owner=self.user)
-        self.url = reverse("ccrv:protocolmodel-protocols-io-exports", args=[self.protocol.pk])
+        self.url = reverse("protocols_io:protocol-exports", args=[self.protocol.pk])
         ProtocolsIOExport.objects.create(
             protocol=self.protocol,
             exported_by=self.user,

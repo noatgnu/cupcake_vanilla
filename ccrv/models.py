@@ -6,9 +6,7 @@ the legacy CUPCAKE project, preserving all original functionality while
 integrating with the new modular architecture where appropriate.
 """
 
-import re
 from datetime import datetime
-from urllib.parse import urlparse
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -16,15 +14,11 @@ from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.db import models, transaction
 from django.utils.html import escape
 
-import requests
-from bs4 import BeautifulSoup
 from simple_history.models import HistoricalRecords
 
-from ccc.encryption import EncryptedTextField
 from ccc.models import AbstractResource
 from ccm.models import Reagent
 from ccrv.export_utils import _process_annotation_file, get_html_template, render_step_description, render_step_reagents
-from ccrv.protocols_io.importer import group_into_sections
 from ccv.models import MetadataColumn, MetadataTable
 
 
@@ -111,8 +105,7 @@ class ProtocolModel(AbstractResource):
     """
     Protocol documentation model migrated from legacy CUPCAKE.
 
-    Preserves all original functionality including protocols.io integration
-    while integrating with AbstractResource.
+    Integrates with AbstractResource.
     """
 
     # Original fields preserved exactly
@@ -149,125 +142,6 @@ class ProtocolModel(AbstractResource):
 
     def __str__(self):
         return self.protocol_title
-
-    @staticmethod
-    def resolve_protocols_io_url(url):
-        """
-        Return the canonical address of a protocols.io protocol and its URI.
-
-        The page at ``url`` is read for its ``og:url`` meta tag, so DOI links and addresses with a
-        version suffix resolve to the protocol itself.
-
-        Args:
-            url: Address or DOI link of a protocols.io protocol.
-
-        Returns:
-            Tuple of the canonical address and the protocol URI.
-
-        Raises:
-            ValueError: When the page has no protocols.io address.
-        """
-        page = requests.get(url, timeout=30)
-        soup = BeautifulSoup(page.content, "html.parser")
-        for tag in soup.find_all("meta"):
-            if tag.get("property", None) == "og:url":
-                url = tag.get("content", None)
-                break
-        if not url:
-            raise ValueError("Could not find protocol.io url")
-        path_parts = [p for p in urlparse(url).path.split("/") if p]
-        if not path_parts:
-            raise ValueError(f"Could not find protocol.io protocol with url {url}")
-        slug = path_parts[-2] if len(path_parts) > 1 and re.match(r"^v\d+$", path_parts[-1]) else path_parts[-1]
-        return url, slug
-
-    @staticmethod
-    def create_protocol_from_url(url, client=None):
-        """
-        Create a protocol from a protocols.io address or DOI link.
-
-        Args:
-            url: Address or DOI link of a protocols.io protocol.
-            client: protocols.io client acting as the importing user; the server token is used when omitted.
-
-        Raises:
-            ValueError: When the protocol cannot be found with the server token.
-            choux.APIError: When protocols.io rejects the request made with ``client``.
-        """
-        url, slug = ProtocolModel.resolve_protocols_io_url(url)
-        if client is not None:
-            return ProtocolModel.create_protocol_from_payload(client.get_protocol_v3(slug), url)
-
-        protocol_meta = requests.get(
-            f"https://www.protocols.io/api/v3/protocols/{slug}",
-            headers={"Authorization": f"Bearer {settings.PROTOCOLS_IO_ACCESS_TOKEN}"},
-            timeout=30,
-        )
-        if protocol_meta.status_code != 200:
-            raise ValueError(f"Could not find protocol.io protocol with url {url}")
-        data = (protocol_meta.json() or {}).get("protocol")
-        if not data:
-            raise ValueError("Failed to import protocol from protocols.io")
-        return ProtocolModel.create_protocol_from_payload(data, url)
-
-    @staticmethod
-    def create_protocol_from_payload(data, url):
-        """
-        Create a protocol from a protocols.io protocol in the v3 format.
-
-        Every step is placed in a section: consecutive steps without a section on protocols.io
-        form an untitled section at their position.
-
-        Args:
-            data: The ``protocol`` object of the protocols.io v3 protocol response.
-            url: Address of the protocol on protocols.io.
-
-        Returns:
-            The created :class:`ProtocolModel`.
-        """
-        with transaction.atomic():
-            protocol = ProtocolModel()
-            protocol.protocol_id = data["id"]
-            protocol.protocol_created_on = datetime.fromtimestamp(data["created_on"])
-            protocol.protocol_doi = data["doi"]
-            protocol.protocol_title = data["title"]
-            protocol.protocol_description = data["description"]
-            protocol.protocol_url = url
-            protocol.protocol_version_uri = data["version_uri"]
-            protocol.save()
-
-            imported_steps = data["steps"] or []
-            created = {}
-            for section_order, imported in enumerate(group_into_sections(imported_steps)):
-                section = ProtocolSection.objects.create(
-                    protocol=protocol,
-                    section_description=imported.title,
-                    section_duration=imported.duration,
-                    order=section_order,
-                )
-                for step_order, step in enumerate(imported.steps):
-                    description = next(
-                        (
-                            (component.get("source") or {}).get("description") or ""
-                            for component in step.get("components") or []
-                            if component.get("title") == "description"
-                        ),
-                        "",
-                    )
-                    created[step["id"]] = ProtocolStep.objects.create(
-                        protocol=protocol,
-                        step_section=section,
-                        step_id=step["id"],
-                        step_duration=step.get("duration"),
-                        step_description=description,
-                        order=step_order,
-                    )
-            for step in imported_steps:
-                previous = created.get(step.get("previous_id"))
-                if previous is not None:
-                    created[step["id"]].previous_step = previous
-                    created[step["id"]].save(update_fields=["previous_step"])
-        return protocol
 
     def get_session_annotations(self, session):
         """
@@ -666,96 +540,6 @@ class ProtocolModel(AbstractResource):
 
         except (BadSignature, SignatureExpired, ValueError, User.DoesNotExist, cls.DoesNotExist):
             return None, None, None
-
-
-class ProtocolsIOAccount(models.Model):
-    """A user's protocols.io access token and the protocols.io account it belongs to."""
-
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="protocols_io_account")
-    access_token = EncryptedTextField(help_text="protocols.io access token, stored encrypted")
-    username = models.CharField(max_length=255, help_text="protocols.io username the token belongs to")
-    name = models.CharField(max_length=255, blank=True, default="", help_text="protocols.io display name")
-    connected_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    last_used_at = models.DateTimeField(blank=True, null=True)
-
-    class Meta:
-        app_label = "ccrv"
-        verbose_name = "protocols.io account"
-        verbose_name_plural = "protocols.io accounts"
-
-    def __str__(self):
-        return f"{self.user} - {self.username}"
-
-
-class ProtocolsIOExport(models.Model):
-    """A protocols.io protocol that a Cupcake protocol, or its steps as varied in one session, was exported into."""
-
-    protocol = models.ForeignKey(ProtocolModel, on_delete=models.CASCADE, related_name="protocols_io_exports")
-    session = models.ForeignKey(
-        "Session",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="protocols_io_protocol_copies",
-        help_text="Session whose step variations the protocols.io protocol follows",
-    )
-    variation_hash = models.CharField(
-        max_length=64, blank=True, default="", help_text="Hash of the session step variations that were exported"
-    )
-    exported_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="protocols_io_exports"
-    )
-    protocols_io_id = models.IntegerField(default=0, help_text="Numeric id of the protocols.io protocol")
-    protocols_io_guid = models.CharField(max_length=64, help_text="GUID of the protocols.io protocol")
-    protocols_io_uri = models.CharField(
-        max_length=255, blank=True, default="", help_text="URI of the protocols.io protocol"
-    )
-    protocols_io_url = models.URLField(max_length=500, blank=True, default="", help_text="Address on protocols.io")
-    step_ids = models.JSONField(default=list, help_text="Ids of the exported Cupcake steps in protocols.io step order")
-    exported_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "ccrv"
-        ordering = ["-exported_at"]
-        verbose_name = "protocols.io export"
-        verbose_name_plural = "protocols.io exports"
-        constraints = [
-            models.UniqueConstraint(fields=["protocol", "protocols_io_guid"], name="unique_protocols_io_export_target")
-        ]
-
-    def __str__(self):
-        return f"{self.protocol} - {self.protocols_io_uri or self.protocols_io_guid}"
-
-    @classmethod
-    def remember(cls, protocol, user, result, *, session=None, variation_hash=""):
-        """
-        Store where a protocol was exported.
-
-        Args:
-            protocol: The exported :class:`ProtocolModel`.
-            user: The user who exported it, or ``None``.
-            result: The :class:`ccrv.protocols_io.ExportResult` of the export.
-            session: The :class:`Session` whose step variations were exported, or ``None``.
-            variation_hash: Hash of those step variations.
-
-        Returns:
-            The stored export.
-        """
-        export, _ = cls.objects.update_or_create(
-            protocol=protocol,
-            protocols_io_guid=result.protocol_guid,
-            defaults={
-                "session": session,
-                "variation_hash": variation_hash,
-                "exported_by": user,
-                "protocols_io_id": result.protocol_id,
-                "protocols_io_uri": result.protocol_uri,
-                "protocols_io_url": result.protocol_url,
-                "step_ids": result.step_ids,
-            },
-        )
-        return export
 
 
 class Session(AbstractResource):
@@ -1927,74 +1711,3 @@ class InstrumentUsageSessionAnnotation(models.Model):
 
     def __str__(self):
         return f"{self.session_annotation.session.name} - {self.instrument_usage.instrument.instrument_name}"
-
-
-PROTOCOLS_IO_RUN_URL = "https://www.protocols.io/run/"
-
-
-class ProtocolsIORun(models.Model):
-    """A protocols.io run that a Cupcake session was exported into."""
-
-    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="protocols_io_runs")
-    protocol = models.ForeignKey(ProtocolModel, on_delete=models.CASCADE, related_name="protocols_io_runs")
-    protocol_export = models.ForeignKey(
-        ProtocolsIOExport, on_delete=models.SET_NULL, null=True, blank=True, related_name="runs"
-    )
-    exported_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="protocols_io_runs"
-    )
-    record_id = models.IntegerField(help_text="Numeric id of the protocols.io run")
-    record_guid = models.CharField(max_length=64, unique=True, help_text="GUID of the protocols.io run")
-    item_id = models.IntegerField(default=0, help_text="File manager item id of the protocols.io run")
-    title = models.CharField(max_length=255, blank=True, default="")
-    step_map = models.JSONField(
-        default=list,
-        help_text="Run steps in order, each with its Cupcake step id and protocols.io run step id and GUID",
-    )
-    reference_comment_id = models.IntegerField(
-        blank=True, null=True, help_text="Discussion id of the run comment that points back to Cupcake"
-    )
-    variation_hash = models.CharField(
-        max_length=64, blank=True, default="", help_text="Hash of the session step variations the run steps follow"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    exported_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "ccrv"
-        ordering = ["-exported_at"]
-        verbose_name = "protocols.io run"
-        verbose_name_plural = "protocols.io runs"
-
-    def __str__(self):
-        return f"{self.session} - {self.record_guid}"
-
-    @property
-    def record_url(self):
-        """Address of the run on protocols.io."""
-        return f"{PROTOCOLS_IO_RUN_URL}{self.record_guid}"
-
-
-class ProtocolsIORunComment(models.Model):
-    """A comment on a protocols.io run that holds one Cupcake step annotation."""
-
-    run = models.ForeignKey(ProtocolsIORun, on_delete=models.CASCADE, related_name="comments")
-    step_annotation = models.ForeignKey(
-        StepAnnotation, on_delete=models.SET_NULL, null=True, blank=True, related_name="protocols_io_comments"
-    )
-    step = models.ForeignKey(
-        ProtocolStep, on_delete=models.SET_NULL, null=True, blank=True, related_name="protocols_io_comments"
-    )
-    record_step_id = models.IntegerField(help_text="Id of the protocols.io run step the comment is on")
-    discussion_id = models.IntegerField(help_text="Discussion id of the comment on protocols.io")
-    content_hash = models.CharField(max_length=64, help_text="Hash of the annotation content that was exported")
-    exported_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "ccrv"
-        ordering = ["id"]
-        verbose_name = "protocols.io run comment"
-        verbose_name_plural = "protocols.io run comments"
-
-    def __str__(self):
-        return f"{self.run} - {self.discussion_id}"

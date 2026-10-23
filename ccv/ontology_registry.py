@@ -611,8 +611,17 @@ def external_descriptor(source: ExternalVocabularySource) -> OntologyDescriptor:
     )
 
 
-for external_source in sources.all():
-    registry.register(external_descriptor(external_source))
+def ontology_type_choices() -> list[tuple[str, str]]:
+    """Return the registered ontology types as model field choices."""
+    return registry.choices()
+
+
+def register_external_source(source: ExternalVocabularySource) -> None:
+    """Make an external vocabulary source searchable as an ontology type."""
+    registry.register(external_descriptor(source))
+
+
+sources.on_register(register_external_source)
 
 # ---------------------------------------------------------------------------
 # SDRF ontology short-name → internal type mappings

@@ -11,6 +11,7 @@ os.environ["ENABLE_CUPCAKE_MACARON"] = "True"
 os.environ["ENABLE_CUPCAKE_MINT_CHOCOLATE"] = "True"
 os.environ["ENABLE_CUPCAKE_SALTED_CARAMEL"] = "True"
 os.environ["ENABLE_CUPCAKE_RED_VELVET"] = "True"
+os.environ["ENABLE_CUPCAKE_PROTOCOLS_IO"] = "True"
 
 from .settings_wails import *  # noqa: F401, F403, E402
 

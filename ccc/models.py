@@ -20,6 +20,7 @@ from django.utils.crypto import get_random_string
 from simple_history.models import HistoricalRecords
 
 from ccc.encryption import EncryptedTextField
+from ccc.task_types import TASK_TYPE_MAX_LENGTH, task_type_choices
 
 logger = logging.getLogger(__name__)
 
@@ -1786,24 +1787,8 @@ class AsyncTaskStatus(models.Model):
         ("CANCELLED", "Cancelled"),
     ]
 
-    TASK_TYPE_CHOICES = [
-        ("EXPORT_EXCEL", "Export Excel Template"),
-        ("EXPORT_SDRF", "Export SDRF File"),
-        ("IMPORT_SDRF", "Import SDRF File"),
-        ("IMPORT_EXCEL", "Import Excel File"),
-        ("EXPORT_MULTIPLE_SDRF", "Export Multiple SDRF Files"),
-        ("EXPORT_MULTIPLE_EXCEL", "Export Multiple Excel Templates"),
-        ("VALIDATE_TABLE", "Validate Metadata Table"),
-        ("REORDER_TABLE_COLUMNS", "Reorder Table Columns"),
-        ("REORDER_TEMPLATE_COLUMNS", "Reorder Template Columns"),
-        ("TRANSCRIBE_AUDIO", "Transcribe Audio"),
-        ("TRANSCRIBE_VIDEO", "Transcribe Video"),
-        ("EXPORT_PROTOCOLS_IO", "Export to protocols.io"),
-        ("EXPORT_RUN_PROTOCOLS_IO", "Export session to protocols.io"),
-    ]
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    task_type = models.CharField(max_length=25, choices=TASK_TYPE_CHOICES)
+    task_type = models.CharField(max_length=TASK_TYPE_MAX_LENGTH, choices=task_type_choices)
     status = models.CharField(max_length=10, choices=TASK_STATUS_CHOICES, default="QUEUED")
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="async_tasks")

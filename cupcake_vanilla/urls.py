@@ -2,6 +2,7 @@
 URL configuration for cupcake_vanilla project.
 """
 
+from django.apps import apps
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
@@ -48,6 +49,11 @@ if getattr(settings, "ENABLE_CUPCAKE_SALTED_CARAMEL", True):
 if getattr(settings, "ENABLE_CUPCAKE_RED_VELVET", True):
     urlpatterns += [
         path("api/v1/", include("ccrv.urls")),  # CCRV: Project & protocol management endpoints
+    ]
+
+if apps.is_installed("cupcake_protocols_io"):
+    urlpatterns += [
+        path("api/v1/", include("cupcake_protocols_io.urls")),
     ]
 
 # Serve media files during development

@@ -11,14 +11,14 @@ from choux import APIError, ProtocolsIO
 from rest_framework.test import APIClient
 
 from ccc.encryption import decrypt_secret
-from ccrv.models import ProtocolsIOAccount
-from ccrv.protocols_io.accounts import (
+from cupcake_protocols_io.accounts import (
     ProtocolsIOAccountMissing,
     client_for,
     connect_account,
     disconnect_account,
     rate_limiter_for,
 )
+from cupcake_protocols_io.models import ProtocolsIOAccount
 
 PROFILE = {"username": "toan-phung", "name": "Toan K Phung"}
 
@@ -97,7 +97,7 @@ class AccountEndpointTest(TestCase):
         self.user = get_user_model().objects.create_user("endpoint-user", password="x")
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-        self.url = reverse("ccrv:protocolsioaccount-list")
+        self.url = reverse("protocols_io:account-list")
 
     def test_status_before_connecting(self):
         """Status before connecting."""
@@ -130,7 +130,7 @@ class AccountEndpointTest(TestCase):
         """Disconnect."""
         with patch.object(ProtocolsIO, "get_profile", return_value=PROFILE):
             self.client.post(self.url, {"access_token": "personal-token"}, format="json")
-        response = self.client.delete(reverse("ccrv:protocolsioaccount-disconnect"))
+        response = self.client.delete(reverse("protocols_io:account-disconnect"))
         self.assertEqual(response.status_code, 204)
         self.assertEqual(self.client.get(self.url).data, {"connected": False})
 

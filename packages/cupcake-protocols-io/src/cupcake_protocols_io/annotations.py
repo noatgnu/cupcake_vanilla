@@ -10,11 +10,12 @@ import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from django.conf import settings
 from django.utils import timezone
 
 from choux import Draft, ProtocolsIO, image_dimensions
 from choux.draft import bold, file_attachment, image, italic
+
+from cupcake_protocols_io import conf
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,6 @@ class CommentContent:
     draft: Draft
     files_uploaded: int = 0
     warnings: list[str] = field(default_factory=list)
-
-
-def max_upload_bytes() -> int:
-    """Return the largest annotation file uploaded to protocols.io."""
-    return settings.PROTOCOLS_IO_MAX_UPLOAD_BYTES
 
 
 def author_name(user: Any) -> str:
@@ -395,7 +391,7 @@ def _attach_file(content: CommentContent, annotation: Any, client: ProtocolsIO) 
     if size is None:
         content.warnings.append(f"File {name} is missing from Cupcake storage and was left out")
         return
-    if size > max_upload_bytes():
+    if size > conf.max_upload_bytes():
         content.warnings.append(f"File {name} is larger than the upload limit and was left out")
         return
     with annotation.file.open("rb") as handle:
@@ -427,7 +423,7 @@ def _attach_subtitles(content: CommentContent, annotation: Any, text: str, suffi
     if not is_webvtt(text):
         return
     data = text.encode("utf-8")
-    if len(data) > max_upload_bytes():
+    if len(data) > conf.max_upload_bytes():
         content.warnings.append(
             f"The {suffix} of annotation {annotation.pk} is larger than the upload limit and was left out"
         )

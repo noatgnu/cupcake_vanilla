@@ -23,16 +23,12 @@ from ccrv.models import (
     InstrumentUsageStepAnnotation,
     ProtocolModel,
     ProtocolSection,
-    ProtocolsIOAccount,
-    ProtocolsIOExport,
-    ProtocolsIORun,
     ProtocolStep,
     Session,
     StepAnnotation,
     StepVariation,
 )
-from ccrv.protocols_io import ExportResult, export_step_guid, ordered_steps
-from ccrv.protocols_io.annotations import (
+from cupcake_protocols_io.annotations import (
     annotation_comment,
     annotation_digest,
     calculator_lines,
@@ -41,8 +37,10 @@ from ccrv.protocols_io.annotations import (
     structured_lines,
     vtt_lines,
 )
-from ccrv.protocols_io.session_export import SessionExportError, export_session_protocols, session_title
-from ccrv.tasks.protocols_io_tasks import export_session_to_protocols_io_task
+from cupcake_protocols_io.exporter import ExportResult, export_step_guid, ordered_steps
+from cupcake_protocols_io.models import ProtocolsIOAccount, ProtocolsIOExport, ProtocolsIORun
+from cupcake_protocols_io.session_export import SessionExportError, export_session_protocols, session_title
+from cupcake_protocols_io.tasks import export_session_to_protocols_io_task
 
 MEDIA_ROOT = tempfile.mkdtemp()
 
@@ -312,7 +310,7 @@ class SessionExportTestCase(TestCase):
 
     def export(self, protocols=None, **options):
         """Export the session to the fake protocols.io."""
-        with patch("ccrv.protocols_io.session_export.export_protocol", side_effect=self.fake.export_protocol):
+        with patch("cupcake_protocols_io.session_export.export_protocol", side_effect=self.fake.export_protocol):
             return export_session_protocols(
                 self.session, protocols or [self.lysis], self.fake, user=self.user, **options
             )
@@ -625,7 +623,7 @@ class SessionExportEndpointTest(SessionExportTestCase):
         super().setUp()
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-        self.url = reverse("ccrv:session-export-to-protocols-io", args=[self.session.pk])
+        self.url = reverse("protocols_io:session-export", args=[self.session.pk])
         ProtocolsIOAccount.objects.create(user=self.user, access_token="personal-token", username="toan-phung")
 
     def test_queues_every_session_protocol_by_default(self):
@@ -671,14 +669,14 @@ class SessionExportEndpointTest(SessionExportTestCase):
         self.session.protocols.add(self.digest)
         self.vary(self.lysis_steps[0])
         self.export(protocols=[self.lysis])
-        response = self.client.get(reverse("ccrv:session-protocols-io-status", args=[self.session.pk]))
+        response = self.client.get(reverse("protocols_io:session-status", args=[self.session.pk]))
         self.assertEqual(response.status_code, 200)
         entries = {entry["protocol_title"]: entry for entry in response.data}
         self.assertEqual((entries["Lysis"]["varied_steps"], entries["Lysis"]["run_is_current"]), (1, True))
         self.assertEqual(entries["Lysis"]["protocol_export"]["protocols_io_uri"], "lysis")
         self.assertEqual((entries["Digest"]["varied_steps"], entries["Digest"]["run"]), (0, None))
         StepVariation.objects.filter(session=self.session).update(variation_duration=1)
-        response = self.client.get(reverse("ccrv:session-protocols-io-status", args=[self.session.pk]))
+        response = self.client.get(reverse("protocols_io:session-status", args=[self.session.pk]))
         self.assertFalse({entry["protocol_title"]: entry for entry in response.data}["Lysis"]["run_is_current"])
 
     def test_viewers_cannot_export(self):
@@ -696,7 +694,7 @@ class SessionExportEndpointTest(SessionExportTestCase):
         """Lists runs with their comment count."""
         self.annotate(self.lysis_steps[0], "note")
         self.export()
-        response = self.client.get(reverse("ccrv:session-protocols-io-runs", args=[self.session.pk]))
+        response = self.client.get(reverse("protocols_io:session-runs", args=[self.session.pk]))
         self.assertEqual(response.status_code, 200)
         [entry] = response.data
         self.assertEqual((entry["protocol_title"], entry["comment_count"], entry["title"]), ("Lysis", 1, "Run 7"))
@@ -707,7 +705,7 @@ class SessionExportTaskTest(SessionExportTestCase):
     def test_task_stores_one_result_per_run(self):
         """Task stores one result per run."""
         task = AsyncTaskStatus.objects.create(task_type="EXPORT_RUN_PROTOCOLS_IO", user=self.user)
-        with patch("ccrv.tasks.protocols_io_tasks.client_for", return_value=_context(self.fake)):
+        with patch("cupcake_protocols_io.tasks.client_for", return_value=_context(self.fake)):
             outcome = export_session_to_protocols_io_task(self.session.pk, [self.lysis.pk], self.user.pk, str(task.id))
         task.refresh_from_db()
         self.assertEqual(task.status, "SUCCESS")
@@ -718,7 +716,7 @@ class SessionExportTaskTest(SessionExportTestCase):
         """Task reports export errors."""
         self.lysis.protocols_io_exports.all().delete()
         task = AsyncTaskStatus.objects.create(task_type="EXPORT_RUN_PROTOCOLS_IO", user=self.user)
-        with patch("ccrv.tasks.protocols_io_tasks.client_for", return_value=_context(self.fake)):
+        with patch("cupcake_protocols_io.tasks.client_for", return_value=_context(self.fake)):
             export_session_to_protocols_io_task(self.session.pk, [self.lysis.pk], self.user.pk, str(task.id))
         task.refresh_from_db()
         self.assertEqual(task.status, "FAILURE")
@@ -730,7 +728,7 @@ class SessionExportTaskTest(SessionExportTestCase):
         self.fake.create_record = Mock(
             side_effect=APIError("POST /v3/records failed with HTTP 400: SUBSCRIPTION_LIMIT")
         )
-        with patch("ccrv.tasks.protocols_io_tasks.client_for", return_value=_context(self.fake)):
+        with patch("cupcake_protocols_io.tasks.client_for", return_value=_context(self.fake)):
             export_session_to_protocols_io_task(self.session.pk, [self.lysis.pk], self.user.pk, str(task.id))
         task.refresh_from_db()
         self.assertIn("run limit of its plan", task.error_message)

@@ -5,18 +5,17 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from django.conf import settings
-
-from choux import ProtocolsIO, RateLimiter
+from choux import ChouxError, ProtocolsIO, RateLimiter
 from choux.units import unit_kind
 
-from ccv.external_vocabularies.base import ExternalTermData, ExternalVocabularySource, sources
+from ccv.external_vocabularies.base import ExternalTermData, ExternalVocabularyError, ExternalVocabularySource, sources
+from cupcake_protocols_io import conf
 
 rate_limiter = RateLimiter()
 
 
 def _client() -> ProtocolsIO:
-    return ProtocolsIO(settings.PROTOCOLS_IO_ACCESS_TOKEN, rate_limiter=rate_limiter, max_retries=1, timeout=10.0)
+    return ProtocolsIO(conf.access_token(), rate_limiter=rate_limiter, max_retries=1, timeout=10.0)
 
 
 def reagent_term(item: Mapping[str, Any]) -> ExternalTermData:
@@ -63,11 +62,14 @@ class ProtocolsIOReagentSource(ExternalVocabularySource):
     label = "protocols.io Reagent"
 
     def is_configured(self) -> bool:
-        return bool(settings.PROTOCOLS_IO_ACCESS_TOKEN)
+        return bool(conf.access_token())
 
     def search(self, term: str, limit: int) -> list[ExternalTermData]:
-        with _client() as client:
-            items = client.search_reagents(term, page_size=limit)["items"]
+        try:
+            with _client() as client:
+                items = client.search_reagents(term, page_size=limit)["items"]
+        except ChouxError as error:
+            raise ExternalVocabularyError(str(error)) from error
         return [reagent_term(item) for item in items]
 
 
@@ -81,7 +83,7 @@ class ProtocolsIOUnitSource(ExternalVocabularySource):
     searchable = False
 
     def is_configured(self) -> bool:
-        return bool(settings.PROTOCOLS_IO_ACCESS_TOKEN)
+        return bool(conf.access_token())
 
     def load_all(self, **options: str) -> Iterable[ExternalTermData]:
         """
@@ -93,12 +95,16 @@ class ProtocolsIOUnitSource(ExternalVocabularySource):
 
         Raises:
             ValueError: When no protocol is given.
+            ExternalVocabularyError: When protocols.io rejects the request.
         """
-        protocol = options.get("protocol") or settings.PROTOCOLS_IO_UNITS_PROTOCOL
+        protocol = options.get("protocol") or conf.units_protocol()
         if not protocol:
             raise ValueError("pass protocol=<id or uri> or set PROTOCOLS_IO_UNITS_PROTOCOL")
-        with _client() as client:
-            units = client.get_units(protocol)
+        try:
+            with _client() as client:
+                units = client.get_units(protocol)
+        except ChouxError as error:
+            raise ExternalVocabularyError(str(error)) from error
         return [unit_term(unit) for unit in units if not unit.get("deleted")]
 
 

@@ -9,6 +9,8 @@ from django.utils import timezone
 
 from choux import ProtocolsIO, RateLimiter
 
+from cupcake_protocols_io.models import ProtocolsIOAccount
+
 _limiters: dict[int, RateLimiter] = {}
 _limiters_lock = threading.Lock()
 
@@ -34,7 +36,7 @@ def connect_account(user: Any, token: str) -> Any:
         token: protocols.io access token.
 
     Returns:
-        The saved :class:`ccrv.models.ProtocolsIOAccount`.
+        The saved :class:`cupcake_protocols_io.models.ProtocolsIOAccount`.
 
     Raises:
         ValueError: When the token is blank.
@@ -45,8 +47,7 @@ def connect_account(user: Any, token: str) -> Any:
         raise ValueError("a protocols.io access token is required")
     with ProtocolsIO(token, rate_limiter=rate_limiter_for(user.pk)) as client:
         profile = client.get_profile()
-    account_model = user._meta.apps.get_model("ccrv", "ProtocolsIOAccount")
-    account, _ = account_model.objects.update_or_create(
+    account, _ = ProtocolsIOAccount.objects.update_or_create(
         user=user,
         defaults={"access_token": token, "username": profile.get("username") or "", "name": profile.get("name") or ""},
     )
@@ -60,8 +61,7 @@ def disconnect_account(user: Any) -> bool:
     Returns:
         Whether an account was removed.
     """
-    account_model = user._meta.apps.get_model("ccrv", "ProtocolsIOAccount")
-    deleted, _ = account_model.objects.filter(user=user).delete()
+    deleted, _ = ProtocolsIOAccount.objects.filter(user=user).delete()
     return deleted > 0
 
 
@@ -75,9 +75,8 @@ def client_for(user: Any) -> ProtocolsIO:
     Raises:
         ProtocolsIOAccountMissing: When the user has not connected an account.
     """
-    account_model = user._meta.apps.get_model("ccrv", "ProtocolsIOAccount")
-    account = account_model.objects.filter(user=user).first()
+    account = ProtocolsIOAccount.objects.filter(user=user).first()
     if account is None or not account.access_token:
         raise ProtocolsIOAccountMissing("connect a protocols.io account first")
-    account_model.objects.filter(pk=account.pk).update(last_used_at=timezone.now())
+    ProtocolsIOAccount.objects.filter(pk=account.pk).update(last_used_at=timezone.now())
     return ProtocolsIO(account.access_token, rate_limiter=rate_limiter_for(user.pk))
