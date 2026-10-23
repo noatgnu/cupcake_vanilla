@@ -141,6 +141,7 @@ def step_to_draft(
     *,
     scaling_factor: float = 1.0,
     image_resolver: ImageResolver | None = None,
+    text: str | None = None,
 ) -> tuple[Draft, list[str]]:
     """
     Convert the text of a protocol step into protocols.io Draft.js content.
@@ -150,11 +151,12 @@ def step_to_draft(
         units: Units of the target protocol, from :meth:`choux.ProtocolsIO.get_units`.
         scaling_factor: Extra factor applied to scaled quantities of scalable reagents.
         image_resolver: Passed to :func:`choux.html_to_draft` for images in the step text.
+        text: Text to convert instead of the step description, using the reagents of the step.
 
     Returns:
         The content, and the templates that could not be expanded.
     """
-    html = step.step_description or ""
+    html = (step.step_description if text is None else text) or ""
     reagents = [
         TemplateReagent.from_step_reagent(step_reagent, scaling_factor=scaling_factor)
         for step_reagent in step.reagents.select_related("reagent")

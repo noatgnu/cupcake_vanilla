@@ -106,6 +106,7 @@ class Draft:
         self._blocks: list[dict[str, Any]] = []
         self._entities: list[Entity] = []
         self._keys: set[str] = set()
+        self._trailing_keys: dict[str, str] = {}
 
     @property
     def is_empty(self) -> bool:
@@ -209,9 +210,17 @@ class Draft:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the raw Draft.js document."""
+        """Return the raw Draft.js document. Every atomic block is followed by a text block."""
+        blocks = []
+        for index, block in enumerate(self._blocks):
+            blocks.append(dict(block))
+            following = self._blocks[index + 1] if index + 1 < len(self._blocks) else None
+            if block["type"] == "atomic" and (following is None or following["type"] == "atomic"):
+                if block["key"] not in self._trailing_keys:
+                    self._trailing_keys[block["key"]] = self._new_key()
+                blocks.append(self._block_with_key(self._trailing_keys[block["key"]], "", "unstyled", 0, [], []))
         return {
-            "blocks": [dict(block) for block in self._blocks],
+            "blocks": blocks,
             "entityMap": {str(index): entity.to_dict() for index, entity in enumerate(self._entities)},
         }
 
@@ -260,8 +269,19 @@ class Draft:
         styles: list[dict[str, Any]],
         ranges: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        return self._block_with_key(self._new_key(), text, block_type, depth, styles, ranges)
+
+    @staticmethod
+    def _block_with_key(
+        key: str,
+        text: str,
+        block_type: str,
+        depth: int,
+        styles: list[dict[str, Any]],
+        ranges: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         return {
-            "key": self._new_key(),
+            "key": key,
             "text": text,
             "type": block_type,
             "depth": depth,

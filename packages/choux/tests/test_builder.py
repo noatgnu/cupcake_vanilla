@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from choux.draft import Draft, bold, duration, hyperlink, image, italic, temperature
+from choux.draft import Draft, bold, duration, hyperlink, image, italic, note, temperature
 from choux.draft.schema import PLACEHOLDER
 
 
@@ -99,3 +99,22 @@ def test_to_json_round_trips():
     """To json round trips."""
     draft = Draft().paragraph("Spin for ", duration(300))
     assert json.loads(draft.to_json()) == draft.to_dict()
+
+
+def test_atomic_blocks_are_followed_by_a_text_block():
+    """Atomic blocks are followed by a text block."""
+    content = Draft().paragraph("before").block_entity(note(Draft().paragraph("a")))
+    content.block_entity(note(Draft().paragraph("b"))).paragraph("after").block_entity(note(Draft().paragraph("c")))
+    blocks = content.to_dict()["blocks"]
+    assert [block["type"] for block in blocks] == [
+        "unstyled",
+        "atomic",
+        "unstyled",
+        "atomic",
+        "unstyled",
+        "atomic",
+        "unstyled",
+    ]
+    assert [block["text"] for block in blocks[2::2]] == ["", "after", ""]
+    assert content.to_dict() == content.to_dict()
+    assert len({block["key"] for block in blocks}) == len(blocks)

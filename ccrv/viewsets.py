@@ -5,9 +5,10 @@ Django REST Framework viewsets for project and protocol management API endpoints
 faithfully representing the migrated functionality.
 """
 
+import logging
 from pathlib import Path
 
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
 import django_filters
@@ -49,6 +50,7 @@ from .models import (
 from .protocols_io import browser as protocols_io_browser
 from .protocols_io.accounts import ProtocolsIOAccountMissing, client_for, connect_account, disconnect_account
 from .protocols_io.exporter import protocol_reference
+from .protocols_io.session_export import session_variations, variation_hash
 from .serializers import (
     InstrumentUsageSessionAnnotationSerializer,
     InstrumentUsageStepAnnotationSerializer,
@@ -61,6 +63,8 @@ from .serializers import (
     ProtocolSectionSerializer,
     ProtocolsIOAccountSerializer,
     ProtocolsIOConnectSerializer,
+    ProtocolsIOExportSerializer,
+    ProtocolsIORunSerializer,
     ProtocolStepSerializer,
     RemoteHostSerializer,
     SessionAnnotationFolderSerializer,
@@ -72,7 +76,9 @@ from .serializers import (
     StepVariationSerializer,
     TimeKeeperSerializer,
 )
-from .tasks.protocols_io_tasks import export_protocol_to_protocols_io_task
+from .tasks.protocols_io_tasks import export_protocol_to_protocols_io_task, export_session_to_protocols_io_task
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -266,34 +272,35 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"])
     def import_from_protocols_io(self, request):
-        """Import a protocol from protocols.io using the original integration."""
+        """
+        Import a protocol from a protocols.io address or DOI link.
+
+        Uses the user's own protocols.io account when one is connected, and the server's token otherwise.
+        """
         url = request.data.get("url")
         if not url:
             return Response({"error": "URL is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            protocol = ProtocolModel.create_protocol_from_url(url)
-            protocol.owner = request.user
-            protocol.save()
-
-            serializer = self.get_serializer(protocol)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except AttributeError as e:
-            if "PROTOCOLS_IO_ACCESS_TOKEN" in str(e):
-                return Response(
-                    {"error": "PROTOCOLS_IO_ACCESS_TOKEN not configured. Please set this environment variable."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-            return Response({"error": f"Configuration error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        except Exception as e:
-            import traceback
-
-            traceback.print_exc()
+            if ProtocolsIOAccount.objects.filter(user=request.user).exists():
+                with client_for(request.user) as client:
+                    protocol = ProtocolModel.create_protocol_from_url(url, client=client)
+            else:
+                protocol = ProtocolModel.create_protocol_from_url(url)
+        except ValueError as error:
+            return Response({"error": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        except APIError as error:
             return Response(
-                {"error": f"Failed to import protocol: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": "protocols.io request failed", "detail": str(error)}, status=status.HTTP_502_BAD_GATEWAY
             )
+        except Exception as error:
+            logger.exception("protocols.io import from %s failed", url)
+            return Response(
+                {"error": f"Failed to import protocol: {error}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        protocol.owner = request.user
+        protocol.save()
+        return Response(self.get_serializer(protocol).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
     def import_from_protocols_io_account(self, request):
@@ -354,6 +361,13 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         return Response(
             {"task_id": str(task.id), "message": "protocols.io export queued"}, status=status.HTTP_202_ACCEPTED
         )
+
+    @action(detail=True, methods=["get"])
+    def protocols_io_exports(self, request, pk=None):
+        """List the protocols.io protocols this protocol was exported into, most recent first."""
+        protocol = self.get_object()
+        exports = protocol.protocols_io_exports.select_related("exported_by")
+        return Response(ProtocolsIOExportSerializer(exports, many=True).data)
 
     @action(detail=True, methods=["get"])
     def get_export_url(self, request, pk=None):
@@ -603,6 +617,114 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
 
         serializer = AnnotationFolderSerializer(folders, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def export_to_protocols_io(self, request, pk=None):
+        """
+        Queue an export of the step annotations of this session into protocols.io runs, one for each protocol.
+
+        Body, all optional: ``protocols``, ids of session protocols to export, every protocol of the
+        session when omitted; ``new_runs``, create new runs instead of updating the runs the user
+        exported before; ``folder``, the GUID of the protocols.io folder for new runs; and
+        ``session_url``, the address of the session in Cupcake.
+        """
+        session = self.get_object()
+        session_protocols = {protocol.pk: protocol for protocol in session.protocols.all()}
+        requested = request.data.get("protocols")
+        if requested is None:
+            protocols = list(session_protocols.values())
+        elif isinstance(requested, list):
+            try:
+                protocols = [session_protocols[int(protocol_id)] for protocol_id in requested]
+            except (KeyError, TypeError, ValueError):
+                protocols = []
+        else:
+            protocols = []
+        if not protocols:
+            return Response(
+                {"error": "protocols must list protocols of this session"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        session_url = str(request.data.get("session_url") or "").strip()
+        if session_url and not session_url.startswith(("https://", "http://")):
+            return Response({"error": "session_url must be a web address"}, status=status.HTTP_400_BAD_REQUEST)
+        folder = str(request.data.get("folder") or "").strip() or None
+        new_runs = request.data.get("new_runs") in (True, "true", "1", 1)
+        if not ProtocolsIOAccount.objects.filter(user=request.user).exists():
+            return Response({"error": "Connect a protocols.io account first"}, status=status.HTTP_400_BAD_REQUEST)
+        varied = set(
+            StepVariation.objects.filter(session=session, step__protocol__in=protocols).values_list(
+                "step__protocol_id", flat=True
+            )
+        )
+        missing = [
+            protocol.protocol_title
+            for protocol in protocols
+            if protocol.pk not in varied and not protocol.protocols_io_exports.filter(session__isnull=True).exists()
+        ]
+        if missing:
+            return Response(
+                {
+                    "error": "Export these protocols to protocols.io first: " + ", ".join(missing),
+                    "protocols_not_exported": missing,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        protocol_ids = [protocol.pk for protocol in protocols]
+        task = AsyncTaskStatus.objects.create(
+            task_type="EXPORT_RUN_PROTOCOLS_IO",
+            user=request.user,
+            parameters={"session_id": session.id, "protocol_ids": protocol_ids, "new_runs": new_runs, "folder": folder},
+        )
+        job = export_session_to_protocols_io_task.delay(
+            session.id, protocol_ids, request.user.id, str(task.id), new_runs, folder, session_url
+        )
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
+        return Response(
+            {"task_id": str(task.id), "message": "protocols.io session export queued"}, status=status.HTTP_202_ACCEPTED
+        )
+
+    @action(detail=True, methods=["get"])
+    def protocols_io_status(self, request, pk=None):
+        """
+        Describe how each protocol of this session would be exported to protocols.io by the current user.
+
+        Each entry has the protocol, its latest export that follows the protocol's own steps, the
+        number of steps this session varied, and the user's latest run of it with whether that run
+        still matches the variations.
+        """
+        session = self.get_object()
+        entries = []
+        for protocol in session.protocols.all():
+            variations = session_variations(session, protocol)
+            export = protocol.protocols_io_exports.filter(session__isnull=True).first()
+            run = (
+                session.protocols_io_runs.filter(protocol=protocol, exported_by=request.user)
+                .select_related("protocol", "exported_by")
+                .annotate(comment_count=Count("comments"))
+                .first()
+            )
+            entries.append(
+                {
+                    "protocol": protocol.pk,
+                    "protocol_title": protocol.protocol_title,
+                    "protocol_export": ProtocolsIOExportSerializer(export).data if export else None,
+                    "varied_steps": len(variations),
+                    "run": ProtocolsIORunSerializer(run).data if run else None,
+                    "run_is_current": run is not None and run.variation_hash == variation_hash(variations),
+                }
+            )
+        return Response(entries)
+
+    @action(detail=True, methods=["get"])
+    def protocols_io_runs(self, request, pk=None):
+        """List the protocols.io runs this session was exported into, most recent first."""
+        session = self.get_object()
+        runs = session.protocols_io_runs.select_related("protocol", "exported_by").annotate(
+            comment_count=Count("comments")
+        )
+        return Response(ProtocolsIORunSerializer(runs, many=True).data)
 
     @action(detail=True, methods=["get"])
     def get_export_url(self, request, pk=None):

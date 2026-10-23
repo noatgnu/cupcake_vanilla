@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from choux import ChouxError, ProtocolsIO
 
-from ccrv.models import ProtocolModel
+from ccrv.models import ProtocolModel, ProtocolsIOExport
 from ccrv.protocols_io import export_protocol
 
 
@@ -31,6 +31,7 @@ class Command(BaseCommand):
                 result = export_protocol(protocol, client, options["target"], scaling_factor=options["scaling_factor"])
             except ChouxError as error:
                 raise CommandError(f"Export failed: {error}") from error
+        ProtocolsIOExport.remember(protocol, None, result)
         self.stdout.write(
             self.style.SUCCESS(
                 f"Exported {result.steps_saved} step(s) to {result.protocol_url or result.protocol_uri}; "

@@ -1,10 +1,16 @@
 """Tests for importing protocols.io protocols into Cupcake sections."""
 
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.urls import reverse
 
-from ccrv.models import ProtocolModel, ProtocolStep
+from choux import APIError
+from rest_framework.test import APIClient
+
+from ccrv.models import ProtocolModel, ProtocolsIOAccount, ProtocolStep
 from ccrv.protocols_io.importer import UNTITLED_SECTION, group_into_sections, step_section_title, steps_in_order
 
 
@@ -136,3 +142,79 @@ class CreateProtocolFromUrlTest(TestCase):
         protocol = self.import_protocol([])
         self.assertEqual(protocol.sections.count(), 0)
         self.assertEqual(ProtocolStep.objects.filter(protocol=protocol).count(), 0)
+
+
+@override_settings(PROTOCOLS_IO_ACCESS_TOKEN="server-token")
+class ImportFromAddressEndpointTest(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("address-import-user", password="x")
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse("ccrv:protocolmodel-import-from-protocols-io")
+        self.payload = {
+            "id": 340067,
+            "created_on": 1792341267,
+            "doi": None,
+            "title": "Lysis",
+            "description": "About",
+            "version_uri": "",
+            "steps": [v3_step(1, 0, "Preparation", "Wash")],
+        }
+        self.page = Mock(content=b'<meta property="og:url" content="https://www.protocols.io/view/lysis-abc123/v2">')
+
+    def test_connected_users_import_with_their_own_token(self):
+        """Connected users import with their own token."""
+        ProtocolsIOAccount.objects.create(user=self.user, access_token="personal-token", username="toan-phung")
+        client = Mock()
+        client.get_protocol_v3.return_value = self.payload
+        with patch("ccrv.models.requests.get", return_value=self.page) as get:
+            with patch("ccrv.viewsets.client_for", return_value=nullcontext(client)) as client_for:
+                response = self.client.post(
+                    self.url, {"url": "https://doi.org/10.17504/protocols.io.abc"}, format="json"
+                )
+        self.assertEqual(response.status_code, 201)
+        client_for.assert_called_once_with(self.user)
+        client.get_protocol_v3.assert_called_once_with("lysis-abc123")
+        get.assert_called_once_with("https://doi.org/10.17504/protocols.io.abc", timeout=30)
+        protocol = ProtocolModel.objects.get(pk=response.data["id"])
+        self.assertEqual(
+            (protocol.owner, protocol.protocol_url), (self.user, "https://www.protocols.io/view/lysis-abc123/v2")
+        )
+
+    def test_users_without_an_account_import_with_the_server_token(self):
+        """Users without an account import with the server token."""
+        api = Mock(status_code=200)
+        api.json.return_value = {"protocol": self.payload}
+        with patch("ccrv.models.requests.get", side_effect=[self.page, api]) as get:
+            with patch("ccrv.viewsets.client_for") as client_for:
+                response = self.client.post(
+                    self.url, {"url": "https://www.protocols.io/view/lysis-abc123/v2"}, format="json"
+                )
+        self.assertEqual(response.status_code, 201)
+        client_for.assert_not_called()
+        api_call = get.call_args_list[1]
+        self.assertEqual(api_call.args[0], "https://www.protocols.io/api/v3/protocols/lysis-abc123")
+        self.assertEqual(api_call.kwargs["headers"], {"Authorization": "Bearer server-token"})
+
+    def test_protocols_io_rejecting_the_users_request(self):
+        """Protocols io rejecting the users request."""
+        ProtocolsIOAccount.objects.create(user=self.user, access_token="personal-token", username="toan-phung")
+        client = Mock()
+        client.get_protocol_v3.side_effect = APIError("protocol does not exist", http_status=404)
+        with patch("ccrv.models.requests.get", return_value=self.page):
+            with patch("ccrv.viewsets.client_for", return_value=nullcontext(client)):
+                response = self.client.post(
+                    self.url, {"url": "https://www.protocols.io/view/lysis-abc123"}, format="json"
+                )
+        self.assertEqual((response.status_code, response.data["error"]), (502, "protocols.io request failed"))
+        self.assertFalse(ProtocolModel.objects.exists())
+
+    def test_server_token_not_finding_the_protocol(self):
+        """Server token not finding the protocol."""
+        with patch("ccrv.models.requests.get", side_effect=[self.page, Mock(status_code=404)]):
+            response = self.client.post(self.url, {"url": "https://www.protocols.io/view/lysis-abc123"}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_url_is_required(self):
+        """Url is required."""
+        self.assertEqual(self.client.post(self.url, {}, format="json").status_code, 400)

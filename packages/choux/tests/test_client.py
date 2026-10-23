@@ -236,16 +236,16 @@ def test_update_protocol_refuses_drafts(client, api):
     assert not route.called
 
 
-def prepare_response():
+def prepare_response(content_type="image/png", key="bk3aebuzf7.png"):
     """Return a prepare file upload response for a PNG image."""
     return ok(
         formData={
-            "key": "bk3aebuzf7.png",
+            "key": key,
             "s3_bucket": "protocols-files",
             "AWSAccessKeyId": "id",
             "Policy": "policy",
             "Signature": "signature",
-            "ContentType": "image/png",
+            "ContentType": content_type,
             "acl": "public-read",
         },
         metaData={"file_id": "1401860", "file_type": "31", "thumb_url": "https://www.protocols.io/img/png.png"},
@@ -273,6 +273,23 @@ def test_upload_file_runs_prepare_store_and_verify(client, api):
     assert uploaded.raw_source == "https://protocols-files.s3.amazonaws.com/files/bk3aebuzf7.png"
     assert uploaded.size == len(b"png-bytes")
     assert uploaded.is_image
+
+
+def stored_content_type(storage):
+    """Return the Content-Type form field sent to storage."""
+    body = storage.calls[0].request.content
+    start = body.index(b'name="Content-Type"') + len(b'name="Content-Type"\r\n\r\n')
+    return body[start : body.index(b"\r\n", start)].decode()
+
+
+def test_upload_file_stores_the_type_protocols_io_offers(client, api):
+    """Upload file stores the type protocols io offers."""
+    api.post(f"{API}/v3/files").mock(return_value=prepare_response("application/octet-stream", "bk3kbbuzf7.svg"))
+    storage = api.post(STORAGE).mock(return_value=httpx.Response(204))
+    api.put(f"{API}/v3/files/1401860").mock(return_value=ok())
+    uploaded = client.upload_file("sketch.svg", b"<svg/>", mime_type="image/svg+xml", width=10, height=10)
+    assert stored_content_type(storage) == "application/octet-stream"
+    assert uploaded.mime_type == "application/octet-stream"
 
 
 def test_upload_file_fails_when_storage_rejects_it(client, api):
@@ -511,3 +528,72 @@ def test_get_protocol_v3(client, api):
     """Get protocol v3."""
     api.get(f"{API}/v3/protocols/lysis-abc").mock(return_value=ok(protocol={"id": 1, "steps": []}))
     assert client.get_protocol_v3("lysis-abc") == {"id": 1, "steps": []}
+
+
+def test_get_record_comments(client, api):
+    """Get record comments."""
+    api.get(f"{API}/v3/records/R/comments").mock(return_value=ok(comments=[{"comment_id": 1, "step_id": 0}]))
+    assert client.get_record_comments("R") == [{"comment_id": 1, "step_id": 0}]
+
+
+def test_add_record_comment_sends_draft_json(client, api):
+    """Add record comment sends draft json."""
+    route = api.post(f"{API}/v3/records/R/comments").mock(return_value=ok(comment={"comment_id": 5}))
+    assert client.add_record_comment("R", Draft().paragraph("hello"), private=True) == {"comment_id": 5}
+    sent = sent_json(route)
+    assert sent["is_private"] == 1
+    assert json.loads(sent["body"])["blocks"][0]["text"] == "hello"
+
+
+def test_add_step_comment_sends_the_record_guid(client, api):
+    """Add step comment sends the record guid."""
+    route = api.post(f"{API}/v3/records/steps/42/discussions").mock(return_value=ok(comment={"discussion_id": 7}))
+    assert client.add_step_comment("R", 42, Draft().paragraph("note")) == {"discussion_id": 7}
+    sent = sent_json(route)
+    assert sent["record_guid"] == "R"
+    assert json.loads(sent["body"])["blocks"][0]["text"] == "note"
+
+
+def test_add_step_comment_refuses_invalid_content_before_sending(client, api):
+    """Add step comment refuses invalid content before sending."""
+    route = api.post(f"{API}/v3/records/steps/42/discussions").mock(return_value=ok(comment={}))
+    with pytest.raises(DraftValidationError):
+        client.add_step_comment("R", 42, "not json")
+    assert not route.called
+
+
+def test_add_step_comment_can_skip_validation(client, api):
+    """Add step comment can skip validation."""
+    route = api.post(f"{API}/v3/records/steps/42/discussions").mock(return_value=ok(comment={}))
+    client.add_step_comment("R", 42, "plain", validate=False)
+    assert sent_json(route)["body"] == "plain"
+
+
+def test_reply_to_step_comment(client, api):
+    """Reply to step comment."""
+    route = api.post(f"{API}/v3/records/steps/42/discussions/7/comments").mock(
+        return_value=ok(comment={"comment_id": 8})
+    )
+    assert client.reply_to_step_comment("R", 42, 7, Draft().paragraph("reply")) == {"comment_id": 8}
+    assert sent_json(route)["record_guid"] == "R"
+
+
+def test_edit_and_delete_comments_and_discussions(client, api):
+    """Edit and delete comments and discussions."""
+    edit_comment = api.put(f"{API}/v3/discussions/comments/8").mock(return_value=ok())
+    edit_discussion = api.put(f"{API}/v3/discussions/7").mock(return_value=ok())
+    delete_comment = api.delete(f"{API}/v3/discussions/comments/8").mock(return_value=ok())
+    delete_discussion = api.delete(f"{API}/v3/discussions/7").mock(return_value=ok())
+    client.edit_comment(8, Draft().paragraph("changed"))
+    client.edit_discussion(7, Draft().paragraph("changed"))
+    client.delete_comment(8)
+    client.delete_discussion(7)
+    assert json.loads(sent_json(edit_comment)["body"])["blocks"][0]["text"] == "changed"
+    assert edit_discussion.called and delete_comment.called and delete_discussion.called
+
+
+def test_create_protocol_sends_the_type_as_json(client, api):
+    """Create protocol sends the type as json."""
+    route = api.post(f"{API}/v3/protocols/{'A' * 32}").mock(return_value=ok(protocol={"id": 7, "uri": "new-abc"}))
+    assert client.create_protocol("A" * 32) == {"id": 7, "uri": "new-abc"}
+    assert sent_json(route) == {"type_id": 1}

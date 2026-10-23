@@ -90,13 +90,7 @@ jobs:
         poetry run python manage.py migrate
         poetry run python manage.py collectstatic --noinput
         poetry run python manage.py test \
-          ccc.tests.test_base \
-          ccc.tests.test_annotations \
-          ccc.tests.test_chunked_upload \
-          ccc.tests.test_device_token \
-          ccc.tests.test_appliance \
-          ccc.tests.test_plugin \
-          ccc.tests.test_plugin_manager \
+          ccc.tests \
           ccv.tests \
           ccm.tests \
           ccmc.tests \

@@ -9,7 +9,7 @@ import logging
 import mimetypes
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,9 @@ class ExportResult:
     Attributes:
         protocol_uri: URI of the protocols.io protocol.
         protocol_url: Address of the protocol on protocols.io.
+        protocol_guid: GUID of the protocols.io protocol.
+        protocol_id: Numeric id of the protocols.io protocol.
+        step_ids: Ids of the exported Cupcake steps in protocols.io step order.
         steps_saved: Number of steps written.
         steps_deleted: GUIDs of deleted protocols.io steps that are not in the Cupcake protocol.
         images_uploaded: Number of images uploaded from step text.
@@ -45,6 +48,9 @@ class ExportResult:
 
     protocol_uri: str
     protocol_url: str
+    protocol_guid: str = ""
+    protocol_id: int = 0
+    step_ids: list[int] = field(default_factory=list)
     steps_saved: int = 0
     steps_deleted: list[str] = field(default_factory=list)
     images_uploaded: int = 0
@@ -216,6 +222,9 @@ def export_protocol(
     *,
     scaling_factor: float = 1.0,
     progress: Callable[[int, int, str], None] | None = None,
+    variations: Mapping[int, Any] | None = None,
+    title: str | None = None,
+    description: str | None = None,
 ) -> ExportResult:
     """
     Write a Cupcake protocol into an existing protocols.io protocol.
@@ -232,6 +241,9 @@ def export_protocol(
         scaling_factor: Extra factor applied to scaled quantities of scalable reagents.
         progress: Called with the number of completed stages, the number of stages, and a
             description of the stage that starts next.
+        variations: Step variations by Cupcake step id, whose text and duration replace those of their step.
+        title: Title to use instead of the protocol title.
+        description: Plain text description to use instead of the protocol description.
 
     Returns:
         What was written and any warnings.
@@ -245,21 +257,35 @@ def export_protocol(
     details = client.get_protocol(target)
     target_guid = details["guid"]
     units = details.get("units") or []
-    result = ExportResult(protocol_uri=details.get("uri", ""), protocol_url=details.get("url", ""))
+    result = ExportResult(
+        protocol_uri=details.get("uri", ""),
+        protocol_url=details.get("url", ""),
+        protocol_guid=target_guid,
+        protocol_id=int(details.get("id") or 0),
+    )
     images = StepImageUploader(client)
 
     report(1, EXPORT_STAGES, "Converting steps")
     cupcake_steps = ordered_steps(protocol)
     steps = []
     durations = {}
+    replaced = variations or {}
     for cupcake_step in cupcake_steps:
-        draft, unresolved = step_to_draft(cupcake_step, units, scaling_factor=scaling_factor, image_resolver=images)
+        variation = replaced.get(cupcake_step.pk)
+        draft, unresolved = step_to_draft(
+            cupcake_step,
+            units,
+            scaling_factor=scaling_factor,
+            image_resolver=images,
+            text=variation.variation_description if variation is not None else None,
+        )
         result.unresolved_templates.extend(unresolved)
         guid = export_step_guid(target_guid, cupcake_step.pk)
         section = cupcake_step.step_section.section_description if cupcake_step.step_section else None
         steps.append(Step(draft, guid=guid, section=plain_text(section) or None))
-        durations[guid] = cupcake_step.step_duration or 0
+        durations[guid] = (variation.variation_duration if variation is not None else cupcake_step.step_duration) or 0
     chain(steps)
+    result.step_ids = [cupcake_step.pk for cupcake_step in cupcake_steps]
     raise_for_issues(client.validate_steps(steps, units=units))
 
     report(2, EXPORT_STAGES, "Removing steps that are no longer in Cupcake")
@@ -276,12 +302,15 @@ def export_protocol(
     report(4, EXPORT_STAGES, "Saving title, description and materials")
     client.update_protocol(
         target,
-        title=protocol.protocol_title,
-        description=plain_text(protocol.protocol_description),
+        title=title or protocol.protocol_title,
+        description=plain_text(protocol.protocol_description) if description is None else description,
         materials_text=materials_text(protocol),
     )
     report(5, EXPORT_STAGES, "Setting step times")
     client.set_step_durations(target, durations)
+    saved = client.get_protocol(result.protocol_id or target)
+    result.protocol_uri = saved.get("uri") or result.protocol_uri
+    result.protocol_url = saved.get("url") or result.protocol_url
     report(EXPORT_STAGES, EXPORT_STAGES, "Done")
 
     result.images_uploaded = images.uploaded

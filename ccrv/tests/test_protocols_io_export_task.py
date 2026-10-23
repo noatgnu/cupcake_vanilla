@@ -12,7 +12,7 @@ from choux.draft import Issue
 from rest_framework.test import APIClient
 
 from ccc.models import AsyncTaskStatus
-from ccrv.models import ProtocolModel, ProtocolsIOAccount
+from ccrv.models import ProtocolModel, ProtocolsIOAccount, ProtocolsIOExport
 from ccrv.protocols_io import ExportResult
 from ccrv.protocols_io.accounts import ProtocolsIOAccountMissing
 from ccrv.protocols_io.exporter import protocol_reference
@@ -130,6 +130,27 @@ class ExportTaskTest(TestCase):
         self.assertEqual(mocked.call_args.args[2], "lysis-abc")
         self.assertEqual(mocked.call_args.kwargs["scaling_factor"], 1.5)
 
+    def test_success_remembers_the_target_once(self):
+        """Success remembers the target once."""
+        first = ExportResult(
+            protocol_uri="lysis-abc", protocol_url="https://p/lysis-abc", protocol_guid="G" * 32, protocol_id=7
+        )
+        second = ExportResult(
+            protocol_uri="lysis-abc", protocol_url="https://p/lysis-abc", protocol_guid="G" * 32, step_ids=[3, 1]
+        )
+        self.run_task(return_value=first)
+        self.task = AsyncTaskStatus.objects.create(task_type="EXPORT_PROTOCOLS_IO", user=self.user)
+        self.run_task(return_value=second)
+        export = ProtocolsIOExport.objects.get(protocol=self.protocol)
+        self.assertEqual(
+            (export.exported_by, export.protocols_io_uri, export.step_ids), (self.user, "lysis-abc", [3, 1])
+        )
+
+    def test_failure_remembers_nothing(self):
+        """Failure remembers nothing."""
+        self.run_task(side_effect=APIError("protocol does not exist", http_status=404))
+        self.assertFalse(ProtocolsIOExport.objects.exists())
+
     def test_validation_errors_are_reported(self):
         """Validation errors are reported."""
         error = DraftValidationError([Issue("steps[0].step.blocks", "must be a non-empty list")])
@@ -161,3 +182,38 @@ class ExportTaskTest(TestCase):
         with self.assertLogs("ccrv.tasks.protocols_io_tasks", level="ERROR"):
             self.run_task(side_effect=RuntimeError("boom"))
         self.assertEqual((self.task.status, self.task.error_message), ("FAILURE", "protocols.io export failed: boom"))
+
+
+class ExportListTest(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("export-list-user", password="x")
+        self.protocol = ProtocolModel.objects.create(protocol_title="Lysis", owner=self.user)
+        self.url = reverse("ccrv:protocolmodel-protocols-io-exports", args=[self.protocol.pk])
+        ProtocolsIOExport.objects.create(
+            protocol=self.protocol,
+            exported_by=self.user,
+            protocols_io_id=7,
+            protocols_io_guid="G" * 32,
+            protocols_io_uri="lysis-abc",
+            protocols_io_url="https://www.protocols.io/view/lysis-abc",
+            step_ids=[3, 1],
+        )
+
+    def test_lists_where_the_protocol_was_exported(self):
+        """Lists where the protocol was exported."""
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        response = client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        entry = response.data[0]
+        self.assertEqual(
+            (entry["protocols_io_uri"], entry["exported_by_username"], entry["step_ids"]),
+            ("lysis-abc", "export-list-user", [3, 1]),
+        )
+
+    def test_other_users_cannot_see_exports_of_a_private_protocol(self):
+        """Other users cannot see exports of a private protocol."""
+        client = APIClient()
+        client.force_authenticate(user=get_user_model().objects.create_user("export-list-stranger", password="x"))
+        self.assertIn(client.get(self.url).status_code, (403, 404))

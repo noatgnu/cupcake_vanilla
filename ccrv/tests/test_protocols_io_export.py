@@ -3,6 +3,7 @@
 import base64
 import json
 import struct
+import uuid
 import zlib
 from io import StringIO
 from unittest.mock import patch
@@ -14,7 +15,16 @@ from django.test import TestCase, override_settings
 from choux import DraftValidationError, ProtocolsIO, UploadedFile
 
 from ccm.models import Reagent
-from ccrv.models import ProtocolModel, ProtocolReagent, ProtocolSection, ProtocolStep, StepReagent
+from ccrv.models import (
+    ProtocolModel,
+    ProtocolReagent,
+    ProtocolSection,
+    ProtocolsIOExport,
+    ProtocolStep,
+    Session,
+    StepReagent,
+    StepVariation,
+)
 from ccrv.protocols_io import ExportResult, export_protocol, export_step_guid, ordered_steps
 from ccrv.protocols_io.exporter import materials_text, plain_text
 
@@ -53,8 +63,17 @@ class FakeProtocolsIO:
         self.calls.append((method, path))
         if method == "GET" and path == "/v4/protocols/cupcake-export-test":
             return {
-                "payload": {"guid": TARGET_GUID, "uri": "cupcake-export-test", "url": "https://p/x", "units": UNITS}
+                "payload": {
+                    "id": 340067,
+                    "guid": TARGET_GUID,
+                    "uri": "cupcake-export-test",
+                    "url": "https://p/x",
+                    "units": UNITS,
+                }
             }
+        if method == "GET" and path == "/v4/protocols/340067":
+            uri = "renamed-export" if "title" in self.fields else "cupcake-export-test"
+            return {"payload": {"id": 340067, "guid": TARGET_GUID, "uri": uri, "url": f"https://p/{uri}"}}
         if method == "GET" and path == "/v4/protocols/cupcake-export-test/steps":
             return {"payload": [self.steps[guid] for guid in self.order]}
         if method == "DELETE" and path == "/v4/protocols/cupcake-export-test/steps":
@@ -122,6 +141,53 @@ class ExportProtocolTest(ExportTestCase):
         self.assertEqual([step["section"] for step in saved], ["Preparation", "Lysis"])
         self.assertEqual([step["previous_guid"] for step in saved], [None, expected[0]])
         self.assertEqual(json.loads(saved[0]["step"])["blocks"][0]["text"], "Wash plates.")
+
+    def test_variations_are_left_out_of_the_protocol(self):
+        """Variations are left out of the protocol."""
+        StepVariation.objects.create(step=self.lyse, variation_description="Unused alternative", variation_duration=900)
+        session = Session.objects.create(name="Run", owner=self.owner, unique_id=uuid.uuid4())
+        StepVariation.objects.create(
+            step=self.lyse, session=session, variation_description="Session only", variation_duration=1
+        )
+        self.export()
+        saved = self.fake.steps[export_step_guid(TARGET_GUID, self.lyse.pk)]["step"]
+        self.assertNotIn("Unused alternative", saved)
+        self.assertNotIn("Session only", saved)
+
+    def test_variations_replace_the_text_and_time_of_their_steps(self):
+        """Variations replace the text and time of their steps."""
+        session = Session.objects.create(name="Run", owner=self.owner, unique_id=uuid.uuid4())
+        variation = StepVariation.objects.create(
+            step=self.lyse,
+            session=session,
+            variation_description=f"<p>Add %{self.lyse_reagent.id}.quantity% %{self.lyse_reagent.id}.unit% twice.</p>",
+            variation_duration=1200,
+        )
+        self.export(variations={self.lyse.pk: variation}, title="Cell lysis - Run", description="As performed")
+        saved = json.loads(self.fake.steps[export_step_guid(TARGET_GUID, self.lyse.pk)]["step"])
+        self.assertEqual(saved["blocks"][0]["text"], "Add   twice.")
+        self.assertEqual(next(iter(saved["entityMap"].values()))["data"]["amount"], "200")
+        durations = {
+            action["up"][0]["path"][1]: action["up"][0]["value"]
+            for action in self.fake.actions
+            if action["marker"] == "step:set-duration"
+        }
+        self.assertEqual(durations[export_step_guid(TARGET_GUID, self.lyse.pk)], 1200)
+        self.assertEqual(durations[export_step_guid(TARGET_GUID, self.wash.pk)], 300)
+        self.assertEqual(
+            (self.fake.fields["title"], self.fake.fields["description"]), ("Cell lysis - Run", "As performed")
+        )
+
+    def test_result_names_the_target_and_the_exported_steps_in_order(self):
+        """Result names the target and the exported steps in order."""
+        result = self.export()
+        self.assertEqual((result.protocol_guid, result.protocol_id), (TARGET_GUID, 340067))
+        self.assertEqual(result.step_ids, [self.wash.pk, self.lyse.pk])
+
+    def test_result_has_the_address_after_the_title_is_saved(self):
+        """Result has the address the protocol has after its title is saved."""
+        result = self.export()
+        self.assertEqual((result.protocol_uri, result.protocol_url), ("renamed-export", "https://p/renamed-export"))
 
     def test_steps_outside_sections_are_skipped_with_a_warning(self):
         """Steps outside sections are skipped with a warning."""
@@ -227,7 +293,9 @@ class StepImageExportTest(ExportTestCase):
         self.assertEqual(upload.call_args.kwargs, {"width": 40, "height": 30})
         self.assertEqual(result.images_uploaded, 1)
         content = json.loads(self.fake.steps[export_step_guid(TARGET_GUID, self.wash.pk)]["step"])
-        self.assertEqual([block["type"] for block in content["blocks"]], ["unstyled", "atomic", "unstyled", "atomic"])
+        self.assertEqual(
+            [block["type"] for block in content["blocks"]], ["unstyled", "atomic", "unstyled", "atomic", "unstyled"]
+        )
 
     def test_images_outside_cupcake_are_left_out_with_a_warning(self):
         """Images outside cupcake are left out with a warning."""
@@ -263,7 +331,11 @@ class ExportCommandTest(ExportTestCase):
     def test_command_reports_the_result(self):
         """Command reports the result."""
         result = ExportResult(
-            protocol_uri="cupcake-export-test", protocol_url="https://p/x", steps_saved=3, warnings=["note"]
+            protocol_uri="cupcake-export-test",
+            protocol_url="https://p/x",
+            protocol_guid=TARGET_GUID,
+            steps_saved=3,
+            warnings=["note"],
         )
         out = StringIO()
         with patch("ccrv.management.commands.export_protocol_to_protocols_io.export_protocol", return_value=result):
@@ -272,6 +344,8 @@ class ExportCommandTest(ExportTestCase):
             )
         self.assertIn("Exported 3 step(s) to https://p/x", out.getvalue())
         self.assertIn("note", out.getvalue())
+        export = ProtocolsIOExport.objects.get(protocol=self.protocol)
+        self.assertEqual((export.protocols_io_guid, export.exported_by), (TARGET_GUID, None))
 
     @override_settings(PROTOCOLS_IO_ACCESS_TOKEN="")
     def test_command_needs_a_token(self):

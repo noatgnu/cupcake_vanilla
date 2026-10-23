@@ -20,6 +20,8 @@ from .models import (
     ProtocolReagent,
     ProtocolSection,
     ProtocolsIOAccount,
+    ProtocolsIOExport,
+    ProtocolsIORun,
     ProtocolStep,
     Session,
     StepReagent,
@@ -497,4 +499,52 @@ class ProtocolsIOAccountAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         """Accounts cannot be added from the admin."""
+        return False
+
+
+@admin.register(ProtocolsIOExport)
+class ProtocolsIOExportAdmin(admin.ModelAdmin):
+    """Admin interface for protocols.io protocols that Cupcake protocols were exported into."""
+
+    list_display = ["protocol", "protocols_io_uri", "exported_by", "exported_at"]
+    search_fields = ["protocol__protocol_title", "protocols_io_uri", "protocols_io_guid"]
+    readonly_fields = [
+        "protocol",
+        "exported_by",
+        "protocols_io_id",
+        "protocols_io_guid",
+        "protocols_io_uri",
+        "protocols_io_url",
+        "step_ids",
+        "exported_at",
+    ]
+
+    def has_add_permission(self, request):
+        """Exports cannot be added from the admin."""
+        return False
+
+
+@admin.register(ProtocolsIORun)
+class ProtocolsIORunAdmin(admin.ModelAdmin):
+    """Admin interface for protocols.io runs that Cupcake sessions were exported into."""
+
+    list_display = ["session", "title", "record_guid", "exported_by", "exported_at"]
+    search_fields = ["session__name", "title", "record_guid"]
+    readonly_fields = [
+        "session",
+        "protocol",
+        "protocol_export",
+        "exported_by",
+        "record_id",
+        "record_guid",
+        "item_id",
+        "title",
+        "step_map",
+        "reference_comment_id",
+        "created_at",
+        "exported_at",
+    ]
+
+    def has_add_permission(self, request):
+        """Runs cannot be added from the admin."""
         return False

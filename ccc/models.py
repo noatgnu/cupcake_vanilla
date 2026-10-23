@@ -1799,6 +1799,7 @@ class AsyncTaskStatus(models.Model):
         ("TRANSCRIBE_AUDIO", "Transcribe Audio"),
         ("TRANSCRIBE_VIDEO", "Transcribe Video"),
         ("EXPORT_PROTOCOLS_IO", "Export to protocols.io"),
+        ("EXPORT_RUN_PROTOCOLS_IO", "Export session to protocols.io"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
 import time
@@ -11,7 +12,7 @@ from typing import Any
 
 import httpx
 from choux.draft.builder import Draft
-from choux.draft.validation import Issue, Units, raise_for_issues, validate_draft, validate_step_fields
+from choux.draft.validation import Issue, Units, load_draft, raise_for_issues, validate_draft, validate_step_fields
 from choux.exceptions import APIError, RateLimitError, UploadError
 from choux.models import UploadedFile
 from choux.ratelimit import RateLimiter
@@ -272,7 +273,7 @@ class ProtocolsIO:
             guid: GUID for the new protocol, 32 hex characters without dashes.
             type_id: ``1`` for a protocol, ``3`` for a collection, ``4`` for a document.
         """
-        return self.request("POST", f"/v3/protocols/{guid}", data={"type_id": type_id})["protocol"]
+        return self.request("POST", f"/v3/protocols/{guid}", json={"type_id": type_id})["protocol"]
 
     def update_protocol(self, protocol: int | str, **fields: Any) -> None:
         """
@@ -437,7 +438,8 @@ class ProtocolsIO:
         Args:
             filename: File name shown to readers.
             content: File content.
-            mime_type: Content type; guessed from ``filename`` when omitted.
+            mime_type: Content type, used only when protocols.io does not set one; guessed from ``filename``
+                when omitted.
             width: Image width in pixels.
             height: Image height in pixels.
 
@@ -529,6 +531,139 @@ class ProtocolsIO:
         """
         self.request("PUT", f"/v3/records/{guid}", json={"stack": list(changes)})
 
+    def get_record_comments(self, guid: str) -> list[dict[str, Any]]:
+        """
+        Return the comments of an experiment record, replies included as separate entries.
+
+        Args:
+            guid: Record GUID.
+        """
+        return self.request("GET", f"/v3/records/{guid}/comments").get("comments") or []
+
+    def add_record_comment(
+        self, guid: str, body: Draft | dict[str, Any] | str, *, private: bool = False, validate: bool = True
+    ) -> dict[str, Any]:
+        """
+        Comment on a whole experiment record.
+
+        Args:
+            guid: Record GUID.
+            body: Comment content.
+            private: Hide the comment from other readers.
+            validate: Check the content before sending; pass ``False`` to send it unchecked.
+
+        Returns:
+            The new comment.
+
+        Raises:
+            DraftValidationError: When ``validate`` is on and the content has errors.
+        """
+        payload: dict[str, Any] = {"body": self._comment_body(body, validate)}
+        if private:
+            payload["is_private"] = 1
+        return self.request("POST", f"/v3/records/{guid}/comments", json=payload)["comment"]
+
+    def add_step_comment(
+        self, record_guid: str, step_id: int, body: Draft | dict[str, Any] | str, *, validate: bool = True
+    ) -> dict[str, Any]:
+        """
+        Start a discussion on a step of an experiment record.
+
+        Args:
+            record_guid: Record GUID.
+            step_id: Numeric id of the record step.
+            body: Comment content.
+            validate: Check the content before sending; pass ``False`` to send it unchecked.
+
+        Returns:
+            The new comment.
+
+        Raises:
+            DraftValidationError: When ``validate`` is on and the content has errors.
+        """
+        return self.request(
+            "POST",
+            f"/v3/records/steps/{step_id}/discussions",
+            json={"body": self._comment_body(body, validate), "record_guid": record_guid},
+        )["comment"]
+
+    def reply_to_step_comment(
+        self,
+        record_guid: str,
+        step_id: int,
+        discussion_id: int,
+        body: Draft | dict[str, Any] | str,
+        *,
+        validate: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Reply to a discussion on a step of an experiment record.
+
+        Args:
+            record_guid: Record GUID.
+            step_id: Numeric id of the record step.
+            discussion_id: Id of the discussion to reply to.
+            body: Comment content.
+            validate: Check the content before sending; pass ``False`` to send it unchecked.
+
+        Returns:
+            The new comment.
+
+        Raises:
+            DraftValidationError: When ``validate`` is on and the content has errors.
+        """
+        return self.request(
+            "POST",
+            f"/v3/records/steps/{step_id}/discussions/{discussion_id}/comments",
+            json={"body": self._comment_body(body, validate), "record_guid": record_guid},
+        )["comment"]
+
+    def edit_comment(self, comment_id: int, body: Draft | dict[str, Any] | str, *, validate: bool = True) -> None:
+        """
+        Replace the content of a comment.
+
+        Args:
+            comment_id: Comment id.
+            body: New comment content.
+            validate: Check the content before sending; pass ``False`` to send it unchecked.
+
+        Raises:
+            DraftValidationError: When ``validate`` is on and the content has errors.
+        """
+        self.request("PUT", f"/v3/discussions/comments/{comment_id}", json={"body": self._comment_body(body, validate)})
+
+    def edit_discussion(self, discussion_id: int, body: Draft | dict[str, Any] | str, *, validate: bool = True) -> None:
+        """
+        Replace the content of the first comment of a discussion.
+
+        Args:
+            discussion_id: Discussion id.
+            body: New comment content.
+            validate: Check the content before sending; pass ``False`` to send it unchecked.
+
+        Raises:
+            DraftValidationError: When ``validate`` is on and the content has errors.
+        """
+        self.request("PUT", f"/v3/discussions/{discussion_id}", json={"body": self._comment_body(body, validate)})
+
+    def delete_comment(self, comment_id: int) -> None:
+        """
+        Delete a comment.
+
+        Args:
+            comment_id: Comment id.
+        """
+        self.request("DELETE", f"/v3/discussions/comments/{comment_id}")
+
+    def delete_discussion(self, discussion_id: int) -> None:
+        """
+        Delete a discussion with its replies.
+
+        Args:
+            discussion_id: Discussion id.
+        """
+        self.request("DELETE", f"/v3/discussions/{discussion_id}")
+
     def trash(self, item_ids: Iterable[int]) -> list[int]:
         """
         Move file manager items to the trash.
@@ -568,6 +703,17 @@ class ProtocolsIO:
         if doi_only:
             params["prepublish"] = 1
         self.request("POST", f"/v3/protocols/{protocol_uri}/publish", params=params or None)
+
+    @staticmethod
+    def _comment_body(body: Draft | dict[str, Any] | str, validate: bool) -> str:
+        if validate:
+            issues = validate_draft(body, path="body")
+            raise_for_issues(issues)
+            for issue in issues:
+                logger.warning("%s: %s", issue.path, issue.message)
+        if isinstance(body, str):
+            return body
+        return json.dumps(load_draft(body), separators=(",", ":"), ensure_ascii=False)
 
     def _retry_delay(self, response: httpx.Response, attempt: int) -> float:
         retry_after = response.headers.get("Retry-After")
