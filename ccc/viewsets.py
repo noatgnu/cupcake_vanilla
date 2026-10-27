@@ -1765,6 +1765,7 @@ class ApplianceViewSet(viewsets.ViewSet):
         client.settimeout(60)
         client.connect(_STORAGE_SOCK)
         client.sendall(json.dumps(payload).encode() + b"\n")
+        client.shutdown(_socket.SHUT_WR)
         data = b""
         while True:
             chunk = client.recv(4096)
@@ -1780,6 +1781,7 @@ class ApplianceViewSet(viewsets.ViewSet):
         client.settimeout(60)
         client.connect(_NETWORK_SOCK)
         client.sendall(json.dumps(payload).encode() + b"\n")
+        client.shutdown(_socket.SHUT_WR)
         data = b""
         while True:
             chunk = client.recv(4096)
