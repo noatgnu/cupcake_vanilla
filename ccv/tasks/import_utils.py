@@ -1509,6 +1509,38 @@ def import_sdrf_data_bulk(
         }
 
 
+def _match_import_column(metadata_table, column_id, name: str, column_type: str, claimed_ids: set):
+    """
+    Find the existing table column an Excel import column should update.
+
+    Workbooks exported from this table record each column's id, so that column is used while it
+    still exists with the same name and type. Otherwise the first column with that name and type
+    not already matched in this import is used, in table order, so repeated SDRF columns such as
+    comment[modification parameters] pair up one-to-one instead of collapsing into one column.
+
+    Args:
+        metadata_table: Table being imported into
+        column_id: Column id recorded in the workbook's id_metadata_column_map sheet
+        name: Column name from the workbook
+        column_type: Column type from the workbook, with blank cells normalised to ""
+        claimed_ids: Ids of table columns already matched earlier in this import
+
+    Returns:
+        The matching MetadataColumn, or None when a new column has to be created
+    """
+    if column_id is not None and column_id not in claimed_ids:
+        same_column = metadata_table.columns.filter(id=column_id).first()
+        if same_column and same_column.name == name and (same_column.type or "") == column_type:
+            return same_column
+
+    return (
+        metadata_table.columns.filter(name=name, type=column_type)
+        .exclude(id__in=claimed_ids)
+        .order_by("column_position", "id")
+        .first()
+    )
+
+
 def import_excel_data(
     file_data: bytes,
     metadata_table,
@@ -1684,18 +1716,19 @@ def import_excel_data(
         columns_created = 0
         columns_updated = 0
         created_columns = []
+        claimed_column_ids = set()
 
         for column_id, column_info in id_metadata_column_map.items():
+            column_name = column_info["name"] or ""
+            column_type = column_info["type"] or ""
             defaults = {
-                "hidden": column_info["hidden"],
+                "hidden": bool(column_info["hidden"]),
                 "column_position": column_info["column"],
             }
 
-            existing_column = MetadataColumn.objects.filter(
-                name=column_info["name"],
-                type=column_info["type"],
-                metadata_table=metadata_table,
-            ).first()
+            existing_column = _match_import_column(
+                metadata_table, column_id, column_name, column_type, claimed_column_ids
+            )
 
             if not existing_column:
                 template_columns = metadata_table.columns.filter(template__isnull=False).select_related("template")
@@ -1704,7 +1737,7 @@ def import_excel_data(
                 for existing_col in template_columns:
                     if existing_col.template:
                         matching_template_col = existing_col.template.column_template.user_templates.filter(
-                            column_name=column_info["name"]
+                            column_name=column_name
                         ).first()
 
                         if matching_template_col:
@@ -1725,12 +1758,17 @@ def import_excel_data(
                         }
                     )
 
-            metadata_column, created = MetadataColumn.objects.get_or_create(
-                name=column_info["name"],
-                type=column_info["type"],
-                metadata_table=metadata_table,
-                defaults=defaults,
-            )
+            if existing_column:
+                metadata_column, created = existing_column, False
+            else:
+                metadata_column = MetadataColumn.objects.create(
+                    name=column_name,
+                    type=column_type,
+                    metadata_table=metadata_table,
+                    **defaults,
+                )
+                created = True
+            claimed_column_ids.add(metadata_column.id)
 
             if created:
                 columns_created += 1
