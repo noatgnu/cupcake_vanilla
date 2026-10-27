@@ -1,5 +1,5 @@
--e file:///mnt/d/PycharmProjects/cupcake_vanilla/packages/choux ; python_version >= "3.12" and python_version < "4.0"
--e file:///mnt/d/PycharmProjects/cupcake_vanilla/packages/cupcake-protocols-io ; python_version >= "3.12" and python_version < "4.0"
+-e ./packages/choux ; python_version >= "3.12" and python_version < "4.0"
+-e ./packages/cupcake-protocols-io ; python_version >= "3.12" and python_version < "4.0"
 annotated-types==0.7.0 ; python_version >= "3.12" and python_version < "4.0"
 anyio==4.13.0 ; python_version >= "3.12" and python_version < "4.0"
 asgiref==3.11.1 ; python_version >= "3.12" and python_version < "4.0"
