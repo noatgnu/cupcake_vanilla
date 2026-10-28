@@ -11,7 +11,7 @@ from django.contrib.auth.models import User
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from simple_history.models import HistoricalRecords
@@ -2567,6 +2567,7 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
 
         return result
 
+    @transaction.atomic
     def create_table_from_template(
         self, table_name: str, creator=None, sample_count: int = 1, description: str = None, lab_group=None, **kwargs
     ) -> "MetadataTable":
@@ -2606,26 +2607,26 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
 
             for template_column in template_columns:
                 try:
-                    # Create column for the table based on template column
-                    MetadataColumn.objects.create(
-                        metadata_table=metadata_table,
-                        name=template_column.name,
-                        type=template_column.type,
-                        column_position=template_column.column_position,
-                        value=template_column.value or "",
-                        template=template_column.template,  # Link to original column template if exists
-                        ontology_type=template_column.ontology_type,
-                        ontology_options=template_column.ontology_options,
-                        custom_ontology_filters=template_column.custom_ontology_filters,
-                        mandatory=template_column.mandatory,
-                        hidden=template_column.hidden,
-                        readonly=template_column.readonly,
-                        auto_generated=template_column.auto_generated,
-                        modifiers=template_column.modifiers or [],
-                        not_applicable=template_column.not_applicable,
-                        not_available=template_column.not_available,
-                        staff_only=template_column.staff_only,
-                    )
+                    with transaction.atomic():
+                        MetadataColumn.objects.create(
+                            metadata_table=metadata_table,
+                            name=template_column.name,
+                            type=template_column.type,
+                            column_position=template_column.column_position,
+                            value=template_column.value or "",
+                            template=template_column.template,  # Link to original column template if exists
+                            ontology_type=template_column.ontology_type,
+                            ontology_options=template_column.ontology_options,
+                            custom_ontology_filters=template_column.custom_ontology_filters,
+                            mandatory=template_column.mandatory,
+                            hidden=template_column.hidden,
+                            readonly=template_column.readonly,
+                            auto_generated=template_column.auto_generated,
+                            modifiers=template_column.modifiers or [],
+                            not_applicable=template_column.not_applicable,
+                            not_available=template_column.not_available,
+                            staff_only=template_column.staff_only,
+                        )
 
                 except Exception:
                     # Log error and continue
@@ -3145,6 +3146,7 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
             return None
 
     @classmethod
+    @transaction.atomic
     def create_from_schemas(
         cls,
         name: str,
@@ -3266,7 +3268,8 @@ class MetadataTableTemplate(BaseMetadataTableTemplate):
                         column_template.default_position if column_template.default_position is not None else position
                     )
 
-                    template.add_column_to_template(column_data, template_position)
+                    with transaction.atomic():
+                        template.add_column_to_template(column_data, template_position)
                     position += 1
 
                     # Update template usage
