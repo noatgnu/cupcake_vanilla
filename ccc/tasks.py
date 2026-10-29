@@ -7,12 +7,13 @@ import shutil
 from io import StringIO
 from pathlib import Path
 
+from django.core.files.storage import storages
 from django.core.management import call_command
 from django.utils import timezone
 
 from django_rq import job
 
-from ccc.models import SiteConfig
+from ccc.models import BackupLog, SiteConfig
 
 logger = logging.getLogger(__name__)
 
@@ -91,17 +92,25 @@ def refresh_available_whisper_models():
         return {"status": "error", "error": str(e)}
 
 
+def _file_mtimes(directory):
+    """Map every file in directory to its modification time, or return nothing if it does not exist."""
+    if not directory.is_dir():
+        return {}
+    return {path: path.stat().st_mtime_ns for path in directory.iterdir() if path.is_file()}
+
+
 @job("default", timeout="2h")
 def run_backup(backup_log_id):
     """
-    Run a backup operation and copy the result to the specified destination.
+    Run a backup operation and copy the files it produces to the specified destination.
+
+    dbbackup and mediabackup write into the location of the "dbbackup" storage; only files
+    created or rewritten by this run are copied, and a run that produces none is marked failed.
 
     Args:
         backup_log_id: ID of the BackupLog record to update
     """
-    from ccc.models import BackupLog
-
-    BACKUP_DIR = Path("/opt/cupcake/backups")
+    backup_dir = Path(storages["dbbackup"].location)
 
     try:
         log = BackupLog.objects.get(id=backup_log_id)
@@ -114,6 +123,7 @@ def run_backup(backup_log_id):
         destination.mkdir(parents=True, exist_ok=True)
 
         stdout = StringIO()
+        before = _file_mtimes(backup_dir)
 
         if log.backup_type in ("database", "full"):
             call_command("dbbackup", "--clean", stdout=stdout)
@@ -121,14 +131,12 @@ def run_backup(backup_log_id):
         if log.backup_type in ("media", "full"):
             call_command("mediabackup", "--clean", stdout=stdout)
 
-        latest_files = sorted(BACKUP_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if log.backup_type == "full":
-            files_to_copy = latest_files[:2]
-        else:
-            files_to_copy = latest_files[:1]
+        files_to_copy = [path for path, mtime in _file_mtimes(backup_dir).items() if before.get(path) != mtime]
+        if not files_to_copy:
+            raise RuntimeError(f"The backup produced no files in {backup_dir}")
 
         total_size = 0
-        for src in files_to_copy:
+        for src in sorted(files_to_copy):
             dest_file = destination / src.name
             shutil.copy2(src, dest_file)
             total_size += dest_file.stat().st_size
