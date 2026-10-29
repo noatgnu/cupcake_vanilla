@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand
 
 import requests
 
+from ccv.data_sources import record_source, uniprot_release
 from ccv.models import HumanDisease
 
 
@@ -66,8 +67,12 @@ def parse_human_disease_file(filename=None):
                 entry.keywords = ""
             entry.keywords += line[5:].strip() + "; "
 
-    if not isinstance(file, list):
+    if isinstance(file, list):
+        record_source("ontology:human_disease", url, *uniprot_release("\n".join(file)))
+    else:
         file.close()
+        with open(filename, "rt") as header:
+            record_source("ontology:human_disease", filename, *uniprot_release(header.read()))
 
     return entries
 

@@ -33,6 +33,7 @@ from django.core.management.base import BaseCommand
 import requests
 from tqdm import tqdm
 
+from ccv.data_sources import last_modified_release, obo_release, record_source
 from ccv.models import BTOTerm, CellOntology, DiseaseOntologyTerm, MondoDisease, PSIMSOntology, UberonAnatomy
 
 
@@ -234,6 +235,7 @@ class Command(BaseCommand):
                     pbar.update(1)
                     pbar.set_postfix({"created": created_count, "updated": updated_count})
 
+            record_source("ontology:mondo", mondo_url, *obo_release(response.content))
             self.stdout.write(f"MONDO: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 
@@ -315,6 +317,7 @@ class Command(BaseCommand):
                     pbar.update(1)
                     pbar.set_postfix({"created": created_count, "updated": updated_count})
 
+            record_source("ontology:uberon", uberon_url, *obo_release(response.content))
             self.stdout.write(f"UBERON: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 
@@ -393,6 +396,7 @@ class Command(BaseCommand):
 
                 created_count, updated_count = self._process_ncbi_files(names_file, nodes_file, update_existing, limit)
 
+            record_source("ontology:ncbi_taxonomy", names_url, *last_modified_release(response))
             self.stdout.write(f"NCBI Taxonomy: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 
@@ -678,6 +682,7 @@ class Command(BaseCommand):
                     if limit is not None and processed >= limit:
                         break
 
+            record_source("ontology:chebi", chebi_url, *obo_release(content))
             self.stdout.write(f"ChEBI: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 
@@ -1096,6 +1101,7 @@ class Command(BaseCommand):
                     pbar.update(1)
                     pbar.set_postfix({"created": created_count, "updated": updated_count})
 
+            record_source("ontology:psi_ms", psims_url, *obo_release(response.content))
             self.stdout.write(f"PSI-MS: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 
@@ -1187,6 +1193,7 @@ class Command(BaseCommand):
                     pbar.update(1)
                     pbar.set_postfix({"created": created_count, "updated": updated_count})
 
+            record_source("ontology:cell_ontology", cl_url, *obo_release(response.content))
             self.stdout.write(f"Cell Ontology: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 
@@ -1273,6 +1280,7 @@ class Command(BaseCommand):
                     pbar.update(1)
                     pbar.set_postfix({"created": created_count, "updated": updated_count})
 
+            record_source("ontology:bto", bto_url, *obo_release(response.content))
             self.stdout.write(f"BTO: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 
@@ -1347,6 +1355,7 @@ class Command(BaseCommand):
                     pbar.update(1)
                     pbar.set_postfix({"created": created_count, "updated": updated_count})
 
+            record_source("ontology:doid", doid_url, *obo_release(response.content))
             self.stdout.write(f"DOID: {created_count} created, {updated_count} updated")
             return created_count, updated_count
 

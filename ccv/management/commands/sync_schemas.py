@@ -11,6 +11,7 @@ Handles migration from legacy schema names to new naming convention:
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from ccv.data_sources import record_sdrf_pipelines_source
 from ccv.models import Schema
 
 LEGACY_NAME_MAPPING = {
@@ -127,6 +128,7 @@ class Command(BaseCommand):
 
                 total_schemas = Schema.objects.filter(is_builtin=True, is_active=True).count()
                 self.stdout.write(self.style.SUCCESS(f"Total active builtin schemas in database: {total_schemas}"))
+                record_sdrf_pipelines_source("schema:sdrf")
 
                 schemas_with_usage = Schema.objects.filter(is_builtin=True, usage_count__gt=0).order_by("-usage_count")
 

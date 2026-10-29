@@ -8,6 +8,7 @@ from django.core.management.base import BaseCommand
 
 import requests
 
+from ccv.data_sources import record_source, uniprot_release
 from ccv.models import Species
 
 
@@ -50,8 +51,12 @@ def parse_uniprot_species(file_path: str = None):
             if match:
                 species["synonym"] = match.group(1)
 
-    if not isinstance(file, list):
+    if isinstance(file, list):
+        record_source("ontology:species", url, *uniprot_release("\n".join(file)))
+    else:
         file.close()
+        with open(file_path, "rt") as header:
+            record_source("ontology:species", file_path, *uniprot_release(header.read()))
 
 
 class Command(BaseCommand):

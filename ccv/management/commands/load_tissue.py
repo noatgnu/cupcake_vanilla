@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand
 
 import requests
 
+from ccv.data_sources import record_source, uniprot_release
 from ccv.models import Tissue
 
 
@@ -43,8 +44,12 @@ def parse_tissue_file(filename=None):
                 entry.cross_references = ""
             entry.cross_references += line[5:].strip() + "; "
 
-    if not isinstance(file, list):
+    if isinstance(file, list):
+        record_source("ontology:tissue", url, *uniprot_release("\n".join(file)))
+    else:
         file.close()
+        with open(filename, "rt") as header:
+            record_source("ontology:tissue", filename, *uniprot_release(header.read()))
 
     return entries
 

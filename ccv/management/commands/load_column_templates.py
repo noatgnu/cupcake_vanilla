@@ -13,6 +13,7 @@ from django.db import models
 
 import yaml
 
+from ccv.data_sources import record_sdrf_pipelines_source
 from ccv.models import MetadataColumnTemplate, Schema
 from ccv.ontology_registry import registry
 from ccv.utils import SchemaRegistry, get_specific_default_schema
@@ -143,6 +144,7 @@ class Command(BaseCommand):
                 f"TOTAL: Loaded {total_templates_created} templates from {len(schemas_to_load)} schema(s)"
             )
         )
+        record_sdrf_pipelines_source("column-template:system")
 
         if update_references:
             self.stdout.write(self.style.SUCCESS(f"TOTAL: Updated {total_references_updated} column references"))

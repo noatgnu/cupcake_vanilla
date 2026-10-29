@@ -3953,6 +3953,29 @@ class ExternalTerm(models.Model):
         return f"{self.name} ({self.platform} {self.kind} {self.external_id})"
 
 
+class DataSourceVersion(models.Model):
+    """Upstream release a loaded reference dataset came from, keyed like the mobile snapshot manifest."""
+
+    key = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Dataset and name as in the snapshot manifest, for example ontology:mondo or schema:sdrf",
+    )
+    source_url = models.TextField(blank=True, default="", help_text="Where the data was downloaded from")
+    version = models.CharField(max_length=255, blank=True, default="", help_text="Release identifier of the source")
+    released = models.DateField(null=True, blank=True, help_text="Date the source release was published")
+    retrieved_at = models.DateTimeField(help_text="When the data was last loaded from the source")
+
+    class Meta:
+        app_label = "ccv"
+        ordering = ["key"]
+        verbose_name = "Data Source Version"
+        verbose_name_plural = "Data Source Versions"
+
+    def __str__(self):
+        return f"{self.key} {self.version}".strip()
+
+
 class MetadataColumnTemplateShare(models.Model):
     """
     Through model for sharing templates between users.

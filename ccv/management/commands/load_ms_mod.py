@@ -8,7 +8,10 @@ from django.core.management.base import BaseCommand
 
 import requests
 
+from ccv.data_sources import obo_release, record_source
 from ccv.models import Unimod
+
+UNIMOD_URL = "https://www.unimod.org/obo/unimod.obo"
 
 
 def load_unimod_data():
@@ -20,7 +23,7 @@ def load_unimod_data():
             "The 'pronto' package is required for loading Unimod data. " "Install it with: pip install pronto"
         )
 
-    response = requests.get("https://www.unimod.org/obo/unimod.obo", timeout=30)
+    response = requests.get(UNIMOD_URL, timeout=30)
     raw_data = response.text
 
     # Manually parse the xrefs section
@@ -66,6 +69,7 @@ def load_unimod_data():
             except Exception as e:
                 print(f"Warning: Failed to create Unimod term {term.id} - {term.name}: {str(e)}")
 
+    record_source("ontology:unimod", UNIMOD_URL, *obo_release(response.content))
     return created_count
 
 

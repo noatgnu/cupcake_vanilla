@@ -3,8 +3,9 @@ Management command to export ontology tables, builtin SDRF schemas, and system
 column templates as gzipped SQLite files for offline import by the mobile apps.
 
 Each dataset is written as a standalone SQLite file (one table inside, named
-after the dataset) plus a row in a shared manifest.json with row counts and
-file sizes, so a client can decide what to download before fetching anything.
+after the dataset) plus a row in a shared manifest.json with row counts, file
+sizes and the upstream release the data was loaded from, so a client can decide
+what to download before fetching anything.
 """
 
 import gzip
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
+from ccv.data_sources import sdrf_pipelines_version, source_entry
 from ccv.models import MetadataColumnTemplate, Schema
 from ccv.ontology_registry import registry
 
@@ -199,7 +201,12 @@ class Command(BaseCommand):
             manifest.append(self._manifest_entry("column-template", "system", sqlite_path, row_count))
 
         manifest_path = output_dir / "manifest.json"
-        manifest_path.write_text(json.dumps({"format_version": 1, "tables": manifest}, indent=2))
+        manifest_path.write_text(
+            json.dumps(
+                {"format_version": 1, "sdrf_pipelines_version": sdrf_pipelines_version(), "tables": manifest},
+                indent=2,
+            )
+        )
 
         self.stdout.write(self.style.SUCCESS(f"Exported {len(manifest)} table(s) to {output_dir}/"))
         for entry in manifest:
@@ -220,4 +227,5 @@ class Command(BaseCommand):
             "row_count": row_count,
             "uncompressed_bytes": uncompressed_bytes,
             "compressed_bytes": compressed_bytes,
+            "source": source_entry(f"{dataset}:{name}"),
         }

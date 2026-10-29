@@ -7,7 +7,11 @@ from django.db import transaction
 
 import requests
 
+from ccv.data_sources import ols_release, record_source
 from ccv.models import MSUniqueVocabularies
+
+OLS_SOURCE_URL = "https://www.ebi.ac.uk/ols4"
+OLS_ONTOLOGIES = ("efo", "ms", "pride")
 
 
 def load_ms_ontology_data():
@@ -211,8 +215,21 @@ class Command(BaseCommand):
                 self.stdout.write(f"Cleared {deleted_count} existing MS vocabulary records.")
 
             created_count = load_ms_ontology_data()
+            record_source("ontology:ms_unique_vocabularies", OLS_SOURCE_URL, self._ols_versions())
             self.stdout.write(self.style.SUCCESS(f"Successfully loaded {created_count} MS vocabulary records."))
         except ImportError as e:
             self.stdout.write(self.style.ERROR(str(e)))
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"Error loading MS vocabulary data: {str(e)}"))
+
+    def _ols_versions(self):
+        """Describe the OLS ontology builds the vocabulary was read from, for example "efo 3.95.0; ms 4.2.12"."""
+        versions = []
+        for ontology_id in OLS_ONTOLOGIES:
+            try:
+                version, _ = ols_release(ontology_id)
+            except requests.RequestException as e:
+                self.stdout.write(self.style.WARNING(f"Could not read the {ontology_id} version from OLS: {e}"))
+                version = ""
+            versions.append(f"{ontology_id} {version}".strip())
+        return "; ".join(versions)

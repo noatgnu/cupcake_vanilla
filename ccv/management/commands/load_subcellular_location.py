@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand
 
 import requests
 
+from ccv.data_sources import record_source, uniprot_release
 from ccv.models import SubcellularLocation
 
 
@@ -82,8 +83,12 @@ def parse_subcellular_location_file(filename=None):
                     entry.links = ""
                 entry.links += line[5:].strip() + "; "
 
-    if not isinstance(file, list):
+    if isinstance(file, list):
+        record_source("ontology:subcellular_location", url, *uniprot_release("\n".join(file)))
+    else:
         file.close()
+        with open(filename, "rt") as header:
+            record_source("ontology:subcellular_location", filename, *uniprot_release(header.read()))
 
     return entries
 
