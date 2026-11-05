@@ -8,9 +8,11 @@ faithfully representing the migrated model structure.
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from ccc.models import AsyncTaskStatus, RemoteHost, SiteConfig
+from ccc.models import AsyncTaskStatus, SiteConfig
+from ccc.serializers import RemoteHostSerializer
 from ccm.models import Reagent
 from ccm.serializers import ReagentSerializer
 
@@ -130,24 +132,6 @@ class UserBasicSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "username", "first_name", "last_name", "email"]
 
 
-class RemoteHostSerializer(serializers.ModelSerializer):
-    """Serializer for remote hosts in distributed system (CCC RemoteHost)."""
-
-    class Meta:
-        model = RemoteHost
-        fields = [
-            "id",
-            "host_name",
-            "host_port",
-            "host_protocol",
-            "host_description",
-            "host_token",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-
 class ProtocolRatingSerializer(serializers.ModelSerializer):
     """Serializer for protocol ratings with original validation."""
 
@@ -170,19 +154,45 @@ class ProtocolRatingSerializer(serializers.ModelSerializer):
             "remote_host",
         ]
         read_only_fields = ["id", "user", "created_at", "updated_at"]
+        extra_kwargs = {
+            "complexity_rating": {"min_value": 0, "max_value": 10},
+            "duration_rating": {"min_value": 0, "max_value": 10},
+        }
 
-    def get_user_display_name(self, obj):
+    def get_user_display_name(self, obj) -> str:
         """Get display name for user."""
         if obj.user.first_name and obj.user.last_name:
             return f"{obj.user.first_name} {obj.user.last_name}"
         return obj.user.username
 
 
+class StepSummarySerializer(serializers.Serializer):
+    """A step with its description shortened to 100 characters."""
+
+    id = serializers.IntegerField()
+    step_description = serializers.CharField()
+
+
+class OrderedStepSummarySerializer(StepSummarySerializer):
+    """A step summary with its position in the section."""
+
+    order = serializers.IntegerField()
+
+
+class SessionImportInfoSerializer(serializers.Serializer):
+    """Whether the session was imported, and from where."""
+
+    is_imported = serializers.BooleanField()
+    import_source_info = serializers.JSONField(allow_null=True)
+
+
 class ProtocolStepSerializer(serializers.ModelSerializer):
     """Serializer for protocol steps with linked-list navigation."""
 
     next_steps = serializers.SerializerMethodField()
-    section_description = serializers.CharField(source="step_section.section_description", read_only=True)
+    section_description = serializers.CharField(
+        source="step_section.section_description", read_only=True, allow_null=True, default=None
+    )
     has_next = serializers.SerializerMethodField()
     has_previous = serializers.SerializerMethodField()
 
@@ -210,6 +220,7 @@ class ProtocolStepSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    @extend_schema_field(StepSummarySerializer(many=True))
     def get_next_steps(self, obj):
         """Get next steps in the linked list."""
         next_steps = obj.next_step.all()
@@ -223,11 +234,11 @@ class ProtocolStepSerializer(serializers.ModelSerializer):
             for step in next_steps
         ]
 
-    def get_has_next(self, obj):
+    def get_has_next(self, obj) -> bool:
         """Check if step has next steps."""
         return obj.next_step.exists()
 
-    def get_has_previous(self, obj):
+    def get_has_previous(self, obj) -> bool:
         """Check if step has a previous step."""
         return obj.previous_step is not None
 
@@ -259,6 +270,7 @@ class ProtocolSectionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    @extend_schema_field(OrderedStepSummarySerializer(many=True))
     def get_steps_in_order(self, obj):
         """Get steps in order using efficient order attribute (new optimized method)."""
         ordered_steps = obj.get_steps_by_order()
@@ -273,6 +285,7 @@ class ProtocolSectionSerializer(serializers.ModelSerializer):
             for step in ordered_steps
         ]
 
+    @extend_schema_field(StepSummarySerializer(allow_null=True))
     def get_first_step(self, obj):
         """Get first step in section."""
         first_step = obj.get_first_in_section()
@@ -285,6 +298,7 @@ class ProtocolSectionSerializer(serializers.ModelSerializer):
             }
         return None
 
+    @extend_schema_field(StepSummarySerializer(allow_null=True))
     def get_last_step(self, obj):
         """Get last step in section."""
         last_step = obj.get_last_in_section()
@@ -301,7 +315,7 @@ class ProtocolSectionSerializer(serializers.ModelSerializer):
 class ProtocolModelSerializer(serializers.ModelSerializer):
     """Serializer for protocol models with all original functionality."""
 
-    owner_username = serializers.CharField(source="owner.username", read_only=True)
+    owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
     owner_display_name = serializers.SerializerMethodField()
     editors_usernames = serializers.StringRelatedField(source="editors", many=True, read_only=True)
     viewers_usernames = serializers.StringRelatedField(source="viewers", many=True, read_only=True)
@@ -309,7 +323,7 @@ class ProtocolModelSerializer(serializers.ModelSerializer):
     # Related data
     sections = ProtocolSectionSerializer(many=True, read_only=True)
     ratings = ProtocolRatingSerializer(many=True, read_only=True)
-    remote_host_info = RemoteHostSerializer(source="remote_host", read_only=True)
+    remote_host_info = RemoteHostSerializer(source="remote_host", read_only=True, allow_null=True)
 
     # Computed fields
     steps_count = serializers.SerializerMethodField()
@@ -350,24 +364,24 @@ class ProtocolModelSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
-    def get_owner_display_name(self, obj):
+    def get_owner_display_name(self, obj) -> str | None:
         """Get display name for owner."""
         if obj.owner and obj.owner.first_name and obj.owner.last_name:
             return f"{obj.owner.first_name} {obj.owner.last_name}"
         return obj.owner.username if obj.owner else None
 
-    def get_steps_count(self, obj):
+    def get_steps_count(self, obj) -> int:
         """Get total number of steps in protocol."""
         return obj.steps.count()
 
-    def get_average_complexity(self, obj):
+    def get_average_complexity(self, obj) -> float | None:
         """Get average complexity rating."""
         ratings = obj.ratings.all()
         if not ratings.exists():
             return None
         return sum(r.complexity_rating for r in ratings) / ratings.count()
 
-    def get_average_duration(self, obj):
+    def get_average_duration(self, obj) -> float | None:
         """Get average duration rating."""
         ratings = obj.ratings.all()
         if not ratings.exists():
@@ -378,13 +392,13 @@ class ProtocolModelSerializer(serializers.ModelSerializer):
 class SessionSerializer(serializers.ModelSerializer):
     """Serializer for experimental sessions with original functionality."""
 
-    owner_username = serializers.CharField(source="owner.username", read_only=True)
+    owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
     owner_display_name = serializers.SerializerMethodField()
     editors_usernames = serializers.StringRelatedField(source="editors", many=True, read_only=True)
     viewers_usernames = serializers.StringRelatedField(source="viewers", many=True, read_only=True)
 
     # Related data
-    remote_host_info = RemoteHostSerializer(source="remote_host", read_only=True)
+    remote_host_info = RemoteHostSerializer(source="remote_host", read_only=True, allow_null=True)
 
     # Computed fields
     protocol_count = serializers.SerializerMethodField()
@@ -424,26 +438,27 @@ class SessionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "unique_id", "created_at", "updated_at"]
 
-    def get_owner_display_name(self, obj):
+    def get_owner_display_name(self, obj) -> str | None:
         """Get display name for owner."""
         if obj.owner and obj.owner.first_name and obj.owner.last_name:
             return f"{obj.owner.first_name} {obj.owner.last_name}"
         return obj.owner.username if obj.owner else None
 
-    def get_protocol_count(self, obj):
+    def get_protocol_count(self, obj) -> int:
         """Get number of protocols in session."""
         return obj.protocols.count()
 
-    def get_duration(self, obj):
+    def get_duration(self, obj) -> float | None:
         """Get session duration in seconds."""
         if obj.started_at and obj.ended_at:
             return (obj.ended_at - obj.started_at).total_seconds()
         return None
 
-    def get_is_running(self, obj):
+    def get_is_running(self, obj) -> bool:
         """Check if session is currently running."""
-        return obj.started_at and not obj.ended_at
+        return bool(obj.started_at and not obj.ended_at)
 
+    @extend_schema_field(serializers.ChoiceField(choices=["processing", "running", "completed", "ready", "draft"]))
     def get_status(self, obj):
         """Get human-readable session status."""
         if obj.processing:
@@ -457,6 +472,7 @@ class SessionSerializer(serializers.ModelSerializer):
         else:
             return "draft"
 
+    @extend_schema_field(SessionImportInfoSerializer())
     def get_import_info(self, obj):
         """Get import source information."""
         return {"is_imported": obj.is_imported, "import_source_info": obj.import_source_info}
@@ -465,7 +481,7 @@ class SessionSerializer(serializers.ModelSerializer):
 class SessionAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for session annotations with metadata table functionality."""
 
-    session_name = serializers.CharField(source="session.name", read_only=True)
+    session_name = serializers.CharField(source="session.name", read_only=True, allow_null=True, default=None)
     annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
     transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
@@ -477,8 +493,12 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
         source="annotation.translation", required=False, allow_blank=True, allow_null=True
     )
     scratched = serializers.BooleanField(source="annotation.scratched", required=False)
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
-    metadata_table_id = serializers.IntegerField(source="metadata_table.id", read_only=True)
+    metadata_table_name = serializers.CharField(
+        source="metadata_table.name", read_only=True, allow_null=True, default=None
+    )
+    metadata_table_id = serializers.IntegerField(
+        source="metadata_table.id", read_only=True, allow_null=True, default=None
+    )
     metadata_columns_count = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
 
@@ -518,11 +538,11 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
             "metadata_columns_count",
         ]
 
-    def get_metadata_columns_count(self, obj):
+    def get_metadata_columns_count(self, obj) -> int:
         """Get the number of metadata columns for this session annotation."""
         return obj.get_metadata_columns().count()
 
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> str | None:
         """Get signed download URL for annotation file if exists."""
         if not obj.annotation or not obj.annotation.file:
             return None
@@ -553,11 +573,11 @@ class SessionAnnotationSerializer(serializers.ModelSerializer):
 class ProjectSerializer(serializers.ModelSerializer):
     """Serializer for projects with AbstractResource integration."""
 
-    owner_username = serializers.CharField(source="owner.username", read_only=True)
+    owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
     owner_display_name = serializers.SerializerMethodField()
 
     # Related data
-    remote_host_info = RemoteHostSerializer(source="remote_host", read_only=True)
+    remote_host_info = RemoteHostSerializer(source="remote_host", read_only=True, allow_null=True)
     sessions = serializers.PrimaryKeyRelatedField(many=True, queryset=Session.objects.all(), required=False)
 
     # Computed fields
@@ -585,17 +605,17 @@ class ProjectSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
-    def get_owner_display_name(self, obj):
+    def get_owner_display_name(self, obj) -> str | None:
         """Get display name for owner."""
         if obj.owner and obj.owner.first_name and obj.owner.last_name:
             return f"{obj.owner.first_name} {obj.owner.last_name}"
         return obj.owner.username if obj.owner else None
 
-    def get_session_count(self, obj):
+    def get_session_count(self, obj) -> int:
         """Get total number of sessions."""
         return obj.sessions.count()
 
-    def get_active_session_count(self, obj):
+    def get_active_session_count(self, obj) -> int:
         """Get number of enabled sessions."""
         return obj.sessions.filter(enabled=True).count()
 
@@ -736,7 +756,7 @@ class StepReagentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
-    def get_scaled_quantity(self, obj):
+    def get_scaled_quantity(self, obj) -> float:
         """Calculate scaled quantity based on scalable factor."""
         if obj.scalable and obj.scalable_factor:
             return obj.quantity * obj.scalable_factor
@@ -746,7 +766,9 @@ class StepReagentSerializer(serializers.ModelSerializer):
 class StepVariationSerializer(serializers.ModelSerializer):
     """Serializer for StepVariation model."""
 
-    step_description = serializers.CharField(source="step.step_description", read_only=True)
+    step_description = serializers.CharField(
+        source="step.step_description", read_only=True, allow_null=True, default=None
+    )
 
     class Meta:
         model = StepVariation
@@ -784,8 +806,10 @@ class TimeKeeperEventSerializer(serializers.ModelSerializer):
 class TimeKeeperSerializer(serializers.ModelSerializer):
     """Serializer for TimeKeeper model with session and step details."""
 
-    session_name = serializers.CharField(source="session.name", read_only=True)
-    step_description = serializers.CharField(source="step.step_description", read_only=True)
+    session_name = serializers.CharField(source="session.name", read_only=True, allow_null=True, default=None)
+    step_description = serializers.CharField(
+        source="step.step_description", read_only=True, allow_null=True, default=None
+    )
     user_username = serializers.CharField(source="user.username", read_only=True)
     duration_formatted = serializers.SerializerMethodField()
     original_duration_formatted = serializers.SerializerMethodField()
@@ -814,7 +838,7 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "start_time", "user"]
 
-    def get_duration_formatted(self, obj):
+    def get_duration_formatted(self, obj) -> str:
         """Format duration in human-readable format."""
         if obj.current_duration:
             hours = obj.current_duration // 3600
@@ -828,7 +852,7 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
                 return f"{seconds}s"
         return "0s"
 
-    def get_original_duration_formatted(self, obj):
+    def get_original_duration_formatted(self, obj) -> str | None:
         """Format original duration in human-readable format."""
         if obj.original_duration:
             hours = obj.original_duration // 3600
@@ -846,9 +870,10 @@ class TimeKeeperSerializer(serializers.ModelSerializer):
 class StepAnnotationSerializer(serializers.ModelSerializer):
     """Serializer for StepAnnotation model."""
 
-    session_name = serializers.CharField(source="session.name", read_only=True)
-    step_description = serializers.CharField(source="step.step_description", read_only=True)
-    annotation_name = serializers.CharField(source="annotation.name", read_only=True)
+    session_name = serializers.CharField(source="session.name", read_only=True, allow_null=True, default=None)
+    step_description = serializers.CharField(
+        source="step.step_description", read_only=True, allow_null=True, default=None
+    )
     annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
     transcribed = serializers.BooleanField(source="annotation.transcribed", read_only=True)
@@ -872,7 +897,6 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "step",
             "step_description",
             "annotation",
-            "annotation_name",
             "annotation_type",
             "annotation_text",
             "transcribed",
@@ -890,7 +914,6 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "id",
             "session_name",
             "step_description",
-            "annotation_name",
             "annotation_type",
             "transcribed",
             "file_url",
@@ -899,7 +922,7 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> str | None:
         """Get signed download URL for annotation file if exists."""
         if not obj.annotation or not obj.annotation.file:
             return None
@@ -918,7 +941,7 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
-    def get_instrument_usage_ids(self, obj):
+    def get_instrument_usage_ids(self, obj) -> list[int]:
         """Get list of linked instrument usage booking IDs."""
         return list(obj.instrument_usage_links.values_list("instrument_usage_id", flat=True))
 
@@ -934,7 +957,7 @@ class StepAnnotationSerializer(serializers.ModelSerializer):
 class SessionAnnotationFolderSerializer(serializers.ModelSerializer):
     """Serializer for SessionAnnotationFolder model."""
 
-    session_name = serializers.CharField(source="session.name", read_only=True)
+    session_name = serializers.CharField(source="session.name", read_only=True, allow_null=True, default=None)
     folder_name = serializers.CharField(source="folder.name", read_only=True)
 
     class Meta:

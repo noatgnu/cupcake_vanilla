@@ -7,13 +7,16 @@ import json
 import re
 import uuid
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models, transaction
-from django.db.models import Q
+from django.db.models import Count, Min, Q
 from django.http import HttpResponse
 
 from django_filters.rest_framework import DjangoFilterBackend
 from django_filters.views import FilterMixin
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema, extend_schema_view
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -27,8 +30,116 @@ from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from sdrf_pipelines.sdrf.schemas import SchemaRegistry as SdrfSchemaRegistry
 
-from ccc.models import LabGroup, ResourceRole, ResourceVisibility
+from ccc.api_schema import ActionMessageSerializer, ErrorOrFieldErrors, ErrorSerializer, FieldErrorsSerializer
+from ccc.models import AsyncTaskStatus, LabGroup, ResourceRole, ResourceVisibility
+from ccv.tasks.reorder_tasks import (
+    reorder_metadata_table_columns_sync,
+    reorder_metadata_table_columns_task,
+    reorder_metadata_table_template_columns_sync,
+    reorder_metadata_table_template_columns_task,
+)
+from ccv.tasks.validation_tasks import validate_metadata_table_sync
 
+from .api_schema import (
+    AddColumnSerializer,
+    AddColumnWithAutoReorderSerializer,
+    AutofillErrorsSerializer,
+    AutofillSerializer,
+    AutofillSummarySerializer,
+    AvailableSchemaSerializer,
+    BulkSampleValuesSerializer,
+    BulkSampleValuesUpdatedSerializer,
+    CellLinesSerializer,
+    CleavageAgentsOfTypeSerializer,
+    CleavageAgentsSerializer,
+    CollectedColumnsSerializer,
+    CollectedUniqueValuesSerializer,
+    ColumnAddedSerializer,
+    ColumnAddedWithReorderSerializer,
+    ColumnDefaultsSerializer,
+    ColumnFromTemplateCreatedSerializer,
+    ColumnFromTemplateSerializer,
+    ColumnHistorySerializer,
+    ColumnIdSerializer,
+    ColumnIdsSerializer,
+    ColumnMappingSuggestionSerializer,
+    ColumnNameSuggestionsSerializer,
+    ColumnOntologySuggestionsSerializer,
+    ColumnOverrideAppliedSerializer,
+    ColumnOverridePreviewSerializer,
+    ColumnsDeletedSerializer,
+    ColumnSearchSerializer,
+    ColumnTemplateGroupPageSerializer,
+    ColumnTemplateSharedSerializer,
+    ColumnValueReplacementSerializer,
+    ColumnValueUpdatedSerializer,
+    ColumnValueUpdateSerializer,
+    CombinedTableSerializer,
+    CombineTablesRowwiseSerializer,
+    CombineTablesSerializer,
+    CompoundFieldsSerializer,
+    CompoundSchemaSerializer,
+    CompoundValidationSerializer,
+    CompoundValueSerializer,
+    DetectedOntologyTypeSerializer,
+    DuplicateColumnSerializer,
+    ExcelImportedSerializer,
+    FieldMaskMappingSerializer,
+    FieldMaskUpdatedSerializer,
+    InstrumentModelsSerializer,
+    LabelOptionsSerializer,
+    MetadataTableIdSerializer,
+    ModificationsOfTypeSerializer,
+    ModificationsSerializer,
+    OntologyMappingAppliedSerializer,
+    OntologySearchResultsSerializer,
+    QuickValueCategoriesSerializer,
+    QuickValuesSerializer,
+    ReorderBySchemaSerializer,
+    ReorderColumnSerializer,
+    ReorderCompletedSerializer,
+    ReorderQueuedSerializer,
+    ReplaceTableValueSerializer,
+    ReplaceValueSerializer,
+    SampleCountChangeCheckSerializer,
+    SampleCountRejectedSerializer,
+    SampleCountUpdatedSerializer,
+    SchemaColumnDefinitionsSerializer,
+    SchemaIdsSerializer,
+    SchemasSyncedSerializer,
+    SchemaSyncedSerializer,
+    SchemaSyncFailedSerializer,
+    SchemaSyncSerializer,
+    SdrfColumnsSerializer,
+    SdrfDataValidationSerializer,
+    SdrfDataValidityReportSerializer,
+    SdrfImportedSerializer,
+    ShareColumnTemplateSerializer,
+    ShareTokenSerializer,
+    StaffOnlyUpdatedSerializer,
+    StaffOnlyUpdateSerializer,
+    StructuredOptionsSerializer,
+    SystemInfoSerializer,
+    TableFromSchemasSerializer,
+    TableFromTemplateSerializer,
+    TableValidatedSerializer,
+    TableValueReplacementSerializer,
+    TemplateAppliedSerializer,
+    TemplateColumnsDeletedSerializer,
+    TemplateColumnsWithMasksSerializer,
+    TemplateFieldMaskSerializer,
+    TemplateFromSchemaSerializer,
+    TemplateOntologySuggestionsSerializer,
+    TemplateReorderCompletedSerializer,
+    TemplateReorderQueuedSerializer,
+    TemplateStaffOnlyUpdatedSerializer,
+    TermSuggestionsSerializer,
+    UserIdSerializer,
+    ValidateTableSerializer,
+    ValueSerializer,
+    ValueValiditySerializer,
+)
+from .async_views import AsyncExportViewSet, AsyncImportViewSet, AsyncValidationViewSet
 from .external_vocabularies.tasks import request_refresh
 from .models import (
     BTOTerm,
@@ -92,12 +203,15 @@ from .serializers import (
     NCBITaxonomySerializer,
     OntologySuggestionSerializer,
     PSIMSOntologySerializer,
+    SampleCountUpdateSerializer,
+    SampleCountValidationSerializer,
     SamplePoolSerializer,
     SchemaColumnSerializer,
     SchemaSerializer,
     SpeciesSerializer,
     SubcellularLocationSerializer,
     SuggestColumnMappingSerializer,
+    TaskCreateResponseSerializer,
     TissueSerializer,
     UberonAnatomySerializer,
     UnimodSerializer,
@@ -114,13 +228,30 @@ from .utils import (
     AutofillSpecValidator,
     SampleVariationGenerator,
     apply_ontology_mapping_to_column,
+    create_pool_metadata_from_table_columns,
     detect_ontology_type,
     parse_sn_source_names,
     sort_metadata,
+    sort_pool_metadata,
+    update_pooled_sample_column_for_table,
     validate_sdrf,
 )
 
 
+@extend_schema_view(
+    list=extend_schema(
+        parameters=[
+            OpenApiParameter("show_shared", bool, description="Include tables shared with the user"),
+            OpenApiParameter("admin_view", bool, description="All tables, for staff"),
+            OpenApiParameter("owner_id", int),
+            OpenApiParameter("lab_group_id", int),
+            OpenApiParameter("column_name", str),
+            OpenApiParameter("column_value", str),
+            OpenApiParameter("column_type", str),
+            OpenApiParameter("column_match", str, enum=["contains", "exact"]),
+        ]
+    )
+)
 class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
     """ViewSet for managing MetadataTable objects."""
 
@@ -215,6 +346,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return queryset.order_by("-created_at", "name")
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=AddColumnSerializer,
+        responses={200: ColumnAddedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def add_column(self, request, pk=None):
         """Add a new column to this metadata table."""
@@ -244,6 +380,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=AddColumnWithAutoReorderSerializer,
+        responses={200: ColumnAddedWithReorderSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def add_column_with_auto_reorder(self, request, pk=None):
         """Add a new column to this metadata table with automatic reordering."""
@@ -277,6 +418,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=ColumnIdSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def remove_column(self, request, pk=None):
         """Remove a column from this metadata table."""
@@ -306,6 +452,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=ReorderColumnSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def reorder_column(self, request, pk=None):
         """Reorder a column within this metadata table."""
@@ -336,6 +487,9 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-tables"], request=None, responses={200: ActionMessageSerializer, 403: ErrorSerializer}
+    )
     @action(detail=True, methods=["post"])
     def normalize_column_positions(self, request, pk=None):
         """Normalize column positions to be sequential starting from 0."""
@@ -351,12 +505,14 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return Response({"message": "Column positions normalized successfully"})
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=SchemaIdsSerializer,
+        responses={200: ReorderQueuedSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def reorder_columns_by_schema_async(self, request, pk=None):
         """Start async reordering of table columns by schema."""
-        from ccc.models import AsyncTaskStatus
-        from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_task
-
         table = self.get_object()
 
         if not table.can_edit(request.user):
@@ -399,11 +555,22 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=ReorderBySchemaSerializer,
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="ReorderOutcome",
+                serializers=[ReorderCompletedSerializer, ReorderQueuedSerializer],
+                resource_type_field_name=None,
+            ),
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def reorder_columns_by_schema(self, request, pk=None):
         """Reorder table columns by schema (sync or async based on environment)."""
-        from ccv.tasks.reorder_tasks import reorder_metadata_table_columns_sync
-
         table = self.get_object()
 
         if not table.can_edit(request.user):
@@ -447,11 +614,10 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             # Default to async when RQ is available
             return self.reorder_columns_by_schema_async(request, pk)
 
+    @extend_schema(tags=["metadata-tables"], responses={200: SystemInfoSerializer})
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def system_info(self, request):
         """Get system configuration information for frontend environment detection."""
-        from django.conf import settings
-
         info = {
             "async_tasks_enabled": True,
             "is_electron_environment": getattr(settings, "IS_ELECTRON_ENVIRONMENT", False),
@@ -472,6 +638,17 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return Response(info)
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("owner_id", int),
+            OpenApiParameter("lab_group_id", int),
+            OpenApiParameter("is_published", bool),
+            OpenApiParameter("is_locked", bool),
+        ],
+        responses={200: MetadataTableSerializer(many=True), 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def admin_all_tables(self, request):
         """Admin endpoint to view all tables in the system."""
@@ -512,6 +689,17 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=CombineTablesSerializer,
+        responses={
+            201: CombinedTableSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def combine_columnwise(self, request):
         """
@@ -578,6 +766,17 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=CombineTablesRowwiseSerializer,
+        responses={
+            201: CombinedTableSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def combine_rowwise(self, request):
         """
@@ -672,14 +871,17 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             raise PermissionDenied("You don't have permission to delete this metadata table")
         super().perform_destroy(instance)
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=SampleCountValidationSerializer,
+        responses={200: SampleCountChangeCheckSerializer, 400: FieldErrorsSerializer},
+    )
     @action(detail=True, methods=["post"])
     def validate_sample_count_change(self, request, pk=None):
         """
         Validate a sample count change and return affected data information.
         This allows the frontend to warn users about potential data loss.
         """
-        from .serializers import SampleCountValidationSerializer
-
         metadata_table = self.get_object()
 
         # Check edit permissions
@@ -701,11 +903,20 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=ValidateTableSerializer,
+        responses={
+            200: TableValidatedSerializer,
+            202: TaskCreateResponseSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def validate_metadata_table(self, request, pk=None):
         """Validate metadata table (sync or async based on environment)."""
-        from ccv.tasks.validation_tasks import validate_metadata_table_sync
-
         metadata_table = self.get_object()
 
         if not metadata_table.can_edit(request.user):
@@ -720,8 +931,6 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         # Check if async processing is requested
         if force_async:
             # Delegate to async endpoint
-            from .async_views import AsyncValidationViewSet
-
             async_view = AsyncValidationViewSet()
             # Prepare data for async view
             async_request_data = {
@@ -756,8 +965,6 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
                 )
         else:
             # Default to async when RQ is available
-            from .async_views import AsyncValidationViewSet
-
             async_view = AsyncValidationViewSet()
             # Prepare data for async view
             async_request_data = {
@@ -767,14 +974,24 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             request._full_data = async_request_data
             return async_view.metadata_table(request)
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=SampleCountUpdateSerializer,
+        responses={
+            200: SampleCountUpdatedSerializer,
+            400: PolymorphicProxySerializer(
+                component_name="SampleCountUpdateRejected",
+                serializers=[SampleCountRejectedSerializer, FieldErrorsSerializer],
+                resource_type_field_name=None,
+            ),
+        },
+    )
     @action(detail=True, methods=["post"])
     def update_sample_count(self, request, pk=None):
         """
         Update the sample count with user confirmation.
         This will clean up any modifiers and pools that reference invalid samples.
         """
-        from .serializers import SampleCountUpdateSerializer
-
         metadata_table = self.get_object()
 
         # Check edit permissions
@@ -822,6 +1039,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=ReplaceTableValueSerializer,
+        responses={200: TableValueReplacementSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def replace_column_value(self, request, pk=None):
         """
@@ -916,6 +1138,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=ColumnIdsSerializer,
+        responses={200: ColumnsDeletedSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def bulk_delete_columns(self, request, pk=None):
         """
@@ -973,6 +1200,11 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=StaffOnlyUpdateSerializer,
+        responses={200: StaffOnlyUpdatedSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def bulk_update_staff_only(self, request, pk=None):
         """
@@ -1036,6 +1268,20 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request=AutofillSerializer,
+        responses={
+            200: AutofillSummarySerializer,
+            400: PolymorphicProxySerializer(
+                component_name="AutofillRejected",
+                serializers=[AutofillErrorsSerializer, ErrorSerializer],
+                resource_type_field_name=None,
+            ),
+            403: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def advanced_autofill(self, request, pk=None):
         """
@@ -1046,22 +1292,22 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
 
         Request body:
         {
-            "templateSamples": [1, 2],  # Sample indices to use as templates
-            "targetSampleCount": 300,    # Total samples to generate
+            "template_samples": [1, 2],  # Sample indices to use as templates
+            "target_sample_count": 300,    # Total samples to generate
             "variations": [
                 {
-                    "columnId": 123,
+                    "column_id": 123,
                     "type": "range",     # range, list, pattern
                     "start": 1,          # for range type
                     "end": 30            # for range type
                 },
                 {
-                    "columnId": 124,
+                    "column_id": 124,
                     "type": "list",
                     "values": ["TMT126", "TMT127N", "TMT127C", ...]
                 }
             ],
-            "fillStrategy": "cartesian_product"  # cartesian_product, sequential, interleaved
+            "fill_strategy": "cartesian_product"  # cartesian_product, sequential, interleaved
         }
         """
         table = self.get_object()
@@ -1075,10 +1321,10 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
             return Response({"error": "Cannot autofill locked table"}, status=status.HTTP_400_BAD_REQUEST)
 
         spec = request.data
-        template_samples = spec.get("templateSamples", [])
-        target_count = spec.get("targetSampleCount")
+        template_samples = spec.get("template_samples", [])
+        target_count = spec.get("target_sample_count")
         variations = spec.get("variations", [])
-        fill_strategy = spec.get("fillStrategy", "cartesian_product")
+        fill_strategy = spec.get("fill_strategy", "cartesian_product")
 
         validator = AutofillSpecValidator(spec, table)
         if not validator.is_valid():
@@ -1109,6 +1355,16 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": f"Autofill failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request={"multipart/form-data": SuggestColumnMappingSerializer},
+        responses={
+            200: ColumnMappingSuggestionSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+            423: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="suggest_column_mapping")
     def suggest_column_mapping(self, request, pk=None):
         """
@@ -1170,6 +1426,16 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request={"multipart/form-data": ColumnOverrideImportSerializer},
+        responses={
+            200: ColumnOverridePreviewSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+            423: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="preview_column_override")
     def preview_column_override(self, request, pk=None):
         """
@@ -1210,6 +1476,16 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        request={"multipart/form-data": ColumnOverrideImportSerializer},
+        responses={
+            200: ColumnOverrideAppliedSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+            423: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="commit_column_override")
     def commit_column_override(self, request, pk=None):
         """
@@ -1252,6 +1528,7 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(tags=["metadata-tables"], request=None, responses={200: ShareTokenSerializer})
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def generate_share_token(self, request, pk=None):
         """Generate (or refresh) a read-only share token for this table.
@@ -1266,6 +1543,7 @@ class MetadataTableViewSet(FilterMixin, viewsets.ModelViewSet):
         table.save(update_fields=["share_token"])
         return Response({"share_token": str(table.share_token)})
 
+    @extend_schema(tags=["metadata-tables"], responses={204: None})
     @action(detail=True, methods=["delete"], permission_classes=[IsAuthenticated])
     def revoke_share_token(self, request, pk=None):
         """Revoke the read-only share token, making the shared link invalid."""
@@ -1286,6 +1564,12 @@ class SharedTableViewSet(viewsets.GenericViewSet):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["metadata-tables"],
+        auth=[],
+        parameters=[OpenApiParameter("token", OpenApiTypes.UUID, OpenApiParameter.PATH)],
+        responses={200: MetadataTableSerializer, 404: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"], url_path=r"(?P<token>[0-9a-f-]+)")
     def retrieve_shared(self, request, token=None):
         """Return the full serialized MetadataTable for the given share token.
@@ -1343,6 +1627,11 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return queryset.select_related("metadata_table", "template").order_by("column_position", "name")
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        request=MetadataColumnSerializer(many=True),
+        responses={201: MetadataColumnSerializer(many=True)},
+    )
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
         """Create multiple metadata columns at once."""
@@ -1351,6 +1640,11 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        request=SdrfDataValidationSerializer,
+        responses={200: SdrfDataValidityReportSerializer},
+    )
     @action(detail=False, methods=["post"])
     def validate_sdrf_data(self, request):
         """Validate SDRF data format."""
@@ -1380,6 +1674,22 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("column_id", int, required=True),
+            OpenApiParameter("search", str),
+            OpenApiParameter("limit", int, description="At most 100; 20 when not given"),
+            OpenApiParameter("search_type", str, enum=["icontains", "istartswith", "exact"]),
+        ],
+        responses={
+            200: ColumnOntologySuggestionsSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def ontology_suggestions(self, request):
         """
@@ -1445,6 +1755,7 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(tags=["metadata-columns"], request=ValueSerializer, responses={200: ValueValiditySerializer})
     @action(detail=True, methods=["post"])
     def validate_value(self, request, pk=None):
         """Validate a value against the column's ontology."""
@@ -1466,6 +1777,11 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return Response(response_data)
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        request=ColumnValueUpdateSerializer,
+        responses={200: ColumnValueUpdatedSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def update_column_value(self, request, pk=None):
         """
@@ -1555,6 +1871,11 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
                 {"error": f"Error updating column value: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        request=BulkSampleValuesSerializer,
+        responses={200: BulkSampleValuesUpdatedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def bulk_update_sample_values(self, request, pk=None):
         """
@@ -1633,6 +1954,9 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return Response(response_data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        tags=["metadata-columns"], request=None, responses={200: OntologyMappingAppliedSerializer, 403: ErrorSerializer}
+    )
     @action(detail=True, methods=["post"])
     def apply_ontology_mapping(self, request, pk=None):
         """Apply automatic ontology mapping to a column."""
@@ -1654,6 +1978,12 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        filters=False,
+        parameters=[OpenApiParameter("name", str, required=True), OpenApiParameter("type", str)],
+        responses={200: DetectedOntologyTypeSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def detect_ontology_type(self, request):
         """Detect ontology type for given column name and type."""
@@ -1745,6 +2075,11 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             )
             return {"modifiers_merged": 0, "modifiers_deleted": 0, "samples_reverted_to_default": 0}
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        request=ReplaceValueSerializer,
+        responses={200: ColumnValueReplacementSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def replace_value(self, request, pk=None):
         """
@@ -1817,6 +2152,14 @@ class MetadataColumnViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-columns"],
+        parameters=[
+            OpenApiParameter("limit", int, description="At most 200; 50 when not given"),
+            OpenApiParameter("offset", int),
+        ],
+        responses={200: ColumnHistorySerializer},
+    )
     @action(detail=True, methods=["get"])
     def history(self, request, pk=None):
         """
@@ -1969,8 +2312,6 @@ class SamplePoolViewSet(FilterMixin, viewsets.ModelViewSet):
         pool = serializer.save(created_by=self.request.user)
 
         # Create pool metadata columns based on table columns
-        from .utils import create_pool_metadata_from_table_columns
-
         create_pool_metadata_from_table_columns(pool)
 
     def perform_update(self, serializer):
@@ -1978,10 +2319,9 @@ class SamplePoolViewSet(FilterMixin, viewsets.ModelViewSet):
         pool = serializer.save()
 
         # Update pooled sample column values after pool changes
-        from .utils import update_pooled_sample_column_for_table
-
         update_pooled_sample_column_for_table(pool.metadata_table)
 
+    @extend_schema(tags=["sample-pools"], responses={200: MetadataColumnSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def metadata_columns(self, request, pk=None):
         """Get metadata columns associated with this pool."""
@@ -2066,6 +2406,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             raise PermissionDenied("You don't have permission to delete this template")
         super().perform_destroy(instance)
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=AddColumnSerializer,
+        responses={200: ColumnAddedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def add_column(self, request, pk=None):
         """Add a new column to this template."""
@@ -2095,6 +2440,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=ColumnIdSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def remove_column(self, request, pk=None):
         """Remove a column from this template."""
@@ -2124,6 +2474,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=ReorderColumnSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def reorder_column(self, request, pk=None):
         """Reorder a column within this template."""
@@ -2154,6 +2509,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=AddColumnWithAutoReorderSerializer,
+        responses={200: ColumnAddedWithReorderSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def add_column_with_auto_reorder(self, request, pk=None):
         """Add a new column to this template with automatic reordering."""
@@ -2187,6 +2547,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=DuplicateColumnSerializer,
+        responses={200: ColumnAddedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def duplicate_column(self, request, pk=None):
         """Duplicate a column within this template."""
@@ -2223,6 +2588,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=None,
+        responses={200: ActionMessageSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def normalize_column_positions(self, request, pk=None):
         """Normalize column positions to be sequential starting from 0."""
@@ -2238,12 +2608,14 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return Response({"message": "Column positions normalized successfully"})
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=SchemaIdsSerializer,
+        responses={200: TemplateReorderQueuedSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def reorder_columns_by_schema_async(self, request, pk=None):
         """Start async reordering of template columns by schema."""
-        from ccc.models import AsyncTaskStatus
-        from ccv.tasks.reorder_tasks import reorder_metadata_table_template_columns_task
-
         template = self.get_object()
 
         if not template.can_edit(request.user):
@@ -2285,11 +2657,22 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=ReorderBySchemaSerializer,
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="TemplateReorderOutcome",
+                serializers=[TemplateReorderCompletedSerializer, TemplateReorderQueuedSerializer],
+                resource_type_field_name=None,
+            ),
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def reorder_columns_by_schema(self, request, pk=None):
         """Reorder template columns by schema (sync or async based on environment)."""
-        from ccv.tasks.reorder_tasks import reorder_metadata_table_template_columns_sync
-
         template = self.get_object()
 
         if not template.can_edit(request.user):
@@ -2333,6 +2716,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             # Default to async when RQ is available
             return self.reorder_columns_by_schema_async(request, pk)
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=MetadataTableIdSerializer,
+        responses={200: TemplateAppliedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def apply_to_metadata_table(self, request, pk=None):
         """Apply this template to a metadata table."""
@@ -2386,7 +2774,10 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(
+        tags=["metadata-table-templates"], filters=False, responses={200: AvailableSchemaSerializer(many=True)}
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def available_schemas(self, request):
         """Get list of available schemas for creating templates."""
 
@@ -2415,6 +2806,17 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
 
         return Response(schema_info)
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=TemplateFromSchemaSerializer,
+        responses={
+            201: MetadataTableTemplateSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def create_from_schema(self, request):
         """Create a new template from schema definitions."""
@@ -2460,12 +2862,23 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         try:
             # Get optional parameters
             description = request.data.get("description")
-            lab_group_id = request.data.get("lab_group")
-            is_public = request.data.get("is_public", False)
+            lab_group_id = request.data.get("lab_group_id", request.data.get("lab_group"))
             is_default = request.data.get("is_default", False)
-
-            # Convert is_public to visibility
-            visibility = "public" if is_public else "private"
+            visibility = request.data.get("visibility")
+            if visibility is None:
+                visibility = (
+                    ResourceVisibility.PUBLIC if request.data.get("is_public", False) else ResourceVisibility.PRIVATE
+                )
+            if visibility not in ResourceVisibility.values:
+                return Response(
+                    {"error": f"visibility must be one of: {', '.join(ResourceVisibility.values)}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if visibility == ResourceVisibility.GROUP and not lab_group_id:
+                return Response(
+                    {"error": "A lab group is required for lab group visibility"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             # Get lab group if specified
             lab_group = None
@@ -2501,6 +2914,17 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 {"error": f"Failed to create template: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=TableFromTemplateSerializer,
+        responses={
+            201: MetadataTableSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def create_table_from_template(self, request):
         """Create a new metadata table from an existing template."""
@@ -2562,6 +2986,17 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=TableFromSchemasSerializer,
+        responses={
+            201: MetadataTableSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def create_table_from_schemas(self, request):
         """Create a new metadata table directly from schema definitions."""
@@ -2652,6 +3087,11 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=FieldMaskMappingSerializer,
+        responses={200: FieldMaskUpdatedSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def update_field_mask(self, request, pk=None):
         """
@@ -2731,6 +3171,9 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"], responses={200: TemplateFieldMaskSerializer, 403: ErrorSerializer}
+    )
     @action(detail=True, methods=["get"])
     def get_field_mask(self, request, pk=None):
         """
@@ -2755,6 +3198,9 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-table-templates"], responses={200: TemplateColumnsWithMasksSerializer, 403: ErrorSerializer}
+    )
     @action(detail=True, methods=["get"])
     def get_columns_with_field_masks(self, request, pk=None):
         """
@@ -2798,6 +3244,20 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=SchemaSyncSerializer,
+        responses={
+            200: SchemaSyncedSerializer,
+            400: PolymorphicProxySerializer(
+                component_name="SchemaSyncRejected",
+                serializers=[SchemaSyncFailedSerializer, ErrorSerializer],
+                resource_type_field_name=None,
+            ),
+            403: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def sync_from_schemas(self, request, pk=None):
         """
@@ -2863,6 +3323,16 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=ColumnIdsSerializer,
+        responses={
+            200: TemplateColumnsDeletedSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def bulk_delete_columns(self, request, pk=None):
         """
@@ -2903,6 +3373,16 @@ class MetadataTableTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["metadata-table-templates"],
+        request=StaffOnlyUpdateSerializer,
+        responses={
+            200: TemplateStaffOnlyUpdatedSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def bulk_update_staff_only(self, request, pk=None):
         """
@@ -2997,6 +3477,16 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["metadata-management"],
+        request=MetadataExportSerializer,
+        responses={
+            (200, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"): OpenApiTypes.BINARY,
+            202: TaskCreateResponseSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def export_excel_template(self, request):
         """Export metadata as Excel template (matching original CUPCAKE)."""
@@ -3023,8 +3513,6 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         # Check if async processing is requested
         if data.get("async_processing", False):
             # Queue async task
-            from .async_views import AsyncExportViewSet
-
             async_view = AsyncExportViewSet()
             return async_view.excel_template(request)
 
@@ -3156,8 +3644,6 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
             pool_hidden_metadata = [m for m in metadata_columns if m.hidden]
 
             # Generate pool data using sort_pool_metadata utility
-            from .utils import sort_pool_metadata
-
             result_pool_main, pool_id_map_main = sort_pool_metadata(pool_main_metadata, pools)
             result_pool_hidden, pool_id_map_hidden = (
                 sort_pool_metadata(pool_hidden_metadata, pools) if pool_hidden_metadata else ([], {})
@@ -3645,6 +4131,16 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
             return metadata_column
 
+    @extend_schema(
+        tags=["metadata-management"],
+        request={"multipart/form-data": MetadataImportSerializer},
+        responses={
+            200: SdrfImportedSerializer,
+            202: TaskCreateResponseSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], parser_classes=[MultiPartParser])
     def import_sdrf_file(self, request):
         """Import metadata from SDRF file with intelligent column matching and schema organization."""
@@ -3656,8 +4152,6 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         # Check if async processing is requested
         if data.get("async_processing", False):
             # Queue async task
-            from .async_views import AsyncImportViewSet
-
             async_view = AsyncImportViewSet()
             return async_view.sdrf_file(request)
 
@@ -4006,6 +4500,16 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["metadata-management"],
+        request={"multipart/form-data": MetadataImportSerializer},
+        responses={
+            200: ExcelImportedSerializer,
+            202: TaskCreateResponseSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], parser_classes=[MultiPartParser])
     def import_excel_file(self, request):
         """Import metadata from Excel file (matching original CUPCAKE)."""
@@ -4017,8 +4521,6 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         # Check if async processing is requested
         if data.get("async_processing", False):
             # Queue async task
-            from .async_views import AsyncImportViewSet
-
             async_view = AsyncImportViewSet()
             return async_view.excel_file(request)
 
@@ -4289,8 +4791,6 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                         created_by=request.user,
                     )
 
-                    from .utils import create_pool_metadata_from_table_columns
-
                     create_pool_metadata_from_table_columns(sample_pool)
 
                     created_pools.append(sample_pool)
@@ -4352,6 +4852,18 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
 
         return metadata_column
 
+    @extend_schema(
+        tags=["metadata-management"],
+        parameters=[MetadataCollectionSerializer],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="CollectedMetadata",
+                serializers=[CollectedUniqueValuesSerializer, CollectedColumnsSerializer],
+                resource_type_field_name=None,
+            ),
+            400: ErrorOrFieldErrors,
+        },
+    )
     @action(detail=False, methods=["get"])
     def collect_metadata(self, request):
         """Collect metadata from metadata table."""
@@ -4422,6 +4934,16 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
                 }
             )
 
+    @extend_schema(
+        tags=["metadata-management"],
+        request=MetadataExportSerializer,
+        responses={
+            (200, "text/tab-separated-values"): OpenApiTypes.STR,
+            202: TaskCreateResponseSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def export_sdrf_file(self, request):
         """Export metadata as SDRF file (matching original CUPCAKE)."""
@@ -4442,8 +4964,6 @@ class MetadataManagementViewSet(viewsets.GenericViewSet):
         # Check if async processing is requested
         if data.get("async_processing", False):
             # Queue async task
-            from .async_views import AsyncExportViewSet
-
             async_view = AsyncExportViewSet()
             return async_view.sdrf_file(request)
 
@@ -4729,8 +5249,6 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         user = self.request.user
         queryset = super().get_queryset()
 
-        from ccc.models import LabGroup
-
         accessible_groups = LabGroup.get_accessible_group_ids(user)
 
         queryset = queryset.filter(
@@ -4793,6 +5311,11 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             raise PermissionDenied("You don't have permission to delete this template")
         super().perform_destroy(instance)
 
+    @extend_schema(
+        tags=["column-templates"],
+        request=ColumnFromTemplateSerializer,
+        responses={201: ColumnFromTemplateCreatedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def create_metadata_column(self, request, pk=None):
         """Create a MetadataColumn from this template."""
@@ -4847,6 +5370,11 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(
+        tags=["column-templates"],
+        request=ShareColumnTemplateSerializer,
+        responses={200: ColumnTemplateSharedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def share_template(self, request, pk=None):
         """Share this template with another user."""
@@ -4896,6 +5424,11 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["column-templates"],
+        request=UserIdSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["delete"])
     def unshare_template(self, request, pk=None):
         """Remove template sharing for a user."""
@@ -4925,7 +5458,13 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(
+        tags=["column-templates"],
+        filters=False,
+        parameters=[OpenApiParameter("search", str, description="Matches name, description or column name")],
+        responses={200: MetadataColumnTemplateSerializer(many=True)},
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def my_templates(self, request):
         """Get templates created by the current user."""
         templates = self.get_queryset().filter(owner=request.user)
@@ -4942,7 +5481,13 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(templates, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(
+        tags=["column-templates"],
+        filters=False,
+        parameters=[OpenApiParameter("limit", int, description="10 when not given")],
+        responses={200: MetadataColumnTemplateSerializer(many=True)},
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def popular_templates(self, request):
         """Get most popular public templates."""
         try:
@@ -4959,6 +5504,23 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(templates, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["column-templates"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("template_id", int, required=True),
+            OpenApiParameter("search", str),
+            OpenApiParameter("limit", int, description="At most 100; 20 when not given"),
+            OpenApiParameter("search_type", str, enum=["icontains", "istartswith", "exact"]),
+        ],
+        responses={
+            200: TemplateOntologySuggestionsSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def ontology_suggestions(self, request):
         """Get ontology suggestions for this column template."""
@@ -5037,7 +5599,18 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(
+        tags=["column-templates"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("search", str, description="Column name fragment of at least 3 characters"),
+            OpenApiParameter("is_system_template", bool),
+            OpenApiParameter("limit", int, description="At most 100; 10 when not given"),
+            OpenApiParameter("offset", int),
+        ],
+        responses={200: ColumnTemplateGroupPageSerializer},
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def grouped_by_column(self, request):
         """
         Get templates grouped by (column_name, column_type) with schema counts.
@@ -5048,8 +5621,6 @@ class MetadataColumnTemplateViewSet(FilterMixin, viewsets.ModelViewSet):
         - limit: Max groups to return (default 10, max 100)
         - offset: Pagination offset
         """
-        from django.db.models import Count, Min
-
         queryset = self.get_queryset()
 
         is_system_template = request.query_params.get("is_system_template")
@@ -5188,6 +5759,15 @@ class MondoDiseaseViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "identifier", "created_at"]
     ordering = ["name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("q", str, description="At least 2 characters"),
+            OpenApiParameter("limit", int, description="20 when not given"),
+        ],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search_suggestions(self, request):
         """Get disease suggestions for SDRF validation."""
@@ -5231,6 +5811,15 @@ class UberonAnatomyViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "identifier", "created_at"]
     ordering = ["name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("q", str, description="At least 2 characters"),
+            OpenApiParameter("limit", int, description="20 when not given"),
+        ],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search_suggestions(self, request):
         """Get anatomy/tissue suggestions for SDRF validation."""
@@ -5274,6 +5863,15 @@ class NCBITaxonomyViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["scientific_name", "tax_id", "rank"]
     ordering = ["scientific_name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("q", str, description="At least 2 characters"),
+            OpenApiParameter("limit", int, description="20 when not given"),
+        ],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search_suggestions(self, request):
         """Get organism suggestions for SDRF validation."""
@@ -5320,6 +5918,15 @@ class ChEBICompoundViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "identifier", "mass"]
     ordering = ["name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("q", str, description="At least 2 characters"),
+            OpenApiParameter("limit", int, description="20 when not given"),
+        ],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search_suggestions(self, request):
         """Get chemical compound suggestions for SDRF validation."""
@@ -5363,6 +5970,16 @@ class PSIMSOntologyViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "identifier", "category"]
     ordering = ["name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("q", str, description="At least 2 characters"),
+            OpenApiParameter("limit", int, description="20 when not given"),
+            OpenApiParameter("category", str),
+        ],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search_suggestions(self, request):
         """Get mass spectrometry term suggestions for SDRF validation."""
@@ -5398,6 +6015,15 @@ class PSIMSOntologyViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response({"results": suggestions})
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("q", str),
+            OpenApiParameter("limit", int, description="20 when not given"),
+        ],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def instruments(self, request):
         """Get instrument-specific terms."""
@@ -5440,6 +6066,17 @@ class CellOntologyViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "identifier", "organism"]
     ordering = ["name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("q", str, description="At least 2 characters"),
+            OpenApiParameter("limit", int, description="20 when not given"),
+            OpenApiParameter("cell_type", str, enum=["cell_line", "primary", "all"]),
+            OpenApiParameter("organism", str),
+        ],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search_suggestions(self, request):
         """Get cell type/cell line suggestions for SDRF validation."""
@@ -5484,6 +6121,12 @@ class CellOntologyViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response({"results": suggestions})
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[OpenApiParameter("organism", str), OpenApiParameter("limit", int, description="10 when not given")],
+        responses={200: CellLinesSerializer},
+    )
     @action(detail=False, methods=["get"])
     def cell_lines(self, request):
         """Get cell lines for proteomics experiments."""
@@ -5513,6 +6156,12 @@ class BTOTermViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "identifier", "created_at"]
     ordering = ["name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[OpenApiParameter("q", str), OpenApiParameter("limit", int, description="At most 10")],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def suggest(self, request):
         """Get BTO term suggestions for typeahead."""
@@ -5549,6 +6198,12 @@ class DiseaseOntologyTermViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["name", "identifier", "created_at"]
     ordering = ["name"]
 
+    @extend_schema(
+        tags=["ontology"],
+        filters=False,
+        parameters=[OpenApiParameter("q", str), OpenApiParameter("limit", int, description="At most 10")],
+        responses={200: TermSuggestionsSerializer},
+    )
     @action(detail=False, methods=["get"])
     def suggest(self, request):
         """Get DOID term suggestions for typeahead."""
@@ -5707,6 +6362,17 @@ class OntologySearchViewSet(viewsets.ViewSet):
             # Log error and return None to skip this result
             return None
 
+    @extend_schema(
+        tags=["ontology"],
+        parameters=[
+            OpenApiParameter("q", str, required=True, description="At least 2 characters"),
+            OpenApiParameter("type", str, description="Ontology to search; the common ones when not given"),
+            OpenApiParameter("match", str, enum=["contains", "startswith"]),
+            OpenApiParameter("limit", int, description="50 when not given"),
+            OpenApiParameter("custom_filters", str, description='JSON object, such as {"organism": "Homo sapiens"}'),
+        ],
+        responses={200: OntologySearchResultsSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def suggest(self, request):
         """
@@ -5739,8 +6405,6 @@ class OntologySearchViewSet(viewsets.ViewSet):
         custom_filters = {}
         if custom_filters_param:
             try:
-                import json
-
                 custom_filters = json.loads(custom_filters_param)
                 if not isinstance(custom_filters, dict):
                     return Response({"error": "custom_filters must be a JSON object"}, status=400)
@@ -5819,13 +6483,15 @@ class SchemaViewSet(FilterMixin, viewsets.ReadOnlyModelViewSet):
         """Return schemas available to the user."""
         return Schema.get_available_schemas(user=self.request.user)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(filters=False, responses={200: SchemaSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def available(self, request):
         """Get list of available schemas for creating templates."""
         schemas = self.get_queryset()
         serializer = self.get_serializer(schemas, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(responses={200: SchemaColumnSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def columns(self, request, pk=None):
         """
@@ -5844,6 +6510,7 @@ class SchemaViewSet(FilterMixin, viewsets.ReadOnlyModelViewSet):
         serializer = SchemaColumnSerializer(templates, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=None, responses={200: SchemasSyncedSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["post"], permission_classes=[IsAdminUser])
     def sync_builtin(self, request):
         """Sync builtin schemas from sdrf-pipelines package (admin only)."""
@@ -5876,12 +6543,18 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(tags=["sdrf-defaults"], responses={200: SdrfColumnsSerializer})
     @action(detail=False, methods=["get"])
     def columns(self, request):
         """Get all available SDRF columns with their default values."""
         defaults = get_all_column_defaults()
         return Response({"columns": list(defaults.keys()), "total": len(defaults)})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("column", str, required=True)],
+        responses={200: ColumnDefaultsSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def column_values(self, request):
         """Get default values for a specific column."""
@@ -5895,6 +6568,11 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
         return Response({"column": column_name, "config": defaults})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("q", str, required=True)],
+        responses={200: ColumnSearchSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search(self, request):
         """Search for columns containing the query string."""
@@ -5905,6 +6583,11 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
         results = search_columns(query)
         return Response({"query": query, "matches": results, "total": len(results)})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("column", str, required=True), OpenApiParameter("type", str)],
+        responses={200: StructuredOptionsSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def structured_options(self, request):
         """Get options for structured fields (key-value pairs)."""
@@ -5922,6 +6605,7 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
         return Response({"column": column_name, "field_type": field_type, "options": options})
 
+    @extend_schema(tags=["sdrf-defaults"], responses={200: LabelOptionsSerializer})
     @action(detail=False, methods=["get"])
     def labels(self, request):
         """Get all label options (TMT, SILAC, label-free)."""
@@ -5933,6 +6617,17 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("type", str, enum=["fixed", "variable"])],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="ModificationOptions",
+                serializers=[ModificationsOfTypeSerializer, ModificationsSerializer],
+                resource_type_field_name=None,
+            )
+        },
+    )
     @action(detail=False, methods=["get"])
     def modifications(self, request):
         """Get protein modification options (fixed and variable)."""
@@ -5942,11 +6637,23 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
         return Response({"fixed": PROTEIN_MODIFICATIONS["fixed"], "variable": PROTEIN_MODIFICATIONS["variable"]})
 
+    @extend_schema(tags=["sdrf-defaults"], responses={200: InstrumentModelsSerializer})
     @action(detail=False, methods=["get"])
     def instruments(self, request):
         """Get list of common instrument models."""
         return Response({"instruments": INSTRUMENT_MODELS})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("type", str, enum=["enzymatic", "non_enzymatic"])],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="CleavageAgentOptions",
+                serializers=[CleavageAgentsOfTypeSerializer, CleavageAgentsSerializer],
+                resource_type_field_name=None,
+            )
+        },
+    )
     @action(detail=False, methods=["get"])
     def cleavage_agents(self, request):
         """Get cleavage agent options."""
@@ -5956,12 +6663,18 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
         return Response({"enzymatic": CLEAVAGE_AGENTS["enzymatic"], "non_enzymatic": CLEAVAGE_AGENTS["non_enzymatic"]})
 
+    @extend_schema(tags=["sdrf-defaults"], responses={200: CompoundFieldsSerializer})
     @action(detail=False, methods=["get"])
     def compound_fields(self, request):
         """Get all compound fields that require special handling."""
         fields = get_all_compound_fields()
         return Response({"compound_fields": list(fields.keys()), "schemas": fields})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("column", str, required=True)],
+        responses={200: CompoundSchemaSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def compound_schema(self, request):
         """Get schema for a specific compound field."""
@@ -5977,6 +6690,11 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
         return Response({"column": column_name, "schema": schema})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        request=CompoundValueSerializer,
+        responses={200: CompoundValidationSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def validate_compound(self, request):
         """Validate a compound field value against its schema."""
@@ -5990,6 +6708,11 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
         return Response({"column": column_name, "value": value, "validation": validation_result})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("partial", str, required=True)],
+        responses={200: ColumnNameSuggestionsSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def suggestions(self, request):
         """Get column name suggestions based on partial input."""
@@ -6000,6 +6723,18 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
         suggestions = get_column_suggestions(partial)
         return Response({"partial": partial, "suggestions": suggestions, "total": len(suggestions)})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[OpenApiParameter("category", str, description="Lists the categories when not given")],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="QuickValuesOrCategories",
+                serializers=[QuickValuesSerializer, QuickValueCategoriesSerializer],
+                resource_type_field_name=None,
+            ),
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def quick_values(self, request):
         """Get quick access to commonly used value categories."""
@@ -6026,6 +6761,16 @@ class SDRFDefaultsViewSet(viewsets.ViewSet):
 
         return Response({"category": category, "values": values})
 
+    @extend_schema(
+        tags=["sdrf-defaults"],
+        parameters=[
+            OpenApiParameter(
+                "schemas", str, description="Comma-separated; ms-proteomics,sample-metadata when not given"
+            ),
+            OpenApiParameter("column", str, description="Part of a column name"),
+        ],
+        responses={200: SchemaColumnDefinitionsSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def schema_column_info(self, request):
         """

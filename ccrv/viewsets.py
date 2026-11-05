@@ -6,13 +6,25 @@ faithfully representing the migrated functionality.
 """
 
 import logging
+import uuid
 from pathlib import Path
 
+from django.conf import settings
 from django.db.models import Q
+from django.http import Http404, HttpResponse
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiResponse,
+    PolymorphicProxySerializer,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -21,12 +33,40 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from ccc.api_schema import ActionMessageSerializer, DetailSerializer, ErrorSerializer
 from ccc.mixins import DeletionLogMixin
-from ccc.models import LabGroup, RemoteHost
-from ccc.permissions import IsAdminUser, IsOwnerEditorViewerOrNoAccess, IsOwnerOrReadOnly
+from ccc.models import Annotation, LabGroup, ResourceVisibility
+from ccc.permissions import IsOwnerOrReadOnly
 from ccc.serializers import AnnotationFolderSerializer
+from ccm.api_schema import TranscriptionQueuedSerializer
 from ccv.serializers import MetadataColumnSerializer, MetadataTableSerializer
 
+from .api_schema import (
+    WEBRTC_SESSION,
+    WEBRTC_SESSION_LIST,
+    AnnotationColumnAddedSerializer,
+    AnnotationColumnSerializer,
+    BulkAddReagentsSerializer,
+    BulkScaleSerializer,
+    ColumnValueSerializer,
+    ExportUrlSerializer,
+    MetadataTableCreatedSerializer,
+    OrderSerializer,
+    ProtocolEnabledSerializer,
+    ProtocolIdSerializer,
+    RateProtocolSerializer,
+    RatingSavedSerializer,
+    ReagentsAddedSerializer,
+    ScalingFactorSerializer,
+    ScalingUpdatedSerializer,
+    SectionMovedSerializer,
+    SessionChangedSerializer,
+    SessionTimingSerializer,
+    StepMovedSerializer,
+    TimerStartedSerializer,
+    TimerStoppedSerializer,
+)
+from .export_utils import save_protocol_export_to_temp, save_session_export_to_temp
 from .models import (
     InstrumentUsageSessionAnnotation,
     InstrumentUsageStepAnnotation,
@@ -45,6 +85,23 @@ from .models import (
     TimeKeeper,
     TimeKeeperEvent,
 )
+from .permissions import (
+    ModelEditDeletePermission,
+    OwnerOrEditorWritePermission,
+    ProtocolAccessPermission,
+    SessionAccessPermission,
+    asks_for_one,
+    is_owner_or_editor,
+    is_rater,
+    is_session_member,
+    is_staff_or_superuser,
+    protocol_viewer_q,
+    protocol_visible_to,
+    require_owner_or_editor,
+    session_viewer_q,
+    visible_booking_links,
+    visible_through_session,
+)
 from .serializers import (
     InstrumentUsageSessionAnnotationSerializer,
     InstrumentUsageStepAnnotationSerializer,
@@ -56,7 +113,6 @@ from .serializers import (
     ProtocolReagentSerializer,
     ProtocolSectionSerializer,
     ProtocolStepSerializer,
-    RemoteHostSerializer,
     SessionAnnotationFolderSerializer,
     SessionAnnotationSerializer,
     SessionCreateSerializer,
@@ -65,6 +121,7 @@ from .serializers import (
     StepReagentSerializer,
     StepVariationSerializer,
     TimeKeeperSerializer,
+    queue_annotation_transcription,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,7 +145,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Filter projects based on user permissions from AbstractResource (includes bubble-up from sub-groups)."""
         user = self.request.user
-        if user.is_superuser:
+        if is_staff_or_superuser(user):
             return self.queryset
 
         # Get all accessible lab groups (includes parent groups via bubble-up)
@@ -96,6 +153,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         return self.queryset.filter(Q(owner=user) | Q(lab_group_id__in=accessible_groups)).distinct()
 
+    @extend_schema(tags=["projects"], responses={200: SessionSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def sessions(self, request, pk=None):
         """Get all sessions for this project."""
@@ -104,14 +162,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
         serializer = SessionSerializer(sessions, many=True, context={"request": request})
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["projects"], filters=False, responses={200: ProjectSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def my_projects(self, request):
         """Get projects owned by the current user."""
         projects = Project.objects.filter(owner=request.user)
         serializer = self.get_serializer(projects, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["projects"], filters=False, responses={200: ProjectSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def vaulted_projects(self, request):
         """Get vaulted/imported projects for the current user."""
         projects = self.get_queryset().filter(is_vaulted=True)
@@ -128,7 +188,7 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     """
 
     queryset = ProtocolModel.objects.all()
-    permission_classes = [permissions.IsAuthenticated, IsOwnerEditorViewerOrNoAccess]
+    permission_classes = [permissions.IsAuthenticated, ProtocolAccessPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = {
         "updated_at": ["gte", "lte"],
@@ -152,32 +212,27 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         user = self.request.user
         base_queryset = self.queryset
 
-        if user.is_superuser:
+        if is_staff_or_superuser(user):
             queryset = base_queryset
         else:
-            accessible_groups = LabGroup.get_accessible_group_ids(user)
-            queryset = base_queryset.filter(
-                Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups)
-            ).distinct()
+            queryset = base_queryset.filter(protocol_viewer_q(user, include_public_sessions=self.detail)).distinct()
 
         access_type = self.request.query_params.get("access_type", None)
 
         if access_type == "public":
-            from ccc.models import ResourceVisibility
-
             queryset = queryset.filter(visibility=ResourceVisibility.PUBLIC)
         elif access_type == "owned":
             queryset = queryset.filter(owner=user)
         elif access_type == "shared":
-            accessible_groups = LabGroup.get_accessible_group_ids(user)
-            queryset = (
-                queryset.filter(Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups))
-                .exclude(owner=user)
-                .distinct()
-            )
+            queryset = queryset.filter(protocol_viewer_q(user)).exclude(owner=user).distinct()
 
         return queryset
 
+    @extend_schema(
+        tags=["protocols"],
+        request=None,
+        responses={200: ProtocolEnabledSerializer},
+    )
     @action(detail=True, methods=["post"])
     def toggle_enabled(self, request, pk=None):
         """Toggle the enabled status of this protocol."""
@@ -189,6 +244,7 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
             {"message": f'Protocol {"enabled" if protocol.enabled else "disabled"}', "enabled": protocol.enabled}
         )
 
+    @extend_schema(tags=["protocols"], responses={200: ProtocolStepSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def steps(self, request, pk=None):
         """Get all steps for this protocol."""
@@ -197,6 +253,7 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = ProtocolStepSerializer(steps, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(tags=["protocols"], responses={200: ProtocolSectionSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def sections(self, request, pk=None):
         """Get all sections for this protocol."""
@@ -205,6 +262,7 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = ProtocolSectionSerializer(sections, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(tags=["protocols"], responses={200: ProtocolRatingSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def ratings(self, request, pk=None):
         """Get all ratings for this protocol."""
@@ -213,52 +271,53 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = ProtocolRatingSerializer(ratings, many=True, context={"request": request})
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["protocols"], filters=False, responses={200: ProtocolModelSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def enabled_protocols(self, request):
         """Get all enabled protocols."""
         protocols = self.get_queryset().filter(enabled=True)
         serializer = self.get_serializer(protocols, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["protocols"], filters=False, responses={200: ProtocolModelSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def vaulted_protocols(self, request):
         """Get vaulted/imported protocols."""
         protocols = self.get_queryset().filter(is_vaulted=True)
         serializer = self.get_serializer(protocols, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["protocols"], filters=False, responses={200: ProtocolModelSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def public_protocols(self, request):
         """Get all publicly accessible protocols."""
-        from ccc.models import ResourceVisibility
-
         protocols = self.get_queryset().filter(visibility=ResourceVisibility.PUBLIC)
         serializer = self.get_serializer(protocols, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["protocols"], filters=False, responses={200: ProtocolModelSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def my_protocols(self, request):
         """Get protocols owned by the current user."""
         protocols = self.get_queryset().filter(owner=request.user)
         serializer = self.get_serializer(protocols, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["protocols"], filters=False, responses={200: ProtocolModelSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def shared_with_me(self, request):
         """Get protocols shared with the current user (not owned by them)."""
         user = request.user
-        accessible_groups = LabGroup.get_accessible_group_ids(user)
-
-        protocols = (
-            self.get_queryset()
-            .filter(Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups))
-            .exclude(owner=user)
-            .distinct()
-        )
+        protocols = self.get_queryset().filter(protocol_viewer_q(user)).exclude(owner=user).distinct()
 
         serializer = self.get_serializer(protocols, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["protocols"],
+        parameters=[OpenApiParameter("session", int, description="Include the annotations of this session")],
+        responses={200: ExportUrlSerializer},
+    )
     @action(detail=True, methods=["get"])
     def get_export_url(self, request, pk=None):
         """
@@ -279,6 +338,17 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
 
         return Response({"download_url": download_url})
 
+    @extend_schema(
+        tags=["protocols"],
+        auth=[],
+        parameters=[OpenApiParameter("token", str, required=True, description="Signed token from get_export_url")],
+        responses={
+            (200, "text/html"): OpenApiTypes.STR,
+            (400, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Missing token"),
+            (403, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Invalid token or no access"),
+            (404, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Session not found"),
+        },
+    )
     @action(detail=True, methods=["get"], permission_classes=[])
     def export_html(self, request, pk=None):
         """
@@ -289,12 +359,6 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
 
         Generates temporary HTML file and serves via X-Accel-Redirect.
         """
-        from django.conf import settings
-        from django.http import HttpResponse
-
-        from ccrv.export_utils import save_protocol_export_to_temp
-        from ccrv.models import ProtocolModel, Session
-
         signed_token = request.query_params.get("token")
         if not signed_token:
             return HttpResponse("Missing token", status=400)
@@ -307,7 +371,7 @@ class ProtocolModelViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         if protocol.id != int(pk):
             return HttpResponse("Token does not match protocol", status=403)
 
-        if not protocol.can_view(user):
+        if not (protocol_visible_to(protocol, user) or protocol.can_view(user)):
             return HttpResponse("Permission denied", status=403)
 
         session = None
@@ -359,7 +423,8 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     """
 
     queryset = Session.objects.all()
-    permission_classes = [permissions.IsAuthenticated, IsOwnerEditorViewerOrNoAccess]
+    permission_classes = [permissions.IsAuthenticated, SessionAccessPermission]
+    public_actions = ("retrieve", "get_export_url", "webrtc_sessions")
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = {
         "unique_id": ["exact"],
@@ -378,18 +443,31 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         return SessionSerializer
 
     def get_queryset(self):
-        """Filter sessions based on user permissions (includes bubble-up from sub-groups)."""
-        user = self.request.user
-        if user.is_superuser:
-            return self.queryset
+        """Sessions the user owns, edits or views, and public sessions the user unlocked, asked for by id or unique id."""
+        return visible_through_session(
+            self.queryset, self.request.user, prefix="", include_public=asks_for_one(self, "unique_id")
+        )
 
-        # Get all accessible lab groups (includes parent groups via bubble-up)
-        accessible_groups = LabGroup.get_accessible_group_ids(user)
+    def list(self, request, *args, **kwargs):
+        """List sessions; asking for a public session by its unique id unlocks it for the user."""
+        self.unlock_by_unique_id(request.query_params.get("unique_id"), request.user)
+        return super().list(request, *args, **kwargs)
 
-        return self.queryset.filter(
-            Q(owner=user) | Q(editors=user) | Q(viewers=user) | Q(lab_group_id__in=accessible_groups)
-        ).distinct()
+    def unlock_by_unique_id(self, unique_id, user):
+        """Record that the user opened the public session with this unique id through its link."""
+        try:
+            session_uuid = uuid.UUID(str(unique_id))
+        except ValueError:
+            return
+        session = Session.objects.filter(unique_id=session_uuid, enabled=True).first()
+        if session is not None and not is_session_member(session, user):
+            session.link_unlocked_by.add(user)
 
+    @extend_schema(
+        tags=["sessions"],
+        request=None,
+        responses={200: SessionChangedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def start(self, request, pk=None):
         """Start the session (original functionality)."""
@@ -406,6 +484,11 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(session)
         return Response({"message": "Session started successfully", "session": serializer.data})
 
+    @extend_schema(
+        tags=["sessions"],
+        request=None,
+        responses={200: SessionChangedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def end(self, request, pk=None):
         """End the session (original functionality)."""
@@ -418,8 +501,6 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
             return Response({"error": "Session has already ended"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Use original logic
-        from django.utils import timezone
-
         session.ended_at = timezone.now()
         session.processing = False
         session.save(update_fields=["ended_at", "processing"])
@@ -427,6 +508,7 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(session)
         return Response({"message": "Session ended successfully", "session": serializer.data})
 
+    @extend_schema(tags=["sessions"], responses={200: WEBRTC_SESSION_LIST})
     @action(detail=True, methods=["get"])
     def webrtc_sessions(self, request, pk=None):
         """Get all WebRTC sessions associated with this experimental session."""
@@ -439,6 +521,11 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = WebRTCSessionSerializer(webrtc_sessions, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["sessions"],
+        request=None,
+        responses={200: WEBRTC_SESSION},
+    )
     @action(detail=True, methods=["post"])
     def join_default_webrtc(self, request, pk=None):
         """
@@ -467,6 +554,11 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = WebRTCSessionSerializer(default_session, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["sessions"],
+        request=ProtocolIdSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def add_protocol(self, request, pk=None):
         """Add a protocol to this session."""
@@ -483,20 +575,23 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         except ProtocolModel.DoesNotExist:
             return Response({"error": "Protocol not found or not enabled"}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["sessions"], filters=False, responses={200: SessionSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def running_sessions(self, request):
         """Get currently running sessions."""
         running_sessions = self.get_queryset().filter(started_at__isnull=False, ended_at__isnull=True)
         serializer = self.get_serializer(running_sessions, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["sessions"], filters=False, responses={200: SessionSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def imported_sessions(self, request):
         """Get imported sessions using original is_imported property."""
         sessions = [s for s in self.get_queryset() if s.is_imported]
         serializer = self.get_serializer(sessions, many=True)
         return Response(serializer.data)
 
+    @extend_schema(tags=["sessions"], responses={200: AnnotationFolderSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def folders(self, request, pk=None):
         """Get annotation folders linked to this session."""
@@ -508,6 +603,10 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = AnnotationFolderSerializer(folders, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["sessions"],
+        responses={200: ExportUrlSerializer},
+    )
     @action(detail=True, methods=["get"])
     def get_export_url(self, request, pk=None):
         """
@@ -524,6 +623,17 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
 
         return Response({"download_url": download_url})
 
+    @extend_schema(
+        tags=["sessions"],
+        auth=[],
+        parameters=[OpenApiParameter("token", str, required=True, description="Signed token from get_export_url")],
+        responses={
+            (200, "text/html"): OpenApiTypes.STR,
+            (400, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Missing token"),
+            (403, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Invalid token or no access"),
+            (404, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Session not found"),
+        },
+    )
     @action(detail=True, methods=["get"], permission_classes=[])
     def export_html(self, request, pk=None):
         """
@@ -536,12 +646,6 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         Returns an HTML file that can be archived and shared offline.
         Includes all protocol steps, annotations, and embedded media files.
         """
-        from django.conf import settings
-        from django.http import HttpResponse
-
-        from ccrv.export_utils import save_session_export_to_temp
-        from ccrv.models import Session
-
         signed_token = request.query_params.get("token")
         if not signed_token:
             return HttpResponse("Missing token", status=400)
@@ -589,6 +693,16 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         return response
 
 
+@extend_schema_view(
+    list=extend_schema(
+        parameters=[
+            OpenApiParameter("protocol", int),
+            OpenApiParameter("user", int),
+            OpenApiParameter("complexity_rating", int),
+            OpenApiParameter("duration_rating", int),
+        ]
+    )
+)
 class ProtocolRatingViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing protocol ratings.
@@ -601,33 +715,62 @@ class ProtocolRatingViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """Filter ratings based on protocol access permissions (includes bubble-up from sub-groups)."""
+        """Ratings of protocols the user can access, filtered by the protocol, user and rating query parameters."""
         user = self.request.user
-        if user.is_superuser:
-            return self.queryset
+        queryset = self.queryset
+        if not is_staff_or_superuser(user):
+            queryset = queryset.filter(protocol_viewer_q(user, "protocol__")).distinct()
 
-        # Get all accessible lab groups (includes parent groups via bubble-up)
-        accessible_groups = LabGroup.get_accessible_group_ids(user)
-
-        # Can see ratings for protocols they have access to
-        return self.queryset.filter(
-            Q(protocol__owner=user)
-            | Q(protocol__editors=user)
-            | Q(protocol__viewers=user)
-            | Q(protocol__lab_group_id__in=accessible_groups)
-        ).distinct()
+        params = self.request.query_params
+        for param, lookup in (
+            ("protocol", "protocol_id"),
+            ("user", "user_id"),
+            ("complexity_rating", "complexity_rating"),
+            ("duration_rating", "duration_rating"),
+        ):
+            value = params.get(param)
+            if value:
+                queryset = queryset.filter(**{lookup: value})
+        return queryset
 
     def perform_create(self, serializer):
-        """Set the current user as the rating user."""
+        """Set the current user as the rating user; the protocol must be one the user can view."""
+        protocol = serializer.validated_data.get("protocol")
+        if protocol is None or not protocol_visible_to(protocol, self.request.user):
+            raise PermissionDenied("You cannot rate this protocol")
         serializer.save(user=self.request.user)
 
-    @action(detail=False, methods=["get"])
+    def perform_update(self, serializer):
+        """Only the user who gave the rating can change it; the protocol stays the same."""
+        if not is_rater(serializer.instance, self.request.user):
+            raise PermissionDenied("Only the user who gave this rating can change it")
+        serializer.save(protocol=serializer.instance.protocol)
+
+    def perform_destroy(self, instance):
+        """Only the user who gave the rating can delete it."""
+        if not is_rater(instance, self.request.user):
+            raise PermissionDenied("Only the user who gave this rating can delete it")
+        instance.delete()
+
+    @extend_schema(tags=["ratings"], filters=False, responses={200: ProtocolRatingSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def my_ratings(self, request):
         """Get ratings by the current user."""
         ratings = ProtocolRating.objects.filter(user=request.user)
         serializer = self.get_serializer(ratings, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["ratings"],
+        request=RateProtocolSerializer,
+        responses={
+            200: RatingSavedSerializer,
+            201: RatingSavedSerializer,
+            400: ErrorSerializer,
+            403: DetailSerializer,
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def rate_protocol(self, request):
         """Rate a protocol (create or update existing rating)."""
@@ -643,6 +786,8 @@ class ProtocolRatingViewSet(viewsets.ModelViewSet):
 
         try:
             protocol = ProtocolModel.objects.get(id=protocol_id)
+            if not protocol_visible_to(protocol, request.user):
+                raise PermissionDenied("You cannot rate this protocol")
             rating, created = ProtocolRating.objects.update_or_create(
                 protocol=protocol,
                 user=request.user,
@@ -671,27 +816,35 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
 
     queryset = ProtocolSection.objects.all()
     serializer_class = ProtocolSectionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, OwnerOrEditorWritePermission]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ["protocol"]
     ordering_fields = ["order"]
 
+    def resource_of(self, section):
+        """The protocol the section belongs to."""
+        return section.protocol
+
+    def perform_create(self, serializer):
+        """Only the owner or an editor of the protocol can add sections."""
+        require_owner_or_editor(serializer.validated_data.get("protocol"), self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Moving a section to another protocol also needs the owner or an editor of that protocol."""
+        require_owner_or_editor(serializer.validated_data.get("protocol"), self.request.user)
+        serializer.save()
+
     def get_queryset(self):
         """Filter sections based on protocol permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
-        if user.is_superuser:
+        if is_staff_or_superuser(user):
             return self.queryset
 
-        # Get all accessible lab groups (includes parent groups via bubble-up)
-        accessible_groups = LabGroup.get_accessible_group_ids(user)
+        public = asks_for_one(self, "protocol")
+        return self.queryset.filter(protocol_viewer_q(user, "protocol__", include_public_sessions=public)).distinct()
 
-        return self.queryset.filter(
-            Q(protocol__owner=user)
-            | Q(protocol__editors=user)
-            | Q(protocol__viewers=user)
-            | Q(protocol__lab_group_id__in=accessible_groups)
-        ).distinct()
-
+    @extend_schema(tags=["sections"], responses={200: ProtocolStepSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def steps_in_order(self, request, pk=None):
         """Get steps in order using original linked-list traversal."""
@@ -700,6 +853,16 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
         serializer = ProtocolStepSerializer(ordered_steps, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["sections"],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="StepOrNone",
+                serializers=[ProtocolStepSerializer, ActionMessageSerializer],
+                resource_type_field_name=None,
+            )
+        },
+    )
     @action(detail=True, methods=["get"])
     def first_step(self, request, pk=None):
         """Get the first step in this section."""
@@ -710,6 +873,16 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
         return Response({"message": "No steps in this section"})
 
+    @extend_schema(
+        tags=["sections"],
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="StepOrNone",
+                serializers=[ProtocolStepSerializer, ActionMessageSerializer],
+                resource_type_field_name=None,
+            )
+        },
+    )
     @action(detail=True, methods=["get"])
     def last_step(self, request, pk=None):
         """Get the last step in this section."""
@@ -720,6 +893,7 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
         return Response({"message": "No steps in this section"})
 
+    @extend_schema(tags=["sections"], responses={200: ProtocolStepSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def steps_by_order(self, request, pk=None):
         """Get steps efficiently ordered by order attribute (optimized method)."""
@@ -728,6 +902,11 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
         serializer = ProtocolStepSerializer(ordered_steps, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["sections"],
+        request=OrderSerializer,
+        responses={200: SectionMovedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def move_to_order(self, request, pk=None):
         """Move this section to a specific order position efficiently."""
@@ -750,6 +929,11 @@ class ProtocolSectionViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": f"Failed to move section: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["sections"],
+        request=None,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def reorder_steps(self, request, pk=None):
         """Reorder all steps in this section based on their order attributes."""
@@ -770,29 +954,41 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
 
     queryset = ProtocolStep.objects.all()
     serializer_class = ProtocolStepSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, OwnerOrEditorWritePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["protocol", "step_section", "original", "branch_from"]
     search_fields = ["step_description"]
     ordering_fields = ["order", "created_at", "step_duration"]
     ordering = ["order"]
 
+    def resource_of(self, step):
+        """The protocol the step belongs to."""
+        return step.protocol
+
+    def perform_create(self, serializer):
+        """Only the owner or an editor of the protocol can add steps."""
+        require_owner_or_editor(serializer.validated_data.get("protocol"), self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Moving a step to another protocol also needs the owner or an editor of that protocol."""
+        require_owner_or_editor(serializer.validated_data.get("protocol"), self.request.user)
+        serializer.save()
+
     def get_queryset(self):
         """Filter steps based on protocol permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
-        if user.is_superuser:
+        if is_staff_or_superuser(user):
             return self.queryset
 
-        # Get all accessible lab groups (includes parent groups via bubble-up)
-        accessible_groups = LabGroup.get_accessible_group_ids(user)
+        public = asks_for_one(self, "protocol", "step_section")
+        return self.queryset.filter(protocol_viewer_q(user, "protocol__", include_public_sessions=public)).distinct()
 
-        return self.queryset.filter(
-            Q(protocol__owner=user)
-            | Q(protocol__editors=user)
-            | Q(protocol__viewers=user)
-            | Q(protocol__lab_group_id__in=accessible_groups)
-        ).distinct()
-
+    @extend_schema(
+        tags=["steps"],
+        request=None,
+        responses={200: StepMovedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def move_up(self, request, pk=None):
         """Move this step up using original linked-list logic."""
@@ -804,6 +1000,11 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": f"Failed to move step: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["steps"],
+        request=None,
+        responses={200: StepMovedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def move_down(self, request, pk=None):
         """Move this step down using original linked-list logic."""
@@ -815,6 +1016,7 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": f"Failed to move step: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(tags=["steps"], responses={200: ProtocolStepSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def next_steps(self, request, pk=None):
         """Get next steps in the linked list."""
@@ -823,6 +1025,7 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(next_steps, many=True)
         return Response(serializer.data)
 
+    @extend_schema(tags=["steps"], responses={200: ProtocolStepSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def branch_steps(self, request, pk=None):
         """Get steps that branch from this step."""
@@ -831,6 +1034,11 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(branch_steps, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["steps"],
+        request=OrderSerializer,
+        responses={200: StepMovedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def move_to_order(self, request, pk=None):
         """Move this step to a specific order position efficiently."""
@@ -853,28 +1061,24 @@ class ProtocolStepViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": f"Failed to move step: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["steps"],
+        request=None,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def reorder_by_linked_list(self, request):
         """Migrate existing data by populating order fields from linked-list traversal."""
         try:
-            ProtocolStep.reorder_by_linked_list()
-            return Response({"message": "Successfully populated order fields for all protocol steps"})
+            protocols = None
+            if not is_staff_or_superuser(request.user):
+                protocols = ProtocolModel.objects.filter(Q(owner=request.user) | Q(editors=request.user)).distinct()
+            ProtocolStep.reorder_by_linked_list(protocols)
+            return Response({"message": "Successfully populated order fields for protocol steps"})
         except Exception as e:
             return Response(
                 {"error": f"Failed to reorder by linked list: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST
             )
-
-
-class RemoteHostViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for managing remote hosts in distributed system.
-
-    Admin-only functionality for distributed system management.
-    """
-
-    queryset = RemoteHost.objects.all()
-    serializer_class = RemoteHostSerializer
-    permission_classes = [IsAdminUser]
 
 
 class ProtocolReagentViewSet(ModelViewSet):
@@ -882,12 +1086,28 @@ class ProtocolReagentViewSet(ModelViewSet):
 
     queryset = ProtocolReagent.objects.all()
     serializer_class = ProtocolReagentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, OwnerOrEditorWritePermission]
     pagination_class = LimitOffsetPagination
 
+    def resource_of(self, protocol_reagent):
+        """The protocol the reagent belongs to."""
+        return protocol_reagent.protocol
+
+    def perform_create(self, serializer):
+        """Only the owner or an editor of the protocol can add reagents."""
+        require_owner_or_editor(serializer.validated_data.get("protocol"), self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Moving a reagent to another protocol also needs the owner or an editor of that protocol."""
+        require_owner_or_editor(serializer.validated_data.get("protocol"), self.request.user)
+        serializer.save()
+
     def get_queryset(self):
-        """Filter reagents by protocol ownership."""
+        """Reagents of protocols the user can view."""
         queryset = super().get_queryset()
+        if not is_staff_or_superuser(self.request.user):
+            queryset = queryset.filter(protocol_viewer_q(self.request.user, "protocol__")).distinct()
 
         # Filter by protocol if specified
         protocol_id = self.request.query_params.get("protocol")
@@ -901,6 +1121,11 @@ class ProtocolReagentViewSet(ModelViewSet):
 
         return queryset.select_related("protocol", "reagent")
 
+    @extend_schema(
+        tags=["protocol-reagents"],
+        request=BulkAddReagentsSerializer,
+        responses={201: ReagentsAddedSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def bulk_add_reagents(self, request):
         """Add multiple reagents to a protocol at once."""
@@ -911,9 +1136,10 @@ class ProtocolReagentViewSet(ModelViewSet):
             return Response({"error": "Protocol ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            protocol = ProtocolModel.objects.get(id=protocol_id, owner=request.user)
+            protocol = ProtocolModel.objects.get(id=protocol_id)
         except ProtocolModel.DoesNotExist:
             return Response({"error": "Protocol not found"}, status=status.HTTP_404_NOT_FOUND)
+        require_owner_or_editor(protocol, request.user)
 
         created_reagents = []
         for reagent_item in reagent_data:
@@ -939,12 +1165,33 @@ class StepReagentViewSet(ModelViewSet):
 
     queryset = StepReagent.objects.all()
     serializer_class = StepReagentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, OwnerOrEditorWritePermission]
     pagination_class = LimitOffsetPagination
 
+    def resource_of(self, step_reagent):
+        """The protocol of the step the reagent belongs to."""
+        return step_reagent.step.protocol
+
+    def perform_create(self, serializer):
+        """Only the owner or an editor of the protocol can add step reagents."""
+        step = serializer.validated_data.get("step")
+        require_owner_or_editor(step.protocol if step else None, self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Moving a reagent to another step also needs the owner or an editor of that step's protocol."""
+        step = serializer.validated_data.get("step")
+        require_owner_or_editor(step.protocol if step else None, self.request.user)
+        serializer.save()
+
     def get_queryset(self):
-        """Filter reagents by step ownership."""
+        """Reagents of steps of protocols the user can view."""
         queryset = super().get_queryset()
+        if not is_staff_or_superuser(self.request.user):
+            public = asks_for_one(self, "step")
+            queryset = queryset.filter(
+                protocol_viewer_q(self.request.user, "step__protocol__", include_public_sessions=public)
+            ).distinct()
 
         # Filter by step if specified
         step_id = self.request.query_params.get("step")
@@ -963,6 +1210,11 @@ class StepReagentViewSet(ModelViewSet):
 
         return queryset.select_related("step", "reagent")
 
+    @extend_schema(
+        tags=["step-reagents"],
+        request=ScalingFactorSerializer,
+        responses={200: ScalingUpdatedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def update_scaling(self, request, pk=None):
         """Update scaling factor for a step reagent."""
@@ -984,6 +1236,11 @@ class StepReagentViewSet(ModelViewSet):
         serializer = self.get_serializer(step_reagent)
         return Response({"message": "Scaling factor updated", "reagent": serializer.data})
 
+    @extend_schema(
+        tags=["step-reagents"],
+        request=BulkScaleSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def bulk_scale_reagents(self, request):
         """Apply scaling factor to multiple reagents in a step."""
@@ -998,6 +1255,11 @@ class StepReagentViewSet(ModelViewSet):
         except ValueError:
             return Response({"error": "scale_factor must be a number"}, status=status.HTTP_400_BAD_REQUEST)
 
+        step = ProtocolStep.objects.select_related("protocol").filter(id=step_id).first()
+        if step is None:
+            return Response({"error": "Step not found"}, status=status.HTTP_404_NOT_FOUND)
+        require_owner_or_editor(step.protocol, request.user)
+
         updated_count = self.get_queryset().filter(step_id=step_id, scalable=True).update(scalable_factor=scale_factor)
 
         return Response({"message": f"Updated scaling factor for {updated_count} reagents"})
@@ -1008,12 +1270,37 @@ class StepVariationViewSet(ModelViewSet):
 
     queryset = StepVariation.objects.all()
     serializer_class = StepVariationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, OwnerOrEditorWritePermission]
     pagination_class = LimitOffsetPagination
 
+    def resource_of(self, variation):
+        """The variation's session, or the step's protocol for variations without a session."""
+        return variation.session or variation.step.protocol
+
+    def require_write_access(self, serializer):
+        """Raise PermissionDenied unless the user owns or edits the session, or the protocol without one."""
+        session = serializer.validated_data.get("session", getattr(serializer.instance, "session", None))
+        step = serializer.validated_data.get("step", getattr(serializer.instance, "step", None))
+        require_owner_or_editor(session or step.protocol, self.request.user)
+
+    def perform_create(self, serializer):
+        """Only the owner or an editor of the session can add variations."""
+        self.require_write_access(serializer)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Only the owner or an editor of the session can change variations."""
+        self.require_write_access(serializer)
+        serializer.save()
+
     def get_queryset(self):
-        """Filter variations by step ownership."""
+        """Variations of sessions the user can view, and variations without a session of protocols the user can view."""
         queryset = super().get_queryset()
+        user = self.request.user
+        if not is_staff_or_superuser(user):
+            queryset = queryset.filter(
+                session_viewer_q(user) | (Q(session__isnull=True) & protocol_viewer_q(user, "step__protocol__"))
+            ).distinct()
 
         # Filter by step if specified
         step_id = self.request.query_params.get("step")
@@ -1026,6 +1313,17 @@ class StepVariationViewSet(ModelViewSet):
 
         return queryset.select_related("step", "session", "remote_host")
 
+    @extend_schema(
+        tags=["step-variations"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("step", int),
+            OpenApiParameter("session", int),
+            OpenApiParameter("min_duration", int, description="Seconds"),
+            OpenApiParameter("max_duration", int, description="Seconds"),
+        ],
+        responses={200: StepVariationSerializer(many=True)},
+    )
     @action(detail=False, methods=["get"])
     def by_duration(self, request):
         """Get variations sorted by duration."""
@@ -1048,6 +1346,15 @@ class StepVariationViewSet(ModelViewSet):
         return Response(serializer.data)
 
 
+@extend_schema_view(
+    list=extend_schema(
+        parameters=[
+            OpenApiParameter("session", int, description="Timers of this session"),
+            OpenApiParameter("step", int),
+            OpenApiParameter("started", bool),
+        ]
+    )
+)
 class TimeKeeperViewSet(ModelViewSet):
     """ViewSet for TimeKeeper model with timing functionality."""
 
@@ -1057,13 +1364,28 @@ class TimeKeeperViewSet(ModelViewSet):
     pagination_class = LimitOffsetPagination
 
     def get_queryset(self):
-        """Filter time tracking by user ownership."""
-        queryset = super().get_queryset().filter(user=self.request.user)
+        """
+        Timers listed for the request.
 
-        # Filter by session if specified
-        session_id = self.request.query_params.get("session")
+        With session: the timers of that session, when the user can view it.
+        Otherwise: the user's own timers, leaving out timers of sessions the user can no longer view.
+        """
+        user = self.request.user
+        params = self.request.query_params
+        session_id = params.get("session")
+
         if session_id:
-            queryset = queryset.filter(session_id=session_id)
+            session = Session.objects.filter(pk=session_id).first()
+            if session and session.can_view(user):
+                queryset = TimeKeeper.objects.filter(session=session)
+            else:
+                queryset = TimeKeeper.objects.filter(user=user, session_id=session_id)
+        else:
+            queryset = super().get_queryset().filter(user=user)
+            own_sessions = Session.objects.filter(time_keeper__in=queryset).distinct()
+            hidden = [session.id for session in own_sessions if not session.can_view(user)]
+            if hidden:
+                queryset = queryset.exclude(session_id__in=hidden)
 
         # Filter by step if specified
         step_id = self.request.query_params.get("step")
@@ -1077,6 +1399,38 @@ class TimeKeeperViewSet(ModelViewSet):
 
         return queryset.select_related("session", "step", "user", "remote_host").order_by("-id")
 
+    def get_object(self):
+        """The timer with the requested id: session timers for those who can view the session, other timers for their creator."""
+        time_keeper = get_object_or_404(
+            TimeKeeper.objects.select_related("session", "step", "user"), pk=self.kwargs["pk"]
+        )
+        user = self.request.user
+        allowed = time_keeper.session.can_view(user) if time_keeper.session else time_keeper.user_id == user.pk
+        if not allowed:
+            raise Http404
+        return time_keeper
+
+    def _require_run_access(self, time_keeper=None, session=None):
+        """Session timers can be run by the session owner and editors; other timers by their creator."""
+        session = session or (time_keeper.session if time_keeper else None)
+        user = self.request.user
+        if session is not None:
+            allowed = is_owner_or_editor(session, user)
+        else:
+            allowed = time_keeper is None or time_keeper.user_id == user.pk
+        if not allowed:
+            raise PermissionDenied("You cannot change this timer")
+
+    def perform_update(self, serializer):
+        """Check run access, then save."""
+        self._require_run_access(serializer.instance, serializer.validated_data.get("session"))
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Check run access, then delete."""
+        self._require_run_access(instance)
+        instance.delete()
+
     def perform_create(self, serializer):
         """
         Get or create timekeeper for session+step combination.
@@ -1086,6 +1440,7 @@ class TimeKeeperViewSet(ModelViewSet):
         validated_data = serializer.validated_data
         session = validated_data.get("session")
         step = validated_data.get("step")
+        self._require_run_access(session=session)
 
         if session and step:
             existing = TimeKeeper.objects.filter(session=session, step=step).first()
@@ -1102,10 +1457,16 @@ class TimeKeeperViewSet(ModelViewSet):
 
         serializer.save(user=self.request.user)
 
+    @extend_schema(
+        tags=["time-keepers"],
+        request=None,
+        responses={200: TimerStartedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def start_timer(self, request, pk=None):
         """Start the timer for this time keeper."""
         time_keeper = self.get_object()
+        self._require_run_access(time_keeper)
 
         if time_keeper.started:
             return Response({"error": "Timer is already started"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1120,10 +1481,16 @@ class TimeKeeperViewSet(ModelViewSet):
         serializer = self.get_serializer(time_keeper)
         return Response({"message": "Timer started", "time_keeper": serializer.data})
 
+    @extend_schema(
+        tags=["time-keepers"],
+        request=None,
+        responses={200: TimerStoppedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def stop_timer(self, request, pk=None):
         """Stop the timer and calculate remaining duration."""
         time_keeper = self.get_object()
+        self._require_run_access(time_keeper)
 
         if not time_keeper.started:
             return Response({"error": "Timer is not started"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1151,6 +1518,11 @@ class TimeKeeperViewSet(ModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["time-keepers"],
+        request=None,
+        responses={200: TimerStoppedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def reset(self, request, pk=None):
         """
@@ -1160,6 +1532,7 @@ class TimeKeeperViewSet(ModelViewSet):
         Creates a reset event in the event history.
         """
         time_keeper = self.get_object()
+        self._require_run_access(time_keeper)
 
         if not time_keeper.original_duration:
             if time_keeper.current_duration:
@@ -1193,14 +1566,21 @@ class TimeKeeperViewSet(ModelViewSet):
             }
         )
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["time-keepers"], filters=False, responses={200: TimeKeeperSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def active_timers(self, request):
         """Get all active timers for the current user."""
         active_timers = self.get_queryset().filter(started=True)
         serializer = self.get_serializer(active_timers, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(
+        tags=["time-keepers"],
+        filters=False,
+        parameters=[OpenApiParameter("session_id", int, required=True)],
+        responses={200: SessionTimingSerializer, 400: ErrorSerializer},
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def session_summary(self, request):
         """Get timing summary for a specific session."""
         session_id = request.query_params.get("session_id")
@@ -1248,7 +1628,7 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = SessionAnnotationFilter
-    search_fields = ["annotation__annotation", "annotation__name"]
+    search_fields = ["annotation__annotation"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
 
@@ -1256,19 +1636,12 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         """Filter session annotations based on user permissions (includes bubble-up from sub-groups)."""
         user = self.request.user
         base_queryset = SessionAnnotation.objects.select_related("session", "annotation", "metadata_table")
-        if user.is_superuser:
-            return base_queryset
-
-        accessible_groups = LabGroup.get_accessible_group_ids(user)
-        return base_queryset.filter(
-            Q(session__owner=user)
-            | Q(session__editors=user)
-            | Q(session__viewers=user)
-            | Q(session__lab_group_id__in=accessible_groups)
-        ).distinct()
+        return visible_through_session(base_queryset, user, include_public=asks_for_one(self, "session"))
 
     def create(self, request, *args, **kwargs):
         """Create session annotation, handling annotation_data if provided."""
+        session = Session.objects.filter(pk=request.data.get("session")).first()
+        require_owner_or_editor(session, request.user)
         annotation_data = request.data.get("annotation_data")
 
         if annotation_data:
@@ -1281,9 +1654,6 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
                     {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
-            from ccc.models import Annotation
-            from ccrv.serializers import queue_annotation_transcription
 
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
@@ -1307,6 +1677,7 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         """Update session annotation, handling annotation_data if provided."""
+        require_owner_or_editor(self.get_object().session, request.user)
         annotation_data = request.data.get("annotation_data")
 
         if annotation_data:
@@ -1333,23 +1704,29 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """
-        Delete session annotation with permission checks.
+        Delete session annotation; only the session owner or an editor can.
 
-        If the annotation is a booking annotation, also delete any linked InstrumentUsage bookings.
+        Linked InstrumentUsage bookings of a booking annotation are deleted when the user can delete them.
         """
-        if not instance.can_delete(self.request.user):
-            raise PermissionDenied("You do not have permission to delete this annotation")
+        require_owner_or_editor(instance.session, self.request.user)
 
         if instance.annotation and instance.annotation.annotation_type == "booking":
             for usage_link in instance.instrument_usage_links.all():
-                usage_link.instrument_usage.delete()
+                if usage_link.instrument_usage.user_can_delete(self.request.user):
+                    usage_link.instrument_usage.delete()
 
         super().perform_destroy(instance)
 
+    @extend_schema(
+        tags=["session-annotations"],
+        request=None,
+        responses={201: MetadataTableCreatedSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def create_metadata_table(self, request, pk=None):
         """Create a metadata table for this session annotation."""
         session_annotation = self.get_object()
+        require_owner_or_editor(session_annotation.session, request.user)
 
         try:
             metadata_table = session_annotation.create_metadata_table()
@@ -1363,6 +1740,7 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
                 {"error": f"Failed to create metadata table: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(tags=["session-annotations"], responses={200: MetadataTableSerializer, 404: ErrorSerializer})
     @action(detail=True, methods=["get"])
     def metadata_table(self, request, pk=None):
         """Get the metadata table for this session annotation."""
@@ -1376,10 +1754,16 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = MetadataTableSerializer(session_annotation.metadata_table)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["session-annotations"],
+        request=AnnotationColumnSerializer,
+        responses={201: AnnotationColumnAddedSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def add_metadata_column(self, request, pk=None):
         """Add a column to the session annotation's metadata table."""
         session_annotation = self.get_object()
+        require_owner_or_editor(session_annotation.session, request.user)
 
         # Get column data from request
         column_data = request.data
@@ -1403,10 +1787,16 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
                 {"error": f"Failed to create column: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["session-annotations"],
+        parameters=[OpenApiParameter("column_id", int, OpenApiParameter.PATH)],
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["delete"], url_path="remove_metadata_column/(?P<column_id>[^/.]+)")
     def remove_metadata_column(self, request, pk=None, column_id=None):
         """Remove a column from the session annotation's metadata table."""
         session_annotation = self.get_object()
+        require_owner_or_editor(session_annotation.session, request.user)
 
         try:
             session_annotation.remove_metadata_column(int(column_id))
@@ -1419,6 +1809,7 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
                 {"error": f"Failed to remove column: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(tags=["session-annotations"], responses={200: MetadataColumnSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def metadata_columns(self, request, pk=None):
         """Get all metadata columns for this session annotation."""
@@ -1428,10 +1819,17 @@ class SessionAnnotationViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         serializer = MetadataColumnSerializer(columns, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["session-annotations"],
+        parameters=[OpenApiParameter("column_id", int, OpenApiParameter.PATH)],
+        request=ColumnValueSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["patch"], url_path="update_column_value/(?P<column_id>[^/.]+)")
     def update_column_value(self, request, pk=None, column_id=None):
         """Update the value of a metadata column."""
         session_annotation = self.get_object()
+        require_owner_or_editor(session_annotation.session, request.user)
 
         value = request.data.get("value")
         if value is None:
@@ -1472,21 +1870,22 @@ class StepAnnotationViewSet(DeletionLogMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = StepAnnotationFilter
-    search_fields = ["step__step_description", "annotation__name"]
+    search_fields = ["step__step_description", "annotation__annotation"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
 
     def get_queryset(self):
-        """Filter annotations by user access permissions."""
+        """Step annotations of sessions the user can view."""
         user = self.request.user
-        return (
-            self.queryset.filter(session__owner=user)
-            .select_related("session", "step", "annotation")
-            .prefetch_related("instrument_usage_links")
+        queryset = self.queryset.select_related("session", "step", "annotation").prefetch_related(
+            "instrument_usage_links"
         )
+        return visible_through_session(queryset, user, include_public=asks_for_one(self, "session"))
 
     def create(self, request, *args, **kwargs):
         """Create step annotation, handling annotation_data if provided."""
+        session = Session.objects.filter(pk=request.data.get("session")).first()
+        require_owner_or_editor(session, request.user)
         annotation_data = request.data.get("annotation_data")
 
         if annotation_data:
@@ -1499,9 +1898,6 @@ class StepAnnotationViewSet(DeletionLogMixin, ModelViewSet):
                     {"annotation_data": {"annotation": "This field is required for non-file annotations."}},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-
-            from ccc.models import Annotation
-            from ccrv.serializers import queue_annotation_transcription
 
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
@@ -1525,6 +1921,7 @@ class StepAnnotationViewSet(DeletionLogMixin, ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         """Update step annotation, handling annotation_data if provided."""
+        require_owner_or_editor(self.get_object().session, request.user)
         annotation_data = request.data.get("annotation_data")
 
         if annotation_data:
@@ -1551,19 +1948,24 @@ class StepAnnotationViewSet(DeletionLogMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         """
-        Delete step annotation with permission checks.
+        Delete step annotation; only the session owner or an editor can.
 
-        If the annotation is a booking annotation, also delete any linked InstrumentUsage bookings.
+        Linked InstrumentUsage bookings of a booking annotation are deleted when the user can delete them.
         """
-        if not instance.can_delete(self.request.user):
-            raise PermissionDenied("You do not have permission to delete this annotation")
+        require_owner_or_editor(instance.session, self.request.user)
 
         if instance.annotation and instance.annotation.annotation_type == "booking":
             for usage_link in instance.instrument_usage_links.all():
-                usage_link.instrument_usage.delete()
+                if usage_link.instrument_usage.user_can_delete(self.request.user):
+                    usage_link.instrument_usage.delete()
 
         super().perform_destroy(instance)
 
+    @extend_schema(
+        tags=["step-annotations"],
+        request=None,
+        responses={200: TranscriptionQueuedSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def retrigger_transcription(self, request, pk=None):
         """
@@ -1598,8 +2000,6 @@ class StepAnnotationViewSet(DeletionLogMixin, ModelViewSet):
         annotation.translation = None
         annotation.save(update_fields=["transcribed", "transcription", "language", "translation"])
 
-        from ccrv.serializers import queue_annotation_transcription
-
         queue_annotation_transcription(annotation, auto_transcribe=True)
 
         return Response(
@@ -1613,17 +2013,30 @@ class SessionAnnotationFolderViewSet(ModelViewSet):
 
     queryset = SessionAnnotationFolder.objects.all()
     serializer_class = SessionAnnotationFolderSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, OwnerOrEditorWritePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["session", "folder"]
     search_fields = ["folder__name"]
     ordering_fields = ["order", "created_at", "updated_at"]
     ordering = ["order"]
 
+    def resource_of(self, session_folder):
+        """The session the folder belongs to."""
+        return session_folder.session
+
+    def perform_create(self, serializer):
+        """Only the session owner or an editor can add folders."""
+        require_owner_or_editor(serializer.validated_data.get("session"), self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Moving a folder to another session also needs the owner or an editor of that session."""
+        require_owner_or_editor(serializer.validated_data.get("session"), self.request.user)
+        serializer.save()
+
     def get_queryset(self):
-        """Filter annotation folders by user access permissions."""
-        user = self.request.user
-        return self.queryset.filter(session__owner=user)
+        """Folders of sessions the user can view."""
+        return visible_through_session(self.queryset, self.request.user)
 
 
 class InstrumentUsageStepAnnotationViewSet(ModelViewSet):
@@ -1631,7 +2044,7 @@ class InstrumentUsageStepAnnotationViewSet(ModelViewSet):
 
     queryset = InstrumentUsageStepAnnotation.objects.all()
     serializer_class = InstrumentUsageStepAnnotationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ModelEditDeletePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["step_annotation", "instrument_usage"]
     search_fields = ["instrument_usage__instrument__instrument_name"]
@@ -1639,9 +2052,19 @@ class InstrumentUsageStepAnnotationViewSet(ModelViewSet):
     ordering = ["order"]
 
     def get_queryset(self):
-        """Filter instrument usage step annotations by user access permissions."""
-        user = self.request.user
-        return self.queryset.filter(step_annotation__session__owner=user)
+        """Booking links of sessions the user can view, and links to bookings the user can see."""
+        return visible_booking_links(self.queryset, self.request.user, "step_annotation__session__")
+
+    def perform_create(self, serializer):
+        """Only the session owner or an editor can link bookings."""
+        require_owner_or_editor(serializer.validated_data["step_annotation"].session, self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Moving a link to another session also needs the owner or an editor of that session."""
+        target = serializer.validated_data.get("step_annotation")
+        require_owner_or_editor(target.session if target else None, self.request.user)
+        serializer.save()
 
 
 class InstrumentUsageSessionAnnotationViewSet(ModelViewSet):
@@ -1649,7 +2072,7 @@ class InstrumentUsageSessionAnnotationViewSet(ModelViewSet):
 
     queryset = InstrumentUsageSessionAnnotation.objects.all()
     serializer_class = InstrumentUsageSessionAnnotationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ModelEditDeletePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["session_annotation", "instrument_usage"]
     search_fields = ["instrument_usage__instrument__instrument_name"]
@@ -1657,6 +2080,16 @@ class InstrumentUsageSessionAnnotationViewSet(ModelViewSet):
     ordering = ["order"]
 
     def get_queryset(self):
-        """Filter instrument usage annotations by user access permissions."""
-        user = self.request.user
-        return self.queryset.filter(session_annotation__session__owner=user)
+        """Booking links of sessions the user can view, and links to bookings the user can see."""
+        return visible_booking_links(self.queryset, self.request.user, "session_annotation__session__")
+
+    def perform_create(self, serializer):
+        """Only the session owner or an editor can link bookings."""
+        require_owner_or_editor(serializer.validated_data["session_annotation"].session, self.request.user)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Moving a link to another session also needs the owner or an editor of that session."""
+        target = serializer.validated_data.get("session_annotation")
+        require_owner_or_editor(target.session if target else None, self.request.user)
+        serializer.save()

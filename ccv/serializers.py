@@ -2,6 +2,7 @@
 Django REST Framework serializers for CUPCAKE Vanilla metadata models.
 """
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from ccc.models import AsyncTaskStatus
@@ -33,6 +34,119 @@ from .models import (
 from .ontology_registry import registry
 
 
+class MetadataColumnSerializer(serializers.ModelSerializer):
+    """Serializer for MetadataColumn model."""
+
+    metadata_table_name = serializers.CharField(
+        source="metadata_table.name", read_only=True, allow_null=True, default=None
+    )
+    template_name = serializers.CharField(source="template.name", read_only=True, allow_null=True, default=None)
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MetadataColumn
+        fields = [
+            "id",
+            "metadata_table",
+            "metadata_table_name",
+            "template",
+            "template_name",
+            "name",
+            "display_name",
+            "type",
+            "column_position",
+            "value",
+            "not_applicable",
+            "not_available",
+            "mandatory",
+            "hidden",
+            "auto_generated",
+            "readonly",
+            "modifiers",
+            "ontology_type",
+            "ontology_options",
+            "custom_ontology_filters",
+            "suggested_values",
+            "enable_typeahead",
+            "possible_default_values",
+            "staff_only",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at", "suggested_values", "possible_default_values", "display_name"]
+
+    def get_display_name(self, obj) -> str:
+        """
+        Get display name from template.name if available, otherwise return column name.
+
+        Returns the template's name (friendly display name) if column has a template.
+        Otherwise returns the column's name field (technical SDRF name).
+        """
+        if obj.template and obj.template.name:
+            return obj.template.name
+        return obj.name
+
+    def validate_modifiers(self, value):
+        """Validate that modifiers is a valid JSON structure."""
+        if value and not isinstance(value, list):
+            raise serializers.ValidationError("Modifiers must be a valid JSON array.")
+        return value
+
+
+class SamplePoolSerializer(serializers.ModelSerializer):
+    """Serializer for SamplePool model."""
+
+    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
+    total_samples = serializers.IntegerField(source="get_total_samples", read_only=True)
+    all_sample_indices = serializers.ListField(source="get_all_sample_indices", read_only=True)
+    metadata_columns = serializers.SerializerMethodField()
+    sdrf_value = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = SamplePool
+        fields = [
+            "id",
+            "pool_name",
+            "pool_description",
+            "pooled_only_samples",
+            "pooled_and_independent_samples",
+            "is_reference",
+            "sdrf_value",
+            "metadata_table",
+            "metadata_table_name",
+            "total_samples",
+            "all_sample_indices",
+            "metadata_columns",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
+
+    @extend_schema_field(MetadataColumnSerializer(many=True))
+    def get_metadata_columns(self, obj):
+        """Get the metadata columns for this sample pool."""
+        columns = obj.metadata_columns.select_related("template").order_by("column_position")
+        return MetadataColumnSerializer(columns, many=True, context=self.context).data
+
+    def validate_pooled_only_samples(self, value):
+        """Validate that pooled_only_samples is a list of integers."""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Must be a list of sample indices.")
+        for item in value:
+            if not isinstance(item, int) or item < 1:
+                raise serializers.ValidationError("Sample indices must be positive integers.")
+        return value
+
+    def validate_pooled_and_independent_samples(self, value):
+        """Validate that pooled_and_independent_samples is a list of integers."""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Must be a list of sample indices.")
+        for item in value:
+            if not isinstance(item, int) or item < 1:
+                raise serializers.ValidationError("Sample indices must be positive integers.")
+        return value
+
+
 class MetadataTableSerializer(serializers.ModelSerializer):
     """Serializer for MetadataTable model."""
 
@@ -40,8 +154,8 @@ class MetadataTableSerializer(serializers.ModelSerializer):
     sample_pools = serializers.SerializerMethodField()
     column_count = serializers.IntegerField(source="get_column_count", read_only=True)
     sample_range = serializers.CharField(source="get_sample_range", read_only=True)
-    owner_username = serializers.CharField(source="owner.username", read_only=True)
-    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
+    owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
+    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True, allow_null=True, default=None)
     can_edit = serializers.SerializerMethodField()
 
     # Field for confirming sample count changes that would remove data
@@ -81,17 +195,19 @@ class MetadataTableSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at", "share_token"]
 
+    @extend_schema_field(MetadataColumnSerializer(many=True))
     def get_columns(self, obj):
         """Get the columns for this metadata table."""
         columns = obj.columns.select_related("template").order_by("column_position")
         return MetadataColumnSerializer(columns, many=True, context=self.context).data
 
+    @extend_schema_field(SamplePoolSerializer(many=True))
     def get_sample_pools(self, obj):
         """Get the sample pools for this metadata table."""
         sample_pools = obj.sample_pools.all().order_by("created_at")
         return SamplePoolSerializer(sample_pools, many=True, context=self.context).data
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         """Check if current user can edit this table."""
         request = self.context.get("request")
         if request and request.user:
@@ -168,119 +284,10 @@ class MetadataTableSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class MetadataColumnSerializer(serializers.ModelSerializer):
-    """Serializer for MetadataColumn model."""
-
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
-    template_name = serializers.CharField(source="template.name", read_only=True)
-    display_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = MetadataColumn
-        fields = [
-            "id",
-            "metadata_table",
-            "metadata_table_name",
-            "template",
-            "template_name",
-            "name",
-            "display_name",
-            "type",
-            "column_position",
-            "value",
-            "not_applicable",
-            "not_available",
-            "mandatory",
-            "hidden",
-            "auto_generated",
-            "readonly",
-            "modifiers",
-            "ontology_type",
-            "ontology_options",
-            "custom_ontology_filters",
-            "suggested_values",
-            "enable_typeahead",
-            "possible_default_values",
-            "staff_only",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["created_at", "updated_at", "suggested_values", "possible_default_values", "display_name"]
-
-    def get_display_name(self, obj):
-        """
-        Get display name from template.name if available, otherwise return column name.
-
-        Returns the template's name (friendly display name) if column has a template.
-        Otherwise returns the column's name field (technical SDRF name).
-        """
-        if obj.template and obj.template.name:
-            return obj.template.name
-        return obj.name
-
-    def validate_modifiers(self, value):
-        """Validate that modifiers is a valid JSON structure."""
-        if value and not isinstance(value, list):
-            raise serializers.ValidationError("Modifiers must be a valid JSON array.")
-        return value
-
-
-class SamplePoolSerializer(serializers.ModelSerializer):
-    """Serializer for SamplePool model."""
-
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
-    total_samples = serializers.IntegerField(source="get_total_samples", read_only=True)
-    all_sample_indices = serializers.ListField(source="get_all_sample_indices", read_only=True)
-    metadata_columns = serializers.SerializerMethodField()
-
-    class Meta:
-        model = SamplePool
-        fields = [
-            "id",
-            "pool_name",
-            "pool_description",
-            "pooled_only_samples",
-            "pooled_and_independent_samples",
-            "is_reference",
-            "sdrf_value",
-            "metadata_table",
-            "metadata_table_name",
-            "total_samples",
-            "all_sample_indices",
-            "metadata_columns",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["created_at", "updated_at"]
-
-    def get_metadata_columns(self, obj):
-        """Get the metadata columns for this sample pool."""
-        columns = obj.metadata_columns.select_related("template").order_by("column_position")
-        return MetadataColumnSerializer(columns, many=True, context=self.context).data
-
-    def validate_pooled_only_samples(self, value):
-        """Validate that pooled_only_samples is a list of integers."""
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Must be a list of sample indices.")
-        for item in value:
-            if not isinstance(item, int) or item < 1:
-                raise serializers.ValidationError("Sample indices must be positive integers.")
-        return value
-
-    def validate_pooled_and_independent_samples(self, value):
-        """Validate that pooled_and_independent_samples is a list of integers."""
-        if not isinstance(value, list):
-            raise serializers.ValidationError("Must be a list of sample indices.")
-        for item in value:
-            if not isinstance(item, int) or item < 1:
-                raise serializers.ValidationError("Sample indices must be positive integers.")
-        return value
-
-
 class MetadataTableTemplateSerializer(serializers.ModelSerializer):
     """Serializer for MetadataTableTemplate model."""
 
-    owner_username = serializers.CharField(source="owner.username", read_only=True)
+    owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
     user_columns = MetadataColumnSerializer(many=True, read_only=True)
     user_column_ids = serializers.ListField(
         child=serializers.IntegerField(),
@@ -316,18 +323,18 @@ class MetadataTableTemplateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at", "can_edit", "can_delete", "schema_names"]
 
-    def get_schema_names(self, obj):
+    def get_schema_names(self, obj) -> list[str]:
         """Names of the schemas this template was created from, if any (empty for a blank template)."""
         return list(obj.schemas.values_list("name", flat=True))
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         """Check if current user can edit this template."""
         request = self.context.get("request")
         if request and request.user:
             return obj.can_edit(request.user)
         return False
 
-    def get_can_delete(self, obj):
+    def get_can_delete(self, obj) -> bool:
         """Check if current user can delete this template."""
         request = self.context.get("request")
         if request and request.user:
@@ -364,8 +371,8 @@ class MetadataTableTemplateSerializer(serializers.ModelSerializer):
 class FavouriteMetadataOptionSerializer(serializers.ModelSerializer):
     """Serializer for FavouriteMetadataOption model."""
 
-    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
-    user_username = serializers.CharField(source="user.username", read_only=True)
+    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True, allow_null=True, default=None)
+    user_username = serializers.CharField(source="user.username", read_only=True, allow_null=True, default=None)
 
     class Meta:
         model = FavouriteMetadataOption
@@ -411,6 +418,9 @@ class MetadataExportSerializer(serializers.Serializer):
     include_pools = serializers.BooleanField(default=False, help_text="Whether to include sample pools in export")
     async_processing = serializers.BooleanField(
         default=False, help_text="Whether to process the export asynchronously via task queue"
+    )
+    validate_sdrf = serializers.BooleanField(
+        default=False, help_text="Validate the SDRF export and report the results in X-SDRF-Validation-* headers"
     )
     pool_ids = serializers.ListField(
         child=serializers.IntegerField(),
@@ -640,9 +650,9 @@ class UnimodSerializer(serializers.ModelSerializer):
 class MetadataColumnTemplateSerializer(serializers.ModelSerializer):
     """Serializer for MetadataColumnTemplate model."""
 
-    owner_username = serializers.CharField(source="owner.username", read_only=True)
-    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
-    schema_name = serializers.CharField(source="schema.name", read_only=True, allow_null=True)
+    owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
+    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True, allow_null=True, default=None)
+    schema_name = serializers.CharField(source="schema.name", read_only=True, allow_null=True, default=None)
     can_edit = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
 
@@ -701,14 +711,14 @@ class MetadataColumnTemplateSerializer(serializers.ModelSerializer):
             "base_column",
         ]
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         """Check if current user can edit this template."""
         request = self.context.get("request")
         if request and request.user:
             return obj.can_edit(request.user)
         return False
 
-    def get_can_delete(self, obj):
+    def get_can_delete(self, obj) -> bool:
         """Check if current user can delete this template."""
         request = self.context.get("request")
         if request and request.user:
@@ -813,15 +823,15 @@ class MondoDiseaseSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_parent_terms_list(self, obj):
+    def get_parent_terms_list(self, obj) -> list[str]:
         """Return parent terms as a list."""
         return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
 
-    def get_xrefs_list(self, obj):
+    def get_xrefs_list(self, obj) -> list[str]:
         """Return cross-references as a list."""
         return [s.strip() for s in obj.xrefs.split(";") if s.strip()] if obj.xrefs else []
 
@@ -856,19 +866,19 @@ class UberonAnatomySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_parent_terms_list(self, obj):
+    def get_parent_terms_list(self, obj) -> list[str]:
         """Return parent terms as a list."""
         return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
 
-    def get_part_of_list(self, obj):
+    def get_part_of_list(self, obj) -> list[str]:
         """Return part_of relationships as a list."""
         return [s.strip() for s in obj.part_of.split(";") if s.strip()] if obj.part_of else []
 
-    def get_xrefs_list(self, obj):
+    def get_xrefs_list(self, obj) -> list[str]:
         """Return cross-references as a list."""
         return [s.strip() for s in obj.xrefs.split(";") if s.strip()] if obj.xrefs else []
 
@@ -898,11 +908,11 @@ class NCBITaxonomySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_display_name(self, obj):
+    def get_display_name(self, obj) -> str:
         """Return formatted display name."""
         if obj.common_name:
             return f"{obj.scientific_name} ({obj.common_name})"
@@ -940,15 +950,15 @@ class ChEBICompoundSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_parent_terms_list(self, obj):
+    def get_parent_terms_list(self, obj) -> list[str]:
         """Return parent terms as a list."""
         return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
 
-    def get_roles_list(self, obj):
+    def get_roles_list(self, obj) -> list[str]:
         """Return roles as a list."""
         return [s.strip() for s in obj.roles.split(";") if s.strip()] if obj.roles else []
 
@@ -977,11 +987,11 @@ class PSIMSOntologySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_parent_terms_list(self, obj):
+    def get_parent_terms_list(self, obj) -> list[str]:
         """Return parent terms as a list."""
         return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
 
@@ -1023,23 +1033,23 @@ class CellOntologySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_parent_terms_list(self, obj):
+    def get_parent_terms_list(self, obj) -> list[str]:
         """Return parent terms as a list."""
         return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
 
-    def get_part_of_list(self, obj):
+    def get_part_of_list(self, obj) -> list[str]:
         """Return part_of relationships as a list."""
         return [s.strip() for s in obj.part_of.split(";") if s.strip()] if obj.part_of else []
 
-    def get_develops_from_list(self, obj):
+    def get_develops_from_list(self, obj) -> list[str]:
         """Return develops_from relationships as a list."""
         return [s.strip() for s in obj.develops_from.split(";") if s.strip()] if obj.develops_from else []
 
-    def get_cell_type_display(self, obj):
+    def get_cell_type_display(self, obj) -> str:
         """Return human-readable cell type."""
         return "Cell Line" if obj.cell_line else "Cell Type"
 
@@ -1073,19 +1083,19 @@ class BTOTermSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_parent_terms_list(self, obj):
+    def get_parent_terms_list(self, obj) -> list[str]:
         """Return parent terms as a list."""
         return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
 
-    def get_part_of_list(self, obj):
+    def get_part_of_list(self, obj) -> list[str]:
         """Return part_of relationships as a list."""
         return [s.strip() for s in obj.part_of.split(";") if s.strip()] if obj.part_of else []
 
-    def get_xrefs_list(self, obj):
+    def get_xrefs_list(self, obj) -> list[str]:
         """Return cross-references as a list."""
         return [s.strip() for s in obj.xrefs.split(";") if s.strip()] if obj.xrefs else []
 
@@ -1116,15 +1126,15 @@ class DiseaseOntologyTermSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_synonyms_list(self, obj):
+    def get_synonyms_list(self, obj) -> list[str]:
         """Return synonyms as a list."""
         return [s.strip() for s in obj.synonyms.split(";") if s.strip()] if obj.synonyms else []
 
-    def get_parent_terms_list(self, obj):
+    def get_parent_terms_list(self, obj) -> list[str]:
         """Return parent terms as a list."""
         return [s.strip() for s in obj.parent_terms.split(";") if s.strip()] if obj.parent_terms else []
 
-    def get_xrefs_list(self, obj):
+    def get_xrefs_list(self, obj) -> list[str]:
         """Return cross-references as a list."""
         return [s.strip() for s in obj.xrefs.split(";") if s.strip()] if obj.xrefs else []
 
@@ -1147,7 +1157,7 @@ class DiseaseOntologyTermSerializer(serializers.ModelSerializer):
 class SchemaSerializer(serializers.ModelSerializer):
     """Serializer for Schema model."""
 
-    creator_username = serializers.CharField(source="creator.username", read_only=True)
+    creator_username = serializers.CharField(source="creator.username", read_only=True, allow_null=True, default=None)
     file_size_kb = serializers.SerializerMethodField()
     schema_file_url = serializers.SerializerMethodField()
 
@@ -1187,13 +1197,13 @@ class SchemaSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_file_size_kb(self, obj):
+    def get_file_size_kb(self, obj) -> float:
         """Return file size in KB."""
         if obj.file_size:
             return round(obj.file_size / 1024, 1)
         return 0
 
-    def get_schema_file_url(self, obj):
+    def get_schema_file_url(self, obj) -> str | None:
         """Return the URL for the schema file."""
         if obj.schema_file:
             request = self.context.get("request")
@@ -1251,7 +1261,9 @@ class AsyncTaskStatusSerializer(serializers.ModelSerializer):
     """Serializer for AsyncTaskStatus model."""
 
     user_username = serializers.CharField(source="user.username", read_only=True)
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
+    metadata_table_name = serializers.CharField(
+        source="metadata_table.name", read_only=True, allow_null=True, default=None
+    )
     task_type_display = serializers.CharField(source="get_task_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     duration = serializers.SerializerMethodField()
@@ -1296,11 +1308,11 @@ class AsyncTaskStatusSerializer(serializers.ModelSerializer):
             "metadata_table_name",
         ]
 
-    def get_duration(self, obj):
+    def get_duration(self, obj) -> float | None:
         """Return task duration in seconds."""
         return obj.duration
 
-    def get_progress_percentage(self, obj):
+    def get_progress_percentage(self, obj) -> float:
         """Return progress as percentage."""
         return obj.progress_percentage
 
@@ -1309,7 +1321,9 @@ class AsyncTaskListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing async tasks."""
 
     user_username = serializers.CharField(source="user.username", read_only=True)
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
+    metadata_table_name = serializers.CharField(
+        source="metadata_table.name", read_only=True, allow_null=True, default=None
+    )
     task_type_display = serializers.CharField(source="get_task_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     duration = serializers.SerializerMethodField()
@@ -1353,11 +1367,11 @@ class AsyncTaskListSerializer(serializers.ModelSerializer):
             "error_message",
         ]
 
-    def get_duration(self, obj):
+    def get_duration(self, obj) -> float | None:
         """Return task duration in seconds."""
         return obj.duration
 
-    def get_progress_percentage(self, obj):
+    def get_progress_percentage(self, obj) -> float:
         """Return progress as percentage."""
         return obj.progress_percentage
 
@@ -1467,10 +1481,18 @@ class ExcelLaunchCodeSerializer(serializers.Serializer):
     expires_in = serializers.IntegerField()
 
 
-class ExcelLaunchClaimRequestSerializer(serializers.Serializer):
+class ExcelLaunchClaimSerializer(serializers.Serializer):
     """Serializer for claiming an Excel launch code."""
 
     code = serializers.CharField(required=True)
+
+
+class ExcelLaunchUserSerializer(serializers.Serializer):
+    """The user a launch code was issued to."""
+
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    email = serializers.EmailField(allow_blank=True)
 
 
 class ExcelLaunchClaimResponseSerializer(serializers.Serializer):
@@ -1480,4 +1502,4 @@ class ExcelLaunchClaimResponseSerializer(serializers.Serializer):
     refresh_token = serializers.CharField()
     table_id = serializers.IntegerField()
     table_name = serializers.CharField()
-    user = serializers.DictField()
+    user = ExcelLaunchUserSerializer()

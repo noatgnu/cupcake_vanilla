@@ -5,13 +5,19 @@ This module contains serializers for user management, lab group collaboration,
 and site administration functionality.
 """
 
+import json
 import logging
+import re
 
+from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.urls import reverse
+from django.utils.module_loading import import_string
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import (
@@ -30,6 +36,31 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class InstalledAppSerializer(serializers.Serializer):
+    """A CUPCAKE module and whether it is installed."""
+
+    name = serializers.CharField()
+    code = serializers.CharField()
+    description = serializers.CharField()
+    installed = serializers.BooleanField()
+
+
+class WhisperModelSerializer(serializers.Serializer):
+    """A Whisper.cpp model file available for transcription."""
+
+    path = serializers.CharField()
+    name = serializers.CharField()
+    size = serializers.CharField()
+    size_bytes = serializers.IntegerField()
+
+
+class LabGroupReferenceSerializer(serializers.Serializer):
+    """ID and name of a lab group."""
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
 
 
 class SiteConfigSerializer(serializers.ModelSerializer):
@@ -74,11 +105,9 @@ class SiteConfigSerializer(serializers.ModelSerializer):
             "max_chunked_upload_size",
         ]
 
+    @extend_schema_field(serializers.DictField(child=InstalledAppSerializer()))
     def get_installed_apps(self, obj):
         """Return information about which CUPCAKE apps are installed."""
-        from django.apps import apps
-        from django.conf import settings
-
         # Get installed app names from Django registry
         installed_app_names = [app.name for app in apps.get_app_configs()]
 
@@ -132,10 +161,12 @@ class SiteConfigSerializer(serializers.ModelSerializer):
 
         return cupcake_apps
 
+    @extend_schema_field(serializers.DictField(child=serializers.BooleanField()))
     def get_ui_features_with_defaults(self, obj):
         """Return UI features with default values applied."""
         return obj.get_all_ui_features()
 
+    @extend_schema_field(WhisperModelSerializer(many=True))
     def get_available_whisper_models(self, obj):
         """
         Return cached available Whisper.cpp models reported by transcribe worker.
@@ -144,26 +175,22 @@ class SiteConfigSerializer(serializers.ModelSerializer):
         """
         return obj.cached_available_models or []
 
-    def get_max_upload_size(self, obj):
+    def get_max_upload_size(self, obj) -> int:
         """
         Return maximum upload size in bytes for regular uploads.
 
         Returns the FILE_UPLOAD_MAX_MEMORY_SIZE setting which applies to
         regular (non-chunked) file uploads.
         """
-        from django.conf import settings
-
         return settings.FILE_UPLOAD_MAX_MEMORY_SIZE
 
-    def get_max_chunked_upload_size(self, obj):
+    def get_max_chunked_upload_size(self, obj) -> int:
         """
         Return maximum upload size in bytes for chunked uploads.
 
         Returns the DRF_CHUNKED_UPLOAD_MAX_BYTES setting which applies to
         chunked file uploads (large files uploaded in chunks).
         """
-        from django.conf import settings
-
         return settings.DRF_CHUNKED_UPLOAD_MAX_BYTES
 
 
@@ -177,7 +204,7 @@ class LabGroupSerializer(serializers.ModelSerializer):
     can_manage = serializers.SerializerMethodField()
     can_process_jobs = serializers.SerializerMethodField()
     creator_name = serializers.SerializerMethodField()
-    parent_group_name = serializers.CharField(source="parent_group.name", read_only=True)
+    parent_group_name = serializers.CharField(source="parent_group.name", read_only=True, allow_null=True, default=None)
     full_path = serializers.SerializerMethodField()
     sub_groups_count = serializers.SerializerMethodField()
 
@@ -215,46 +242,47 @@ class LabGroupSerializer(serializers.ModelSerializer):
             "sub_groups_count",
         ]
 
-    def get_member_count(self, obj):
+    def get_member_count(self, obj) -> int:
         """Return the number of members in this lab group."""
         return obj.members.count()
 
-    def get_is_creator(self, obj):
+    def get_is_creator(self, obj) -> bool:
         """Check if current user is the creator."""
         user = self.context.get("request").user
         return obj.is_creator(user) if user.is_authenticated else False
 
-    def get_is_member(self, obj):
+    def get_is_member(self, obj) -> bool:
         """Check if current user is a member."""
         user = self.context.get("request").user
         return obj.is_member(user) if user.is_authenticated else False
 
-    def get_can_invite(self, obj):
+    def get_can_invite(self, obj) -> bool:
         """Check if current user can invite others."""
         user = self.context.get("request").user
         return obj.can_invite(user) if user.is_authenticated else False
 
-    def get_can_manage(self, obj):
+    def get_can_manage(self, obj) -> bool:
         """Check if current user can manage this group."""
         user = self.context.get("request").user
         return obj.can_manage(user) if user.is_authenticated else False
 
-    def get_can_process_jobs(self, obj):
+    def get_can_process_jobs(self, obj) -> bool:
         """Check if current user can process instrument jobs."""
         user = self.context.get("request").user
         return obj.can_process_jobs(user) if user.is_authenticated else False
 
-    def get_creator_name(self, obj):
+    def get_creator_name(self, obj) -> str | None:
         """Return the creator's display name."""
         if obj.creator:
             return obj.creator.get_full_name() or obj.creator.username
         return None
 
+    @extend_schema_field(LabGroupReferenceSerializer(many=True))
     def get_full_path(self, obj):
         """Get the full hierarchical path to root."""
         return obj.get_full_path()
 
-    def get_sub_groups_count(self, obj):
+    def get_sub_groups_count(self, obj) -> int:
         """Return the number of direct sub groups."""
         return obj.sub_groups.filter(is_active=True).count()
 
@@ -303,11 +331,11 @@ class LabGroupInvitationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_inviter_name(self, obj):
+    def get_inviter_name(self, obj) -> str:
         """Return the inviter's display name."""
         return obj.inviter.get_full_name() or obj.inviter.username
 
-    def get_can_accept(self, obj):
+    def get_can_accept(self, obj) -> bool:
         """Check if this invitation can be accepted."""
         return obj.can_accept()
 
@@ -342,7 +370,7 @@ class LabGroupPermissionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at", "user_username", "user_display_name", "lab_group_name"]
 
-    def get_user_display_name(self, obj):
+    def get_user_display_name(self, obj) -> str:
         """Get user's display name."""
         if obj.user.first_name and obj.user.last_name:
             return f"{obj.user.first_name} {obj.user.last_name}"
@@ -396,17 +424,17 @@ class UserSerializer(serializers.ModelSerializer):
             "orcid_name",
         ]
 
-    def get_has_orcid(self, obj):
+    def get_has_orcid(self, obj) -> bool:
         """Check if user has ORCID profile linked."""
         return hasattr(obj, "orcid_profile")
 
-    def get_orcid_id(self, obj):
+    def get_orcid_id(self, obj) -> str | None:
         """Get user's ORCID ID if available."""
         if hasattr(obj, "orcid_profile"):
             return obj.orcid_profile.orcid_id
         return None
 
-    def get_orcid_name(self, obj):
+    def get_orcid_name(self, obj) -> str | None:
         """Get user's ORCID name if available."""
         if hasattr(obj, "orcid_profile"):
             return obj.orcid_profile.orcid_name
@@ -503,8 +531,6 @@ class AccountLinkingSerializer(serializers.Serializer):
 
     def validate_orcid_id(self, value):
         """Validate ORCID ID format."""
-        import re
-
         if not re.match(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$", value):
             raise serializers.ValidationError("Invalid ORCID ID format.")
         return value
@@ -531,7 +557,9 @@ class AccountMergeRequestSerializer(serializers.ModelSerializer):
     primary_user_username = serializers.CharField(source="primary_user.username", read_only=True)
     duplicate_user_username = serializers.CharField(source="duplicate_user.username", read_only=True)
     requested_by_username = serializers.CharField(source="requested_by.username", read_only=True)
-    reviewed_by_username = serializers.CharField(source="reviewed_by.username", read_only=True)
+    reviewed_by_username = serializers.CharField(
+        source="reviewed_by.username", read_only=True, allow_null=True, default=None
+    )
 
     class Meta:
         model = AccountMergeRequest
@@ -740,10 +768,6 @@ class EmailChangeConfirmSerializer(serializers.Serializer):
 
     def validate_token(self, value):
         """Validate email change token and extract new email."""
-        import json
-
-        from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
-
         if not value:
             raise serializers.ValidationError("Token is required.")
 
@@ -827,40 +851,40 @@ class AnnotationFolderSerializer(serializers.ModelSerializer):
             "resource_type",
         ]
 
-    def get_full_path(self, obj):
+    def get_full_path(self, obj) -> str:
         """Get the full hierarchical path."""
         return obj.get_full_path()
 
-    def get_child_folders_count(self, obj):
+    def get_child_folders_count(self, obj) -> int:
         """Get count of child folders."""
         return obj.child_folders.filter(is_active=True).count()
 
-    def get_annotations_count(self, obj):
+    def get_annotations_count(self, obj) -> int:
         """Get count of annotations in this folder."""
         return obj.annotations.filter(is_active=True).count()
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         """Check if current user can edit this folder."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_edit(request.user)
         return False
 
-    def get_can_view(self, obj):
+    def get_can_view(self, obj) -> bool:
         """Check if current user can view this folder."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_view(request.user)
         return False
 
-    def get_can_delete(self, obj):
+    def get_can_delete(self, obj) -> bool:
         """Check if current user can delete this folder."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_delete(request.user)
         return False
 
-    def get_owner_name(self, obj):
+    def get_owner_name(self, obj) -> str | None:
         """Get owner display name."""
         if obj.owner:
             return obj.owner.get_full_name() or obj.owner.username
@@ -925,7 +949,7 @@ class AnnotationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at", "file_url", "file_size", "folder_path", "resource_type"]
 
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> str | None:
         """
         Get signed download URL if file exists.
 
@@ -953,7 +977,7 @@ class AnnotationSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
-    def get_file_size(self, obj):
+    def get_file_size(self, obj) -> int | None:
         """
         Get file size if file exists.
 
@@ -969,34 +993,34 @@ class AnnotationSerializer(serializers.ModelSerializer):
                 return None
         return None
 
-    def get_folder_path(self, obj):
+    def get_folder_path(self, obj) -> str | None:
         """Get folder path if folder exists."""
         if obj.folder:
             return obj.folder.get_full_path()
         return None
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         """Check if current user can edit this annotation."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_edit(request.user)
         return False
 
-    def get_can_view(self, obj):
+    def get_can_view(self, obj) -> bool:
         """Check if current user can view this annotation."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_view(request.user)
         return False
 
-    def get_can_delete(self, obj):
+    def get_can_delete(self, obj) -> bool:
         """Check if current user can delete this annotation."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_delete(request.user)
         return False
 
-    def get_owner_name(self, obj):
+    def get_owner_name(self, obj) -> str | None:
         """Get owner display name."""
         if obj.owner:
             return obj.owner.get_full_name() or obj.owner.username
@@ -1025,7 +1049,10 @@ class AnnotationSerializer(serializers.ModelSerializer):
             if annotation_type in ["audio", "video"] and annotation.file:
                 if not annotation.transcribed:
                     try:
-                        from ccc.tasks.transcribe_tasks import transcribe_audio, transcribe_audio_from_video
+                        transcribe_audio = import_string("ccrv.tasks.transcribe_tasks.transcribe_audio")
+                        transcribe_audio_from_video = import_string(
+                            "ccrv.tasks.transcribe_tasks.transcribe_audio_from_video"
+                        )
 
                         file_path = annotation.file.path
 
@@ -1081,7 +1108,9 @@ class ResourcePermissionSerializer(serializers.ModelSerializer):
 
     user_username = serializers.CharField(source="user.username", read_only=True)
     user_display_name = serializers.SerializerMethodField()
-    granted_by_username = serializers.CharField(source="granted_by.username", read_only=True)
+    granted_by_username = serializers.CharField(
+        source="granted_by.username", read_only=True, allow_null=True, default=None
+    )
     resource_type_name = serializers.CharField(source="resource_content_type.name", read_only=True)
     resource_model = serializers.CharField(source="resource_content_type.model", read_only=True)
 
@@ -1103,7 +1132,7 @@ class ResourcePermissionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "granted_by", "granted_at"]
 
-    def get_user_display_name(self, obj):
+    def get_user_display_name(self, obj) -> str:
         """Get user's display name."""
         if obj.user.first_name and obj.user.last_name:
             return f"{obj.user.first_name} {obj.user.last_name}"
@@ -1139,7 +1168,9 @@ class DeletionLogSerializer(serializers.ModelSerializer):
 class BackupLogSerializer(serializers.ModelSerializer):
     """Serializer for BackupLog model."""
 
-    triggered_by_username = serializers.CharField(source="triggered_by.username", read_only=True)
+    triggered_by_username = serializers.CharField(
+        source="triggered_by.username", read_only=True, allow_null=True, default=None
+    )
 
     class Meta:
         model = BackupLog

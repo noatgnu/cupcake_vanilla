@@ -373,3 +373,28 @@ class BillingCalculationTests(BillingAPITestCase):
         # Should bill for minimum units even though requested less
         self.assertEqual(response.data["quantity_requested"], 0.5)
         self.assertEqual(response.data["quantity_billable"], 1.0)  # Minimum is 1.0
+
+
+class CurrentPricesAPITests(BillingAPITestCase):
+    """Prices in effect now, with or without an end date."""
+
+    def current_ids(self):
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(reverse("serviceprice-current-prices"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return {price["id"] for price in response.data}
+
+    def test_prices_without_an_end_date_are_current(self):
+        self.service_price.effective_until = None
+        self.service_price.save()
+        self.assertIn(self.service_price.id, self.current_ids())
+
+    def test_prices_ending_later_are_current(self):
+        self.service_price.effective_until = timezone.now() + timedelta(days=5)
+        self.service_price.save()
+        self.assertIn(self.service_price.id, self.current_ids())
+
+    def test_expired_prices_are_not_current(self):
+        self.service_price.effective_until = timezone.now() - timedelta(hours=1)
+        self.service_price.save()
+        self.assertNotIn(self.service_price.id, self.current_ids())

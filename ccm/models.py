@@ -247,25 +247,26 @@ class Instrument(models.Model):
 
     def user_can_view(self, user):
         """
-        Check if user can view this instrument.
+        Check if user can view this instrument: staff and superusers always; disabled instruments only them;
+        otherwise the owner and users with view permission.
         """
         if not user or not user.is_authenticated:
             return False
 
-        # Staff/superuser can always view
         if user.is_staff or user.is_superuser:
             return True
 
-        # Owner can always view
+        if self.user == user and self.is_vaulted:
+            return True
+
+        if not self.enabled:
+            return False
+
         if self.user == user:
             return True
 
-        # Check explicit permission
         permission = self.instrument_permissions.filter(user=user).first()
-        if permission and permission.can_view:
-            return True
-
-        return False
+        return bool(permission and permission.can_view)
 
     def user_can_book(self, user):
         """
@@ -277,6 +278,9 @@ class Instrument(models.Model):
         # Staff/superuser can always book
         if user.is_staff or user.is_superuser:
             return True
+
+        if not self.enabled:
+            return False
 
         # Owner can always book
         if self.user == user:
@@ -299,6 +303,9 @@ class Instrument(models.Model):
         # Staff/superuser can always manage
         if user.is_staff or user.is_superuser:
             return True
+
+        if not self.enabled:
+            return False
 
         # Owner can always manage
         if self.user == user:
@@ -713,6 +720,14 @@ class ReagentAction(models.Model):
     )
     step = models.ForeignKey(
         "ccrv.ProtocolStep", on_delete=models.SET_NULL, related_name="reagent_actions", blank=True, null=True
+    )
+    step_reagent = models.ForeignKey(
+        "ccrv.StepReagent",
+        on_delete=models.SET_NULL,
+        related_name="reagent_actions",
+        blank=True,
+        null=True,
+        help_text="Step reagent this booking was made for",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

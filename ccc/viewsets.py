@@ -28,6 +28,8 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
 from django_filters.rest_framework import DjangoFilterBackend
 from django_filters.views import FilterMixin
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -38,6 +40,46 @@ from rest_framework.response import Response
 
 from ccc.permissions import IsSuperUser
 
+from .api_schema import (
+    ActionMessageSerializer,
+    AdminPasswordResetBodySerializer,
+    ApplyStorageSerializer,
+    ApplyWifiSerializer,
+    AuthConfigSerializer,
+    BlockDevicesSerializer,
+    CommandOutputSerializer,
+    DuplicateAccountsSerializer,
+    EmailChangeRequestedSerializer,
+    ErrorOrFieldErrors,
+    ErrorSerializer,
+    FieldErrorsSerializer,
+    FolderContentsSerializer,
+    InstalledPluginListSerializer,
+    InvitationAcceptedSerializer,
+    JobQueuedSerializer,
+    LabGroupInviteSerializer,
+    LabGroupMembershipSerializer,
+    MergeRequestSubmittedSerializer,
+    NetworkInfoSerializer,
+    OrcidLinkedSerializer,
+    PluginControlSerializer,
+    PluginInstallSerializer,
+    PluginNameSerializer,
+    PluginServiceStatusSerializer,
+    PublicSiteConfigSerializer,
+    RegistrationStatusSerializer,
+    RemoveMemberSerializer,
+    RunBackupSerializer,
+    ScratchToggledSerializer,
+    StorageStatusSerializer,
+    UploadWifiCertResponseSerializer,
+    UploadWifiCertSerializer,
+    UserMessageSerializer,
+    WhisperModelListSerializer,
+    WifiInterfacesSerializer,
+    WifiStatusSerializer,
+    WorkerStatusSerializer,
+)
 from .models import (
     Annotation,
     AnnotationFolder,
@@ -112,6 +154,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
         """Track who created the configuration."""
         serializer.save(updated_by=self.request.user)
 
+    @extend_schema(tags=["site-config"], responses={200: PublicSiteConfigSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def public(self, request):
         """Get public site configuration (no auth required)."""
@@ -163,6 +206,11 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to get site config: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["site-config"],
+        request=SiteConfigSerializer(partial=True),
+        responses={200: SiteConfigSerializer, 400: FieldErrorsSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["put"], permission_classes=[IsAdminUser])
     def update_config(self, request):
         """Update site configuration settings."""
@@ -181,6 +229,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to update site config: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(tags=["site-config"], responses={200: SiteConfigSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], permission_classes=[IsAdminUser])
     def current(self, request):
         """Get current site configuration (admin only)."""
@@ -195,6 +244,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to get site config: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(tags=["site-config"], responses={200: WhisperModelListSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], permission_classes=[IsAdminUser])
     def available_whisper_models(self, request):
         """
@@ -215,6 +265,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to get available models: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(tags=["site-config"], request=None, responses={200: JobQueuedSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["post"], permission_classes=[IsAdminUser])
     def refresh_whisper_models(self, request):
         """
@@ -240,6 +291,7 @@ class SiteConfigViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to queue model scan: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(tags=["site-config"], responses={200: WorkerStatusSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], permission_classes=[IsSuperUser])
     def worker_status(self, request):
         """
@@ -369,6 +421,7 @@ class LabGroupViewSet(viewsets.ModelViewSet, FilterMixin):
 
             return LabGroup.objects.filter(id__in=accessible_groups).distinct()
 
+    @extend_schema(tags=["lab-groups"], responses=LabGroupSerializer(many=True))
     @action(detail=False, methods=["get"])
     def my_groups(self, request):
         """Get lab groups the current user is a member of or has created."""
@@ -380,6 +433,11 @@ class LabGroupViewSet(viewsets.ModelViewSet, FilterMixin):
         serializer = self.get_serializer(paginated_groups, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+    @extend_schema(
+        tags=["lab-groups"],
+        request=LabGroupInviteSerializer,
+        responses={201: LabGroupInvitationSerializer, 400: FieldErrorsSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def invite_user(self, request, pk=None):
         """Invite a user to join this lab group."""
@@ -446,6 +504,13 @@ The Team
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["lab-groups"],
+        parameters=[
+            OpenApiParameter("direct_only", bool, description="Only direct members, without sub-group members"),
+        ],
+        responses={200: UserSerializer(many=True), 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["get"])
     def members(self, request, pk=None):
         """
@@ -453,8 +518,7 @@ The Team
 
         Query Parameters:
             - direct_only: 'true' to get only direct members, default is 'false' (includes sub-group members)
-            - page: Page number for pagination
-            - page_size: Number of items per page (default: 100)
+            - limit, offset: Pagination
         """
         lab_group = self.get_object()
 
@@ -471,15 +535,16 @@ The Team
         # Get members based on parameter
         members = lab_group.get_all_members(include_subgroups=not direct_only)
 
-        # Pagination
-        page_size = int(request.query_params.get("page_size", 100))
         paginator = self.pagination_class()
-        paginator.page_size = page_size
-
         page = paginator.paginate_queryset(members, request)
         serializer = UserSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+    @extend_schema(
+        tags=["lab-groups"],
+        parameters=[OpenApiParameter("user_id", int, description="User to check; the current user when omitted")],
+        responses={200: LabGroupMembershipSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["get"])
     def check_membership(self, request, pk=None):
         """
@@ -516,7 +581,8 @@ The Team
             }
         )
 
-    @action(detail=True, methods=["get"])
+    @extend_schema(tags=["lab-groups"], responses={200: LabGroupInvitationSerializer(many=True), 403: ErrorSerializer})
+    @action(detail=True, methods=["get"], pagination_class=None)
     def invitations(self, request, pk=None):
         """Get invitations for this lab group."""
         lab_group = self.get_object()
@@ -532,6 +598,7 @@ The Team
         serializer = LabGroupInvitationSerializer(invitations, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(tags=["lab-groups"], request=None, responses={200: ActionMessageSerializer, 400: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def leave(self, request, pk=None):
         """Leave this lab group."""
@@ -553,6 +620,11 @@ The Team
         lab_group.members.remove(request.user)
         return Response({"message": "Successfully left the lab group"})
 
+    @extend_schema(
+        tags=["lab-groups"],
+        request=RemoveMemberSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def remove_member(self, request, pk=None):
         """Remove a member from this lab group (admin/manager only)."""
@@ -610,7 +682,8 @@ class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):
     filterset_fields = ["lab_group", "status", "invited_email"]
     search_fields = ["invited_email", "lab_group__name"]
 
-    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
+    @extend_schema(tags=["lab-groups"], responses=LabGroupInvitationSerializer(many=True))
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], pagination_class=None)
     def my_pending_invitations(self, request):
         """Get current user's pending invitations."""
         pending_invitations = LabGroupInvitation.objects.filter(
@@ -619,6 +692,11 @@ class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):
         serializer = LabGroupInvitationSerializer(pending_invitations, many=True, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["lab-groups"],
+        request=None,
+        responses={200: InvitationAcceptedSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def accept_invitation(self, request, pk=None):
         """Accept a lab group invitation."""
@@ -652,6 +730,11 @@ class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):
             }
         )
 
+    @extend_schema(
+        tags=["lab-groups"],
+        request=None,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def reject_invitation(self, request, pk=None):
         """Reject a lab group invitation."""
@@ -674,6 +757,11 @@ class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response({"message": f"Invitation to join {invitation.lab_group.name} has been rejected"})
 
+    @extend_schema(
+        tags=["lab-groups"],
+        request=None,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def cancel_invitation(self, request, pk=None):
         """Cancel a lab group invitation (for group admins)."""
@@ -754,6 +842,7 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
     filterset_fields = ["is_staff", "is_active"]
     search_fields = ["username", "email", "first_name", "last_name"]
 
+    @extend_schema(exclude=True)
     def create(self, request, *args, **kwargs):
         """Disable default create - use custom actions instead."""
 
@@ -790,6 +879,11 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
 
+    @extend_schema(
+        tags=["users"],
+        request=UserCreateSerializer,
+        responses={201: UserMessageSerializer, 400: FieldErrorsSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], permission_classes=[IsAdminUser])
     def admin_create(self, request):
         """
@@ -812,6 +906,11 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=UserRegistrationSerializer,
+        responses={201: UserMessageSerializer, 400: FieldErrorsSerializer, 403: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], permission_classes=[AllowAny])
     def register(self, request):
         """
@@ -845,6 +944,7 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(tags=["users"], responses={200: RegistrationStatusSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def registration_status(self, request):
         """
@@ -867,6 +967,7 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(tags=["users"], responses={200: AuthConfigSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def auth_config(self, request):
         """
@@ -911,6 +1012,17 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to get auth config: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["users"],
+        request=AccountLinkingSerializer,
+        responses={
+            200: OrcidLinkedSerializer,
+            201: OrcidLinkedSerializer,
+            400: ErrorOrFieldErrors,
+            401: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def link_orcid(self, request):
         """
@@ -958,6 +1070,11 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=None,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 401: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def unlink_orcid(self, request):
         """
@@ -980,6 +1097,11 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
                 {"error": f"Failed to unlink ORCID: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["users"],
+        request=DuplicateAccountDetectionSerializer,
+        responses={200: DuplicateAccountsSerializer, 400: FieldErrorsSerializer},
+    )
     @action(detail=False, methods=["post"])
     def detect_duplicates(self, request):
         """
@@ -1020,6 +1142,16 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=AccountMergeRequestSerializer,
+        responses={
+            201: MergeRequestSubmittedSerializer,
+            400: FieldErrorsSerializer,
+            401: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def request_merge(self, request):
         """
@@ -1044,6 +1176,16 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=PasswordChangeSerializer,
+        responses={
+            200: ActionMessageSerializer,
+            400: FieldErrorsSerializer,
+            401: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def change_password(self, request):
         """
@@ -1065,6 +1207,11 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=UserProfileUpdateSerializer,
+        responses={200: UserMessageSerializer, 400: FieldErrorsSerializer, 401: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
     def update_profile(self, request):
         """
@@ -1093,6 +1240,16 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=EmailChangeRequestSerializer,
+        responses={
+            200: EmailChangeRequestedSerializer,
+            400: FieldErrorsSerializer,
+            401: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def request_email_change(self, request):
         """
@@ -1164,6 +1321,11 @@ The Team
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=EmailChangeConfirmSerializer,
+        responses={200: UserMessageSerializer, 400: ErrorOrFieldErrors, 401: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def confirm_email_change(self, request):
         """
@@ -1230,6 +1392,16 @@ The Team
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=AdminPasswordResetBodySerializer,
+        responses={
+            200: ActionMessageSerializer,
+            400: FieldErrorsSerializer,
+            403: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def reset_password(self, request, pk=None):
         """
@@ -1257,6 +1429,11 @@ The Team
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=PasswordResetRequestSerializer,
+        responses={200: ActionMessageSerializer, 400: FieldErrorsSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def request_password_reset(self, request):
         """
@@ -1320,6 +1497,11 @@ The Team
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(
+        tags=["users"],
+        request=PasswordResetConfirmSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorOrFieldErrors, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def confirm_password_reset(self, request):
         """
@@ -1393,6 +1575,7 @@ class AnnotationFolderViewSet(viewsets.ModelViewSet, FilterMixin):
         """Set owner and default values on folder creation."""
         serializer.save(owner=self.request.user, resource_type="file")
 
+    @extend_schema(tags=["annotations"], responses={200: FolderContentsSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["get"])
     def children(self, request, pk=None):
         """Get child folders and annotations for this folder."""
@@ -1420,6 +1603,7 @@ class AnnotationFolderViewSet(viewsets.ModelViewSet, FilterMixin):
             }
         )
 
+    @extend_schema(tags=["annotations"], responses=AnnotationFolderSerializer(many=True))
     @action(detail=False, methods=["get"])
     def root_folders(self, request):
         """Get top-level folders (no parent folder)."""
@@ -1429,6 +1613,11 @@ class AnnotationFolderViewSet(viewsets.ModelViewSet, FilterMixin):
         serializer = self.get_serializer(paginated_folders, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+    @extend_schema(
+        tags=["annotations"],
+        request=AnnotationFolderSerializer,
+        responses={201: AnnotationFolderSerializer, 400: FieldErrorsSerializer, 403: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def create_child_folder(self, request, pk=None):
         """Create a child folder within this folder."""
@@ -1501,6 +1690,11 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         """Set owner and default values on annotation creation."""
         serializer.save(owner=self.request.user, resource_type="file")
 
+    @extend_schema(
+        tags=["annotations"],
+        request={"multipart/form-data": AnnotationSerializer},
+        responses={201: AnnotationSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def create_with_file(self, request):
         """Create annotation with file upload (for regular form uploads, not chunked)."""
@@ -1526,6 +1720,7 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(tags=["annotations"], request=None, responses={200: ScratchToggledSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def toggle_scratch(self, request, pk=None):
         """Toggle scratch status (soft delete) for annotation."""
@@ -1544,6 +1739,16 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         action = "scratched" if annotation.scratched else "unscratched"
         return Response({"message": f"Annotation {action} successfully", "scratched": annotation.scratched})
 
+    @extend_schema(
+        tags=["annotations"],
+        parameters=[OpenApiParameter("folder_id", int, required=True, description="Folder to list")],
+        responses={
+            200: AnnotationSerializer(many=True),
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def by_folder(self, request):
         """Get annotations in a specific folder."""
@@ -1573,6 +1778,13 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         serializer = self.get_serializer(paginated_annotations, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+    @extend_schema(
+        tags=["annotations"],
+        parameters=[
+            OpenApiParameter("type", str, required=True, description="Annotation type, for example file or text")
+        ],
+        responses={200: AnnotationSerializer(many=True), 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def by_type(self, request):
         """Get annotations by type (image, video, audio, file, etc.)."""
@@ -1589,6 +1801,18 @@ class AnnotationViewSet(viewsets.ModelViewSet, FilterMixin):
         serializer = self.get_serializer(paginated_annotations, many=True)
         return paginator.get_paginated_response(serializer.data)
 
+    @extend_schema(
+        tags=["annotations"],
+        methods=["GET"],
+        auth=[],
+        parameters=[OpenApiParameter("token", str, required=True, description="Signed download token from file_url")],
+        responses={
+            (200, "application/octet-stream"): OpenApiTypes.BINARY,
+            (400, "text/plain"): OpenApiTypes.STR,
+            (403, "text/plain"): OpenApiTypes.STR,
+            (404, "text/plain"): OpenApiTypes.STR,
+        },
+    )
     @action(detail=True, methods=["get", "options"], permission_classes=[])
     def download(self, request, pk=None):
         """
@@ -1862,6 +2086,7 @@ class ApplianceViewSet(viewsets.ViewSet):
             return f"destination must be under one of: {allowed}"
         return None
 
+    @extend_schema(tags=["appliance"], responses={200: StorageStatusSerializer})
     @action(detail=False, methods=["get"], url_path="storage-status")
     def storage_status(self, request):
         """Return current mount status and saved storage config."""
@@ -1871,6 +2096,7 @@ class ApplianceViewSet(viewsets.ViewSet):
         if config_path.exists():
             try:
                 config = json.loads(config_path.read_text())
+                config.pop("password", None)
             except Exception:
                 pass
 
@@ -1899,6 +2125,11 @@ class ApplianceViewSet(viewsets.ViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["appliance"],
+        request=ApplyStorageSerializer,
+        responses={200: CommandOutputSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="apply-storage")
     def apply_storage(self, request):
         """Write storage config and apply mount via the storage manager socket."""
@@ -1920,6 +2151,11 @@ class ApplianceViewSet(viewsets.ViewSet):
             return Response({"output": result.get("output", "")})
         return Response({"error": result.get("error", "Mount failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @extend_schema(
+        tags=["appliance"],
+        request=None,
+        responses={200: CommandOutputSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="unmount-storage")
     def unmount_storage(self, request):
         """Unmount /mnt/cupcake-data via the storage manager socket."""
@@ -1936,6 +2172,7 @@ class ApplianceViewSet(viewsets.ViewSet):
             return Response({"output": result.get("output", "")})
         return Response({"error": result.get("error", "Unmount failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @extend_schema(tags=["appliance"], responses={200: BlockDevicesSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], url_path="block-devices")
     def block_devices(self, request):
         """List USB block devices with labels using lsblk."""
@@ -1961,12 +2198,18 @@ class ApplianceViewSet(viewsets.ViewSet):
 
         return Response({"devices": devices})
 
+    @extend_schema(tags=["appliance"], responses={200: BackupLogSerializer(many=True)})
     def list(self, request):
         """List the 10 most recent backup logs."""
         self._require_staff(request)
         logs = BackupLog.objects.order_by("-started_at")[:10]
         return Response(BackupLogSerializer(logs, many=True).data)
 
+    @extend_schema(
+        tags=["appliance"],
+        parameters=[OpenApiParameter("id", int, OpenApiParameter.PATH, description="Backup log ID")],
+        responses={200: BackupLogSerializer, 404: ErrorSerializer},
+    )
     def retrieve(self, request, pk=None):
         """Get a single backup log for status polling."""
         self._require_staff(request)
@@ -1976,6 +2219,11 @@ class ApplianceViewSet(viewsets.ViewSet):
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(BackupLogSerializer(log).data)
 
+    @extend_schema(
+        tags=["appliance"],
+        request=RunBackupSerializer,
+        responses={201: BackupLogSerializer, 400: ErrorSerializer, 409: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="run-backup")
     def run_backup(self, request):
         """Enqueue a backup job and return the BackupLog id."""
@@ -2007,6 +2255,7 @@ class ApplianceViewSet(viewsets.ViewSet):
         run_backup_task.delay(log.id)
         return Response(BackupLogSerializer(log).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(tags=["appliance"], responses={200: WifiInterfacesSerializer})
     @action(detail=False, methods=["get"], url_path="wifi-interfaces")
     def wifi_interfaces(self, request):
         """Return available wireless interface names by inspecting /sys/class/net."""
@@ -2021,6 +2270,7 @@ class ApplianceViewSet(viewsets.ViewSet):
             pass
         return Response({"interfaces": interfaces})
 
+    @extend_schema(tags=["appliance"], responses={200: WifiStatusSerializer})
     @action(detail=False, methods=["get"], url_path="wifi-status")
     def wifi_status(self, request):
         """Return current WiFi connection state and saved config (password excluded)."""
@@ -2117,6 +2367,11 @@ class ApplianceViewSet(viewsets.ViewSet):
 
         return None
 
+    @extend_schema(
+        tags=["appliance"],
+        request=ApplyWifiSerializer,
+        responses={200: CommandOutputSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="apply-wifi")
     def apply_wifi(self, request):
         """Write WiFi config and apply via the network manager socket."""
@@ -2145,6 +2400,7 @@ class ApplianceViewSet(viewsets.ViewSet):
             {"error": result.get("error", "WiFi apply failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+    @extend_schema(tags=["appliance"], request=None, responses={200: CommandOutputSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["post"], url_path="disable-wifi")
     def disable_wifi(self, request):
         """Remove WiFi netplan config and apply via the network manager socket."""
@@ -2161,6 +2417,11 @@ class ApplianceViewSet(viewsets.ViewSet):
             {"error": result.get("error", "WiFi disable failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+    @extend_schema(
+        tags=["appliance"],
+        request={"multipart/form-data": UploadWifiCertSerializer},
+        responses={200: UploadWifiCertResponseSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="upload-wifi-cert")
     def upload_wifi_cert(self, request):
         """Upload a PEM certificate file for WiFi authentication."""
@@ -2195,6 +2456,11 @@ class ApplianceViewSet(viewsets.ViewSet):
 
         return Response({"filename": filename})
 
+    @extend_schema(
+        tags=["appliance"],
+        request=PluginInstallSerializer,
+        responses={200: CommandOutputSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="plugin-install")
     def plugin_install(self, request):
         """Install a plugin from a URL or local path via the plugin manager daemon."""
@@ -2213,6 +2479,11 @@ class ApplianceViewSet(viewsets.ViewSet):
             return Response({"output": result.get("output", "")})
         return Response({"error": result.get("error", "Install failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @extend_schema(
+        tags=["appliance"],
+        request=PluginNameSerializer,
+        responses={200: CommandOutputSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="plugin-uninstall")
     def plugin_uninstall(self, request):
         """Stop, disable and remove a plugin via the plugin manager daemon."""
@@ -2230,6 +2501,7 @@ class ApplianceViewSet(viewsets.ViewSet):
             {"error": result.get("error", "Uninstall failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+    @extend_schema(tags=["appliance"], responses={200: InstalledPluginListSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], url_path="plugin-list")
     def plugin_list_installed(self, request):
         """List plugins currently installed on the appliance filesystem."""
@@ -2242,6 +2514,11 @@ class ApplianceViewSet(viewsets.ViewSet):
             return Response({"plugins": result.get("plugins", [])})
         return Response({"error": result.get("error", "List failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @extend_schema(
+        tags=["appliance"],
+        parameters=[OpenApiParameter("name", str, required=True, description="Plugin name")],
+        responses={200: PluginServiceStatusSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"], url_path="plugin-status")
     def plugin_status(self, request):
         """Return the systemd service status for an installed plugin."""
@@ -2255,6 +2532,11 @@ class ApplianceViewSet(viewsets.ViewSet):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(result)
 
+    @extend_schema(
+        tags=["appliance"],
+        request=PluginControlSerializer,
+        responses={200: CommandOutputSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="plugin-control")
     def plugin_control(self, request):
         """Send a start, stop, restart, enable, or disable command to a plugin service."""
@@ -2278,6 +2560,7 @@ class ApplianceViewSet(viewsets.ViewSet):
             {"error": result.get("error", f"{command} failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+    @extend_schema(tags=["appliance"], auth=[], responses={200: NetworkInfoSerializer})
     @action(detail=False, methods=["get"], url_path="network-info", permission_classes=[])
     def network_info(self, request):
         """Return appliance hostname and all routable IPv4 addresses. No authentication required."""

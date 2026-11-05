@@ -61,11 +61,14 @@ class IsOwnerEditorViewerOrNoAccess(BasePermission):
     """
     Custom permission with role-based access control.
 
-    Allows owners full access, editors read/write, viewers read-only, and others no access.
+    Allows staff, superusers and owners full access, editors read/write, viewers read-only, and others no access.
     Assumes the model instance has `owner`, `editors`, and `viewers` attributes.
     """
 
     def has_object_permission(self, request, view, obj):
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+
         # Owners have full access
         if obj.owner == request.user:
             return True

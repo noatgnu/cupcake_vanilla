@@ -25,5 +25,5 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "token", "user", "created_at", "last_used_at"]
 
-    def get_is_expired(self, obj):
+    def get_is_expired(self, obj) -> bool:
         return obj.is_expired()

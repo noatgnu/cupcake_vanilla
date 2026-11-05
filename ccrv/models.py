@@ -21,6 +21,8 @@ from ccm.models import Reagent
 from ccrv.export_utils import _process_annotation_file, get_html_template, render_step_description, render_step_reagents
 from ccv.models import MetadataColumn, MetadataTable
 
+from .permissions import is_owner_or_editor
+
 
 class Project(AbstractResource):
     """
@@ -559,6 +561,12 @@ class Session(AbstractResource):
     # Collaboration features (preserved from original)
     editors = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="editor_sessions", blank=True)
     viewers = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="viewer_sessions", blank=True)
+    link_unlocked_by = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name="link_unlocked_sessions",
+        blank=True,
+        help_text="Users who opened this public session through its unique id link",
+    )
 
     # Time tracking (preserved from original)
     started_at = models.DateTimeField(blank=True, null=True)
@@ -578,6 +586,16 @@ class Session(AbstractResource):
         app_label = "ccrv"
         ordering = ["-created_at"]  # Updated to use AbstractResource ordering
 
+    def save(self, *args, **kwargs):
+        """Save the session; a session that is not public forgets who unlocked it through its link."""
+        super().save(*args, **kwargs)
+        if not self.enabled:
+            self.link_unlocked_by.clear()
+
+    def unlocked_by_link(self, user):
+        """Whether the session is public and the user opened it through its unique id link."""
+        return self.enabled and self.link_unlocked_by.filter(pk=user.pk).exists()
+
     def can_view(self, user):
         """
         Check if user can view this session.
@@ -596,6 +614,9 @@ class Session(AbstractResource):
 
         # Check editors and viewers
         if user in self.editors.all() or user in self.viewers.all():
+            return True
+
+        if self.unlocked_by_link(user):
             return True
 
         # Check visibility settings (delegate to parent)
@@ -653,25 +674,11 @@ class Session(AbstractResource):
     @property
     def is_imported(self):
         """Check if this session was imported from another system."""
-        return self.name and "[IMPORTED]" in self.name
+        return bool(self.name and "[IMPORTED]" in self.name)
 
     @property
     def import_source_info(self):
-        """Get information about the import source."""
-        try:
-            # This would reference ImportedObject from the original system
-            # Implementation preserved but may need adjustment for new architecture
-            from ccc.models import ImportedObject  # Assuming this exists
-
-            imported_obj = ImportedObject.objects.filter(model_name="Session", object_id=self.pk).first()
-            if imported_obj:
-                return {
-                    "import_tracker": imported_obj.import_tracker,
-                    "original_id": imported_obj.original_id,
-                    "imported_at": imported_obj.created_at,
-                }
-        except Exception:
-            pass
+        """Information about the import source."""
         return None
 
     def sync_session_upstream(self, upstream_node_url: str):
@@ -1105,14 +1112,15 @@ class ProtocolStep(models.Model):
         self.save(update_fields=["order"])
 
     @classmethod
-    def reorder_by_linked_list(cls):
+    def reorder_by_linked_list(cls, protocols=None):
         """
-        Migrate existing data by setting order attributes based on linked-list traversal.
+        Set step order attributes from linked-list traversal, for the given protocols or every protocol.
 
-        This method should be run once to populate order fields for existing data,
-        then the efficient order-based methods can be used going forward.
+        Args:
+            protocols: Queryset of the protocols to reorder; every protocol when None.
         """
-        protocols = ProtocolModel.objects.all()
+        if protocols is None:
+            protocols = ProtocolModel.objects.all()
 
         for protocol in protocols:
             # Handle steps without sections first
@@ -1338,17 +1346,15 @@ class SessionAnnotation(models.Model):
 
     def can_edit(self, user):
         """
-        Check if user can edit this session annotation.
-        Inherits permissions from the parent session.
+        Check if user can edit this session annotation: the session owner or one of its editors.
         """
-        return self.session.can_edit(user)
+        return is_owner_or_editor(self.session, user)
 
     def can_delete(self, user):
         """
-        Check if user can delete this session annotation.
-        Inherits permissions from the parent session.
+        Check if user can delete this session annotation: the session owner or one of its editors.
         """
-        return self.session.can_delete(user)
+        return is_owner_or_editor(self.session, user)
 
     def create_metadata_table(self):
         """
@@ -1519,17 +1525,15 @@ class StepAnnotation(models.Model):
 
     def can_edit(self, user):
         """
-        Check if user can edit this step annotation.
-        Inherits permissions from the parent session.
+        Check if user can edit this step annotation: the session owner or one of its editors.
         """
-        return self.session.can_edit(user)
+        return is_owner_or_editor(self.session, user)
 
     def can_delete(self, user):
         """
-        Check if user can delete this step annotation.
-        Inherits permissions from the parent session.
+        Check if user can delete this step annotation: the session owner or one of its editors.
         """
-        return self.session.can_delete(user)
+        return is_owner_or_editor(self.session, user)
 
     def __str__(self):
         return f"{self.session} - {self.step} - {self.annotation}"

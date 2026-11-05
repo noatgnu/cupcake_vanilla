@@ -14,6 +14,18 @@ from .websocket_utils import format_duration, send_timekeeper_started, send_time
 logger = logging.getLogger(__name__)
 
 
+def timekeeper_recipients(time_keeper):
+    """The session's owner, editors and viewers for session timers; the timer's creator for other timers."""
+    if not time_keeper.session_id:
+        return {time_keeper.user_id}
+    session = time_keeper.session
+    user_ids = set(session.editors.values_list("pk", flat=True))
+    user_ids.update(session.viewers.values_list("pk", flat=True))
+    if session.owner_id:
+        user_ids.add(session.owner_id)
+    return user_ids
+
+
 @receiver(post_save, sender=TimeKeeper)
 def timekeeper_updated_signal(sender, instance, created, **kwargs):
     """
@@ -40,6 +52,8 @@ def timekeeper_updated_signal(sender, instance, created, **kwargs):
             "timestamp": timezone.now().isoformat(),
         }
 
+        recipients = timekeeper_recipients(instance)
+
         if old_instance:
             if not old_instance.started and instance.started:
                 TimeKeeperEvent.objects.create(
@@ -48,7 +62,8 @@ def timekeeper_updated_signal(sender, instance, created, **kwargs):
                     duration_at_event=instance.current_duration,
                 )
                 timekeeper_data["start_time"] = instance.start_time.isoformat()
-                send_timekeeper_started(instance.user.id, timekeeper_data)
+                for user_id in recipients:
+                    send_timekeeper_started(user_id, timekeeper_data)
                 logger.info(f"TimeKeeper {instance.id} started for user {instance.user.id}")
 
             elif old_instance.started and not instance.started:
@@ -59,23 +74,27 @@ def timekeeper_updated_signal(sender, instance, created, **kwargs):
                 )
                 timekeeper_data["duration"] = instance.current_duration
                 timekeeper_data["duration_formatted"] = format_duration(instance.current_duration)
-                send_timekeeper_stopped(instance.user.id, timekeeper_data)
+                for user_id in recipients:
+                    send_timekeeper_stopped(user_id, timekeeper_data)
                 logger.info(f"TimeKeeper {instance.id} stopped for user {instance.user.id}")
 
             else:
                 timekeeper_data["started"] = instance.started
                 timekeeper_data["duration"] = instance.current_duration
-                send_timekeeper_updated(instance.user.id, timekeeper_data)
+                for user_id in recipients:
+                    send_timekeeper_updated(user_id, timekeeper_data)
                 logger.debug(f"TimeKeeper {instance.id} updated for user {instance.user.id}")
 
         else:
             if instance.started:
                 timekeeper_data["start_time"] = instance.start_time.isoformat()
-                send_timekeeper_started(instance.user.id, timekeeper_data)
+                for user_id in recipients:
+                    send_timekeeper_started(user_id, timekeeper_data)
             else:
                 timekeeper_data["duration"] = instance.current_duration
                 timekeeper_data["duration_formatted"] = format_duration(instance.current_duration)
-                send_timekeeper_stopped(instance.user.id, timekeeper_data)
+                for user_id in recipients:
+                    send_timekeeper_stopped(user_id, timekeeper_data)
 
     except Exception as e:
         logger.error(f"Error in timekeeper_updated_signal: {e}")

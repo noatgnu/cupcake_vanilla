@@ -8,6 +8,7 @@ no database models or cache storage required.
 from django.contrib.auth import get_user_model
 from django.core.signing import BadSignature, SignatureExpired
 
+from drf_spectacular.utils import PolymorphicProxySerializer, extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -15,9 +16,16 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from ccc.api_schema import DetailSerializer, FieldErrorsSerializer
+
 from .excel_launch_utils import EXCEL_LAUNCH_MAX_AGE, create_launch_code, verify_launch_code
 from .models import MetadataTable
-from .serializers import ExcelLaunchClaimRequestSerializer, ExcelLaunchCreateSerializer
+from .serializers import (
+    ExcelLaunchClaimResponseSerializer,
+    ExcelLaunchClaimSerializer,
+    ExcelLaunchCodeSerializer,
+    ExcelLaunchCreateSerializer,
+)
 
 User = get_user_model()
 
@@ -44,6 +52,16 @@ class ExcelLaunchCreateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["excel-launch"],
+        request=ExcelLaunchCreateSerializer,
+        responses={
+            201: ExcelLaunchCodeSerializer,
+            400: FieldErrorsSerializer,
+            403: DetailSerializer,
+            404: DetailSerializer,
+        },
+    )
     def post(self, request):
         """Create and return a signed launch code."""
         serializer = ExcelLaunchCreateSerializer(data=request.data)
@@ -85,9 +103,24 @@ class ExcelLaunchClaimView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [LaunchCodeClaimThrottle]
 
+    @extend_schema(
+        tags=["excel-launch"],
+        auth=[],
+        request=ExcelLaunchClaimSerializer,
+        responses={
+            200: ExcelLaunchClaimResponseSerializer,
+            400: PolymorphicProxySerializer(
+                component_name="ExcelLaunchClaimRejected",
+                serializers=[DetailSerializer, FieldErrorsSerializer],
+                resource_type_field_name=None,
+            ),
+            404: DetailSerializer,
+            410: DetailSerializer,
+        },
+    )
     def post(self, request):
         """Verify a launch code and return JWT tokens."""
-        serializer = ExcelLaunchClaimRequestSerializer(data=request.data)
+        serializer = ExcelLaunchClaimSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

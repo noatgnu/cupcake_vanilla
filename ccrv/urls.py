@@ -22,7 +22,6 @@ from .viewsets import (
     ProtocolReagentViewSet,
     ProtocolSectionViewSet,
     ProtocolStepViewSet,
-    RemoteHostViewSet,
     SessionAnnotationFolderViewSet,
     SessionAnnotationViewSet,
     SessionViewSet,
@@ -42,7 +41,6 @@ router.register("session-annotations", SessionAnnotationViewSet, basename="sessi
 router.register("ratings", ProtocolRatingViewSet, basename="protocolrating")
 router.register("sections", ProtocolSectionViewSet, basename="protocolsection")
 router.register("steps", ProtocolStepViewSet, basename="protocolstep")
-router.register("remote-hosts", RemoteHostViewSet, basename="remotehost")
 router.register("protocol-reagents", ProtocolReagentViewSet, basename="protocolreagent")
 router.register("step-reagents", StepReagentViewSet, basename="stepreagent")
 router.register("step-variations", StepVariationViewSet, basename="stepvariation")

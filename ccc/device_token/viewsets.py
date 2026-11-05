@@ -2,11 +2,13 @@ from django.contrib.auth import get_user_model
 from django.db import models
 from django.utils.crypto import get_random_string
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from ccc.api_schema import DeviceSummarySerializer, DeviceTokenRotatedSerializer, DeviceTokenToggledSerializer
 from ccc.device_token.model import DeviceToken
 from ccc.device_token.permissions import IsDeviceTokenAuthenticated
 from ccc.device_token.serializer import DeviceTokenSerializer
@@ -18,11 +20,14 @@ class DeviceTokenViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsDeviceTokenAuthenticated]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return DeviceToken.objects.none()
         return DeviceToken.objects.filter(user=self.request.user).select_related("user")
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    @extend_schema(tags=["devices"], request=None, responses={200: DeviceTokenRotatedSerializer})
     @action(detail=True, methods=["post"])
     def rotate(self, request, pk=None):
         token = self.get_object()
@@ -30,6 +35,7 @@ class DeviceTokenViewSet(viewsets.ModelViewSet):
         token.save(update_fields=["token"])
         return Response({"token": token.token})
 
+    @extend_schema(tags=["devices"], request=None, responses={200: DeviceTokenToggledSerializer})
     @action(detail=True, methods=["post"])
     def toggle(self, request, pk=None):
         token = self.get_object()
@@ -41,6 +47,7 @@ class DeviceTokenViewSet(viewsets.ModelViewSet):
 class DeviceSummaryViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated, IsDeviceTokenAuthenticated]
 
+    @extend_schema(tags=["devices"], responses={200: DeviceSummarySerializer})
     @action(detail=False, methods=["get"])
     def summary(self, request):
         user = request.user

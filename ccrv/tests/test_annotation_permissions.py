@@ -86,7 +86,6 @@ class SessionAnnotationPermissionTestCase(TestCase):
 
     def test_staff_has_full_access(self):
         """Test that staff users have full access to all session annotations."""
-        # Staff should have full access
         self.assertTrue(self.session_annotation.can_view(self.staff_user))
         self.assertTrue(self.session_annotation.can_edit(self.staff_user))
         self.assertTrue(self.session_annotation.can_delete(self.staff_user))
@@ -166,7 +165,6 @@ class StepAnnotationPermissionTestCase(TestCase):
 
     def test_staff_has_full_access(self):
         """Test that staff users have full access to all step annotations."""
-        # Staff should have full access
         self.assertTrue(self.step_annotation.can_view(self.staff_user))
         self.assertTrue(self.step_annotation.can_edit(self.staff_user))
         self.assertTrue(self.step_annotation.can_delete(self.staff_user))

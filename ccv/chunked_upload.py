@@ -14,7 +14,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from ccc.chunked_upload import BaseChunkedUpload
+from ccc.chunked_upload import BaseChunkedUpload, ChunkedUploadSchema
 from ccc.models import AsyncTaskStatus
 
 from .models import MetadataColumn, MetadataTable, SamplePool
@@ -77,6 +77,8 @@ class MetadataChunkedUploadView(ChunkedUploadView):
     Chunked upload view for metadata files (SDRF, Excel, TSV).
     Supports large file uploads with progress tracking.
     """
+
+    schema = ChunkedUploadSchema()
 
     model = MetadataFileUpload
     serializer_class = MetadataFileUploadSerializer

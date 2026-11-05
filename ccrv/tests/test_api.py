@@ -420,6 +420,24 @@ class ProtocolRatingAPITests(CCRVAPITestCase):
         self.assertEqual(response.data["complexity_rating"], 5)
         self.assertEqual(response.data["user"], self.regular_user.id)
 
+    def test_list_ratings_filtered_by_protocol_and_rating(self):
+        """The list is filtered by the protocol and rating query parameters."""
+        other_protocol = ProtocolModel.objects.create(protocol_title="Other", owner=self.regular_user)
+        ProtocolRating.objects.create(
+            protocol=self.protocol, user=self.regular_user, complexity_rating=2, duration_rating=3
+        )
+        ProtocolRating.objects.create(
+            protocol=other_protocol, user=self.regular_user, complexity_rating=9, duration_rating=3
+        )
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse("ccrv:protocolrating-list")
+
+        by_protocol = self.client.get(url, {"protocol": self.protocol.pk})
+        by_complexity = self.client.get(url, {"complexity_rating": 9})
+
+        self.assertEqual([r["protocol"] for r in by_protocol.data["results"]], [self.protocol.pk])
+        self.assertEqual([r["protocol"] for r in by_complexity.data["results"]], [other_protocol.pk])
+
     def test_rate_protocol_action(self):
         """Test the rate_protocol custom action."""
         self.client.force_authenticate(user=self.regular_user)
@@ -572,7 +590,7 @@ class RemoteHostAPITests(CCRVAPITestCase):
         """Test listing remote hosts as admin."""
         self.client.force_authenticate(user=self.admin_user)
 
-        url = reverse("ccrv:remotehost-list")
+        url = reverse("ccc:remotehost-list")
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -582,10 +600,20 @@ class RemoteHostAPITests(CCRVAPITestCase):
         """Test listing remote hosts as regular user (should be forbidden)."""
         self.client.force_authenticate(user=self.regular_user)
 
-        url = reverse("ccrv:remotehost-list")
+        url = reverse("ccc:remotehost-list")
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_host_token_is_not_returned_with_projects(self):
+        """The remote host token stays write-only when the host is nested in other resources."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.get(reverse("ccrv:project-detail", kwargs={"pk": self.project.pk}))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(response.data["remote_host_info"])
+        self.assertNotIn("host_token", response.data["remote_host_info"])
 
 
 class CCRVPermissionTests(CCRVAPITestCase):
@@ -904,6 +932,25 @@ class SessionAnnotationAPITests(CCRVAPITestCase):
         annotation_data = response.data["results"][0]
         self.assertEqual(annotation_data["session"], self.session.id)
         self.assertEqual(annotation_data["annotation"], self.annotation.id)
+
+    def test_search_session_annotations_by_text(self):
+        """Search matches the annotation text."""
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.get(reverse("ccrv:sessionannotation-list"), {"search": "experimental"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
+
+    def test_search_step_annotations_by_text(self):
+        """Search matches the annotation text of step annotations."""
+        StepAnnotation.objects.create(session=self.session, step=self.step, annotation=self.annotation)
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.get(reverse("ccrv:stepannotation-list"), {"search": "experimental"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["results"]), 1)
 
     def test_create_session_annotation(self):
         """Test creating a session annotation."""

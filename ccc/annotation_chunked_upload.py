@@ -9,7 +9,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .chunked_upload import BaseChunkedUpload
+from .chunked_upload import BaseChunkedUpload, ChunkedUploadSchema
 from .models import Annotation, AnnotationFolder
 
 
@@ -170,6 +170,7 @@ class AnnotationFileUploadSerializer(ChunkedUploadSerializer):
 
 
 class AnnotationChunkedUploadView(ChunkedUploadView):
+    schema = ChunkedUploadSchema()
     model = AnnotationFileUpload
     serializer_class = AnnotationFileUploadSerializer
     permission_classes = [IsAuthenticated]

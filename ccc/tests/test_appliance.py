@@ -15,6 +15,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
+from ccc.models import BackupLog
 from ccc.viewsets import ApplianceViewSet
 
 BASE = "/api/v1/appliance"
@@ -429,6 +430,19 @@ class StorageStatusTest(APITestCase):
         self.assertTrue(resp.data["mounted"])
         self.assertEqual(resp.data["device"], "/dev/sdb1")
 
+    def test_saved_password_is_not_returned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = Path(tmp) / "storage-config.json"
+            saved.write_text(json.dumps({"mountType": "smb", "host": "nas", "share": "lab", "password": "secret"}))
+
+            def patched_path(value):
+                return saved if value == "/opt/cupcake/storage-config.json" else Path(value)
+
+            with patch("ccc.viewsets.Path", side_effect=patched_path):
+                resp = self.client.get(f"{BASE}/storage-status/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["config"], {"mountType": "smb", "host": "nas", "share": "lab"})
+
 
 class ApplyStorageTest(APITestCase):
     """Tests for POST /api/v1/appliance/apply-storage/."""
@@ -475,6 +489,13 @@ class BackupListTest(APITestCase):
         resp = self.client.get(f"{BASE}/")
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data, [])
+
+    def test_backup_without_a_user_reports_null_username(self):
+        BackupLog.objects.create(backup_type="full", destination="/opt/cupcake/backups/scheduled")
+        resp = self.client.get(f"{BASE}/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn("triggered_by_username", resp.data[0])
+        self.assertIsNone(resp.data[0]["triggered_by_username"])
 
 
 class RunBackupTest(APITestCase):

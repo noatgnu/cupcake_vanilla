@@ -18,7 +18,30 @@ from django.utils import timezone
 from drf_chunked_upload.models import AbstractChunkedUpload
 from drf_chunked_upload.serializers import ChunkedUploadSerializer
 from drf_chunked_upload.views import ChunkedUploadView
+from drf_spectacular.openapi import AutoSchema
 from rest_framework.permissions import IsAuthenticated
+
+UPLOAD_DETAIL_ACTIONS = {"list": "retrieve", "update": "upload_chunk", "create": "complete"}
+
+
+class ChunkedUploadSchema(AutoSchema):
+    """Schema for chunked upload views routed both without and with an upload id."""
+
+    def _has_upload_id(self):
+        return "{" in self.path
+
+    def _is_list_view(self, serializer=None):
+        if self._has_upload_id():
+            return False
+        return super()._is_list_view(serializer)
+
+    def get_operation_id(self):
+        """Operation ids ending in retrieve, upload_chunk and complete for the routes with an upload id."""
+        operation_id = super().get_operation_id()
+        if not self._has_upload_id():
+            return operation_id
+        base, _, action = operation_id.rpartition("_")
+        return f"{base}_{UPLOAD_DETAIL_ACTIONS.get(action, action)}"
 
 
 class BaseChunkedUpload(AbstractChunkedUpload):
@@ -267,5 +290,6 @@ class BaseChunkedUploadSerializer(ChunkedUploadSerializer):
 
 
 class BaseChunkedUploadView(ChunkedUploadView):
+    schema = ChunkedUploadSchema()
     serializer_class = BaseChunkedUploadSerializer
     permission_classes = [IsAuthenticated]

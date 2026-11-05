@@ -6,6 +6,7 @@ Provides REST API serialization for messaging, notifications, and communication 
 
 from django.contrib.auth import get_user_model
 
+from drf_spectacular.utils import extend_schema_field, extend_schema_serializer
 from rest_framework import serializers
 
 from .models import Message, MessageThread, Notification, ThreadParticipant, WebRTCPeer, WebRTCSession
@@ -13,6 +14,7 @@ from .models import Message, MessageThread, Notification, ThreadParticipant, Web
 User = get_user_model()
 
 
+@extend_schema_serializer(component_name="MessagingUser")
 class UserBasicSerializer(serializers.ModelSerializer):
     """Basic user serializer for nested relationships."""
 
@@ -22,15 +24,38 @@ class UserBasicSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "username", "first_name", "last_name", "email"]
 
 
+class MessageAnnotationSerializer(serializers.Serializer):
+    """An annotation attached to a message."""
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    annotation_type = serializers.CharField()
+    file_size = serializers.IntegerField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class LatestMessageSerializer(serializers.Serializer):
+    """The newest message of a thread, shortened to 100 characters."""
+
+    id = serializers.UUIDField()
+    content = serializers.CharField()
+    sender_username = serializers.CharField()
+    created_at = serializers.DateTimeField()
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     """Serializer for Notification model."""
 
     recipient_username = serializers.CharField(source="recipient.username", read_only=True)
-    sender_username = serializers.CharField(source="sender.username", read_only=True)
+    sender_username = serializers.CharField(source="sender.username", read_only=True, allow_null=True, default=None)
     sender_name = serializers.SerializerMethodField()
     recipient_name = serializers.SerializerMethodField()
-    related_object_type = serializers.CharField(source="content_type.model", read_only=True)
-    related_object_app = serializers.CharField(source="content_type.app_label", read_only=True)
+    related_object_type = serializers.CharField(
+        source="content_type.model", read_only=True, allow_null=True, default=None
+    )
+    related_object_app = serializers.CharField(
+        source="content_type.app_label", read_only=True, allow_null=True, default=None
+    )
     is_read = serializers.SerializerMethodField()
     is_expired = serializers.SerializerMethodField()
 
@@ -77,21 +102,21 @@ class NotificationSerializer(serializers.ModelSerializer):
             "is_expired",
         ]
 
-    def get_sender_name(self, obj):
+    def get_sender_name(self, obj) -> str | None:
         """Get full name of sender."""
         if obj.sender:
             return f"{obj.sender.first_name} {obj.sender.last_name}".strip() or obj.sender.username
         return None
 
-    def get_recipient_name(self, obj):
+    def get_recipient_name(self, obj) -> str:
         """Get full name of recipient."""
         return f"{obj.recipient.first_name} {obj.recipient.last_name}".strip() or obj.recipient.username
 
-    def get_is_read(self, obj):
+    def get_is_read(self, obj) -> bool:
         """Check if notification has been read."""
         return bool(obj.read_at)
 
-    def get_is_expired(self, obj):
+    def get_is_expired(self, obj) -> bool:
         """Check if notification has expired."""
         return obj.is_expired()
 
@@ -146,8 +171,10 @@ class MessageSerializer(serializers.ModelSerializer):
 
     sender_details = UserBasicSerializer(source="sender", read_only=True)
     sender_username = serializers.CharField(source="sender.username", read_only=True)
-    reply_to_content = serializers.CharField(source="reply_to.content", read_only=True)
-    reply_to_sender = serializers.CharField(source="reply_to.sender.username", read_only=True)
+    reply_to_content = serializers.CharField(source="reply_to.content", read_only=True, allow_null=True, default=None)
+    reply_to_sender = serializers.CharField(
+        source="reply_to.sender.username", read_only=True, allow_null=True, default=None
+    )
     annotations_count = serializers.IntegerField(source="annotations.count", read_only=True)
 
     class Meta:
@@ -190,6 +217,7 @@ class MessageDetailSerializer(MessageSerializer):
     class Meta(MessageSerializer.Meta):
         fields = MessageSerializer.Meta.fields + ["annotations"]
 
+    @extend_schema_field(MessageAnnotationSerializer(many=True))
     def get_annotations(self, obj):
         """Get annotation details."""
         return [
@@ -212,8 +240,12 @@ class MessageThreadSerializer(serializers.ModelSerializer):
     participants_count = serializers.IntegerField(source="participants.count", read_only=True)
     messages_count = serializers.IntegerField(source="messages.count", read_only=True)
     participants_list = ThreadParticipantSerializer(source="threadparticipant_set", many=True, read_only=True)
-    related_object_type = serializers.CharField(source="content_type.model", read_only=True)
-    related_object_app = serializers.CharField(source="content_type.app_label", read_only=True)
+    related_object_type = serializers.CharField(
+        source="content_type.model", read_only=True, allow_null=True, default=None
+    )
+    related_object_app = serializers.CharField(
+        source="content_type.app_label", read_only=True, allow_null=True, default=None
+    )
     latest_message = serializers.SerializerMethodField()
 
     class Meta:
@@ -254,6 +286,7 @@ class MessageThreadSerializer(serializers.ModelSerializer):
             "latest_message",
         ]
 
+    @extend_schema_field(LatestMessageSerializer(allow_null=True))
     def get_latest_message(self, obj):
         """Get the latest message in the thread."""
         latest = obj.messages.filter(is_deleted=False).order_by("-created_at").first()
@@ -411,7 +444,7 @@ class WebRTCSessionSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
@@ -430,7 +463,7 @@ class WebRTCSessionSerializer(serializers.ModelSerializer):
 
         return False
 
-    def get_can_delete(self, obj):
+    def get_can_delete(self, obj) -> bool:
         return self.get_can_edit(obj)
 
     def create(self, validated_data):

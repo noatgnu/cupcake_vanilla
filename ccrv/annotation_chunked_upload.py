@@ -2,6 +2,7 @@
 Chunked upload views for CCRV annotations with automatic binding.
 """
 
+import logging
 
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
@@ -16,7 +17,10 @@ from ccc.annotation_chunked_upload import (
 from ccc.models import AnnotationFolder
 
 from .models import ProtocolStep, Session, SessionAnnotation, SessionAnnotationFolder, StepAnnotation
+from .permissions import is_owner_or_editor
 from .serializers import queue_annotation_transcription
+
+logger = logging.getLogger(__name__)
 
 
 class StepAnnotationChunkedUploadView(AnnotationChunkedUploadView):
@@ -66,7 +70,7 @@ class StepAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if not session.can_edit(request.user):
+            if not is_owner_or_editor(session, request.user):
                 return Response(
                     {"error": "Permission denied: cannot edit this session"},
                     status=status.HTTP_403_FORBIDDEN,
@@ -114,9 +118,6 @@ class StepAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             return Response(result, status=status.HTTP_200_OK)
 
         except Exception as e:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to create step annotation: {str(e)}")
             result = {"warning": f"File uploaded but annotation creation failed: {str(e)}"}
             return Response(result, status=status.HTTP_200_OK)
@@ -162,7 +163,7 @@ class SessionAnnotationChunkedUploadView(AnnotationChunkedUploadView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if not session.can_edit(request.user):
+            if not is_owner_or_editor(session, request.user):
                 return Response(
                     {"error": "Permission denied: cannot edit this session"},
                     status=status.HTTP_403_FORBIDDEN,
@@ -201,9 +202,6 @@ class SessionAnnotationChunkedUploadView(AnnotationChunkedUploadView):
             return Response(result, status=status.HTTP_200_OK)
 
         except Exception as e:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to create session annotation: {str(e)}")
             result = {"warning": f"File uploaded but annotation creation failed: {str(e)}"}
             return Response(result, status=status.HTTP_200_OK)
@@ -255,7 +253,7 @@ class SessionAnnotationFolderChunkedUploadView(AnnotationChunkedUploadView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            if not session.can_edit(request.user):
+            if not is_owner_or_editor(session, request.user):
                 return Response(
                     {"error": "Permission denied: cannot edit this session"},
                     status=status.HTTP_403_FORBIDDEN,
@@ -295,9 +293,6 @@ class SessionAnnotationFolderChunkedUploadView(AnnotationChunkedUploadView):
             return Response(result, status=status.HTTP_200_OK)
 
         except Exception as e:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to create session annotation folder: {str(e)}")
             result = {"warning": f"File uploaded but annotation creation failed: {str(e)}"}
             return Response(result, status=status.HTTP_200_OK)

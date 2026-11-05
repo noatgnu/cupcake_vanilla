@@ -9,8 +9,11 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db.models import Case, F, Sum, When
 from django.urls import reverse
+from django.utils import timezone
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from ccc.models import Annotation, AsyncTaskStatus, LabGroupPermission, SiteConfig
@@ -120,6 +123,13 @@ def queue_annotation_transcription(annotation, auto_transcribe=True):
         logger.error(f"Failed to queue transcription for annotation {annotation.id}: {str(e)}")
 
 
+class StoragePathEntrySerializer(serializers.Serializer):
+    """A storage location on the path from the root to a storage object."""
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
 class UserBasicSerializer(serializers.ModelSerializer):
     """Basic user serializer for nested relationships."""
 
@@ -132,11 +142,17 @@ class UserBasicSerializer(serializers.ModelSerializer):
 class InstrumentSerializer(serializers.ModelSerializer):
     """Serializer for Instrument model."""
 
-    owner_username = serializers.CharField(source="user.username", read_only=True)
-    remote_host_name = serializers.CharField(source="remote_host.name", read_only=True)
+    owner_username = serializers.CharField(source="user.username", read_only=True, allow_null=True, default=None)
+    remote_host_name = serializers.CharField(
+        source="remote_host.host_name", read_only=True, allow_null=True, default=None
+    )
     support_information_count = serializers.IntegerField(source="support_information.count", read_only=True)
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
-    metadata_table_id = serializers.IntegerField(source="metadata_table.id", read_only=True)
+    metadata_table_name = serializers.CharField(
+        source="metadata_table.name", read_only=True, allow_null=True, default=None
+    )
+    metadata_table_id = serializers.IntegerField(
+        source="metadata_table.id", read_only=True, allow_null=True, default=None
+    )
     maintenance_overdue = serializers.SerializerMethodField()
 
     class Meta:
@@ -182,7 +198,7 @@ class InstrumentSerializer(serializers.ModelSerializer):
             "maintenance_overdue",
         ]
 
-    def get_maintenance_overdue(self, obj):
+    def get_maintenance_overdue(self, obj) -> bool:
         """Check if instrument maintenance is overdue."""
         return obj.is_maintenance_overdue()
 
@@ -196,13 +212,19 @@ class InstrumentSerializer(serializers.ModelSerializer):
 class InstrumentJobSerializer(serializers.ModelSerializer):
     """Serializer for InstrumentJob model."""
 
-    user_username = serializers.CharField(source="user.username", read_only=True)
-    instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
-    metadata_table_template_name = serializers.CharField(source="metadata_table_template.name", read_only=True)
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
+    user_username = serializers.CharField(source="user.username", read_only=True, allow_null=True, default=None)
+    instrument_name = serializers.CharField(
+        source="instrument.instrument_name", read_only=True, allow_null=True, default=None
+    )
+    metadata_table_template_name = serializers.CharField(
+        source="metadata_table_template.name", read_only=True, allow_null=True, default=None
+    )
+    metadata_table_name = serializers.CharField(
+        source="metadata_table.name", read_only=True, allow_null=True, default=None
+    )
     staff_usernames = serializers.StringRelatedField(source="staff", many=True, read_only=True)
-    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True)
-    project_name = serializers.CharField(source="project.project_name", read_only=True)
+    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True, allow_null=True, default=None)
+    project_name = serializers.CharField(source="project.project_name", read_only=True, allow_null=True, default=None)
 
     # Choice field display values
     job_type_display = serializers.CharField(source="get_job_type_display", read_only=True)
@@ -215,28 +237,28 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
     can_edit_metadata = serializers.SerializerMethodField()
     can_edit_staff_only_columns = serializers.SerializerMethodField()
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         """Check if current user can edit this job."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_edit(request.user)
         return False
 
-    def get_can_delete(self, obj):
+    def get_can_delete(self, obj) -> bool:
         """Check if current user can delete this job."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_delete(request.user)
         return False
 
-    def get_can_edit_metadata(self, obj):
+    def get_can_edit_metadata(self, obj) -> bool:
         """Check if current user can edit metadata for this job."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_user_edit_metadata(request.user)
         return False
 
-    def get_can_edit_staff_only_columns(self, obj):
+    def get_can_edit_staff_only_columns(self, obj) -> bool:
         """
         Check if current user can edit staff-only columns.
 
@@ -418,9 +440,11 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
 class InstrumentUsageSerializer(serializers.ModelSerializer):
     """Serializer for InstrumentUsage model."""
 
-    user_username = serializers.CharField(source="user.username", read_only=True)
+    user_username = serializers.CharField(source="user.username", read_only=True, allow_null=True, default=None)
     instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
-    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+    approved_by_username = serializers.CharField(
+        source="approved_by.username", read_only=True, allow_null=True, default=None
+    )
 
     class Meta:
         model = InstrumentUsage
@@ -469,7 +493,6 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
         If ALL pre-approval conditions are met, booking is auto-approved.
         If ANY condition fails, booking requires manual approval.
         """
-        from django.utils import timezone
 
         time_started = data.get("time_started")
         time_ended = data.get("time_ended")
@@ -547,8 +570,12 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
 class MaintenanceLogSerializer(serializers.ModelSerializer):
     """Serializer for MaintenanceLog model."""
 
-    instrument_name = serializers.CharField(source="instrument.instrument_name", read_only=True)
-    created_by_username = serializers.CharField(source="created_by.username", read_only=True)
+    instrument_name = serializers.CharField(
+        source="instrument.instrument_name", read_only=True, allow_null=True, default=None
+    )
+    created_by_username = serializers.CharField(
+        source="created_by.username", read_only=True, allow_null=True, default=None
+    )
     maintenance_type_display = serializers.CharField(source="get_maintenance_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
 
@@ -586,8 +613,10 @@ class MaintenanceLogSerializer(serializers.ModelSerializer):
 class StorageObjectSerializer(serializers.ModelSerializer):
     """Serializer for StorageObject model."""
 
-    stored_at_name = serializers.CharField(source="stored_at.object_name", read_only=True)
-    user_username = serializers.CharField(source="user.username", read_only=True)
+    stored_at_name = serializers.CharField(
+        source="stored_at.object_name", read_only=True, allow_null=True, default=None
+    )
+    user_username = serializers.CharField(source="user.username", read_only=True, allow_null=True, default=None)
     full_path = serializers.SerializerMethodField()
 
     class Meta:
@@ -613,6 +642,7 @@ class StorageObjectSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at", "stored_at_name", "user_username", "full_path"]
 
+    @extend_schema_field(StoragePathEntrySerializer(many=True))
     def get_full_path(self, obj):
         """Get the full hierarchical path to root."""
         return obj.get_full_path()
@@ -636,11 +666,17 @@ class ReagentSerializer(serializers.ModelSerializer):
 class StoredReagentSerializer(serializers.ModelSerializer):
     """Serializer for StoredReagent model."""
 
-    reagent_name = serializers.CharField(source="reagent.name", read_only=True)
-    reagent_unit = serializers.CharField(source="reagent.unit", read_only=True)
-    storage_object_name = serializers.CharField(source="storage_object.object_name", read_only=True)
-    metadata_table_name = serializers.CharField(source="metadata_table.name", read_only=True)
-    metadata_table_id = serializers.IntegerField(source="metadata_table.id", read_only=True)
+    reagent_name = serializers.CharField(source="reagent.name", read_only=True, allow_null=True, default=None)
+    reagent_unit = serializers.CharField(source="reagent.unit", read_only=True, allow_null=True, default=None)
+    storage_object_name = serializers.CharField(
+        source="storage_object.object_name", read_only=True, allow_null=True, default=None
+    )
+    metadata_table_name = serializers.CharField(
+        source="metadata_table.name", read_only=True, allow_null=True, default=None
+    )
+    metadata_table_id = serializers.IntegerField(
+        source="metadata_table.id", read_only=True, allow_null=True, default=None
+    )
     current_quantity = serializers.SerializerMethodField()
 
     class Meta:
@@ -691,7 +727,7 @@ class StoredReagentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Quantity cannot be negative.")
         return value
 
-    def get_current_quantity(self, obj):
+    def get_current_quantity(self, obj) -> float:
         """
         Calculate current quantity by summing initial quantity + reagent actions.
 
@@ -699,9 +735,6 @@ class StoredReagentSerializer(serializers.ModelSerializer):
         - 'add': positive quantity change (+)
         - 'reserve': negative quantity change (-)
         """
-        from django.db.models import Case, F, Sum, When
-
-        from .models import ReagentAction
 
         # Start with the initial/base quantity
         current_qty = obj.quantity or 0.0
@@ -743,7 +776,7 @@ class ExternalContactSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
-    owner_username = serializers.CharField(source="user.username", read_only=True)
+    owner_username = serializers.CharField(source="user.username", read_only=True, allow_null=True, default=None)
 
     class Meta:
         model = ExternalContact
@@ -779,7 +812,7 @@ class SupportInformationSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
-    location_name = serializers.CharField(source="location.object_name", read_only=True)
+    location_name = serializers.CharField(source="location.object_name", read_only=True, allow_null=True, default=None)
 
     class Meta:
         model = SupportInformation
@@ -826,7 +859,7 @@ class ReagentSubscriptionSerializer(serializers.ModelSerializer):
             "notify_on_expiry",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at", "reagent_name", "user_username"]
+        read_only_fields = ["id", "created_at", "reagent_name", "user", "user_username"]
 
 
 class InstrumentAnnotationSerializer(serializers.ModelSerializer):
@@ -964,7 +997,7 @@ class InstrumentAnnotationSerializer(serializers.ModelSerializer):
 
         return super().update(instance, validated_data)
 
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> str | None:
         """Get signed download URL for annotation file if exists."""
         if not obj.annotation or not obj.annotation.file:
             return None
@@ -990,7 +1023,7 @@ class InstrumentJobAnnotationSerializer(serializers.ModelSerializer):
     annotation = serializers.PrimaryKeyRelatedField(queryset=Annotation.objects.all(), required=False, allow_null=True)
     annotation_data = serializers.JSONField(write_only=True, required=False)
     instrument_job_name = serializers.CharField(source="instrument_job.job_name", read_only=True)
-    folder_name = serializers.CharField(source="folder.folder_name", read_only=True)
+    folder_name = serializers.CharField(source="folder.folder_name", read_only=True, allow_null=True, default=None)
     annotation_name = serializers.CharField(source="annotation.name", read_only=True)
     annotation_type = serializers.CharField(source="annotation.annotation_type", read_only=True)
     annotation_text = serializers.CharField(source="annotation.annotation", required=False, allow_blank=True)
@@ -1055,7 +1088,7 @@ class InstrumentJobAnnotationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> str | None:
         """Get signed download URL for annotation file if exists."""
         if not obj.annotation or not obj.annotation.file:
             return None
@@ -1068,29 +1101,27 @@ class InstrumentJobAnnotationSerializer(serializers.ModelSerializer):
             return None
 
         try:
-            from django.urls import reverse
-
             token = obj.annotation.generate_download_token(request.user)
             download_path = reverse("ccc:annotation-download", kwargs={"pk": obj.annotation.id})
             return request.build_absolute_uri(f"{download_path}?token={token}")
         except Exception:
             return None
 
-    def get_can_view(self, obj):
+    def get_can_view(self, obj) -> bool:
         """Check if user can view this annotation."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_view(request.user)
         return False
 
-    def get_can_edit(self, obj):
+    def get_can_edit(self, obj) -> bool:
         """Check if user can edit this annotation."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             return obj.can_edit(request.user)
         return False
 
-    def get_can_delete(self, obj):
+    def get_can_delete(self, obj) -> bool:
         """Check if user can delete this annotation."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
@@ -1314,7 +1345,7 @@ class StoredReagentAnnotationSerializer(serializers.ModelSerializer):
 
         return super().update(instance, validated_data)
 
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> str | None:
         """Get signed download URL for annotation file if exists."""
         if not obj.annotation or not obj.annotation.file:
             return None
@@ -1472,7 +1503,7 @@ class MaintenanceLogAnnotationSerializer(serializers.ModelSerializer):
 
         return super().update(instance, validated_data)
 
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> str | None:
         """
         Get signed download URL for annotation file if exists.
         Uses MaintenanceLogAnnotation permission check which requires can_manage on instrument.
@@ -1499,10 +1530,12 @@ class ReagentActionSerializer(serializers.ModelSerializer):
     """Serializer for ReagentAction model."""
 
     reagent_name = serializers.CharField(source="reagent.reagent.name", read_only=True)
-    user_username = serializers.CharField(source="user.username", read_only=True)
+    user_username = serializers.CharField(source="user.username", read_only=True, allow_null=True, default=None)
     action_type_display = serializers.CharField(source="get_action_type_display", read_only=True)
-    session_name = serializers.CharField(source="session.session_name", read_only=True)
-    step_description = serializers.CharField(source="step.step_description", read_only=True)
+    session_name = serializers.CharField(source="session.name", read_only=True, allow_null=True, default=None)
+    step_description = serializers.CharField(
+        source="step.step_description", read_only=True, allow_null=True, default=None
+    )
     is_within_deletion_window = serializers.SerializerMethodField()
     is_deletable = serializers.SerializerMethodField()
 
@@ -1522,6 +1555,7 @@ class ReagentActionSerializer(serializers.ModelSerializer):
             "session_name",
             "step",
             "step_description",
+            "step_reagent",
             "is_within_deletion_window",
             "is_deletable",
             "created_at",
@@ -1540,11 +1574,11 @@ class ReagentActionSerializer(serializers.ModelSerializer):
             "is_deletable",
         ]
 
-    def get_is_within_deletion_window(self, obj):
+    def get_is_within_deletion_window(self, obj) -> bool:
         """Check if reagent action is within the deletion time window."""
         return obj.is_within_deletion_window()
 
-    def get_is_deletable(self, obj):
+    def get_is_deletable(self, obj) -> bool:
         """Check if current user can delete this reagent action."""
         request = self.context.get("request")
         if not request or not hasattr(request, "user"):
@@ -1556,6 +1590,14 @@ class ReagentActionSerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("Quantity must be positive.")
         return value
+
+    def validate(self, data):
+        """The step reagent must belong to the booking's step."""
+        step_reagent = data.get("step_reagent")
+        step = data.get("step", getattr(self.instance, "step", None))
+        if step_reagent is not None and step is not None and step_reagent.step_id != step.pk:
+            raise serializers.ValidationError({"step_reagent": "The step reagent is not part of this step."})
+        return data
 
 
 # Detailed serializers for expanded representations
@@ -1603,7 +1645,7 @@ class InstrumentPermissionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at", "user_username", "user_display_name", "instrument_name"]
 
-    def get_user_display_name(self, obj):
+    def get_user_display_name(self, obj) -> str:
         """Get user's display name."""
         if obj.user.first_name and obj.user.last_name:
             return f"{obj.user.first_name} {obj.user.last_name}"

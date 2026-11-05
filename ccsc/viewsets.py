@@ -5,6 +5,7 @@ DRF ViewSets for billing and financial management functionality
 with custom actions for approvals, calculations, and reporting.
 """
 
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -12,11 +13,22 @@ from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 
+from ccc.api_schema import ErrorOrFieldErrors, ErrorSerializer, FieldErrorsSerializer
+
+from .api_schema import (
+    BillingRecordApprovedSerializer,
+    BillingSummaryStatsSerializer,
+    CostBreakdownSerializer,
+    CostCenterTotalSerializer,
+    TierPriceRequestSerializer,
+    TierPriceSerializer,
+)
 from .models import BillableItemType, BillingRecord, ServicePrice, ServiceTier
 from .serializers import (
     BillableItemTypeSerializer,
@@ -91,6 +103,7 @@ class ServiceTierViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    @extend_schema(request=TierPriceRequestSerializer, responses={200: TierPriceSerializer, 400: ErrorSerializer})
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def calculate_price(self, request, pk=None):
         """
@@ -119,7 +132,8 @@ class ServiceTierViewSet(viewsets.ModelViewSet):
             }
         )
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(filters=False, responses={200: ServiceTierSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def active_tiers(self, request):
         """Get only active service tiers."""
         active_tiers = self.get_queryset().filter(is_active=True)
@@ -151,6 +165,11 @@ class BillableItemTypeViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    @extend_schema(
+        filters=False,
+        parameters=[OpenApiParameter("app_label", str), OpenApiParameter("model", str)],
+        responses={200: BillableItemTypeSerializer(many=True)},
+    )
     @action(detail=False, methods=["get"])
     def by_content_type(self, request):
         """Get billable item types grouped by content type."""
@@ -216,6 +235,9 @@ class ServicePriceViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    @extend_schema(
+        request=ServicePriceCalculationSerializer, responses={200: CostBreakdownSerializer, 400: FieldErrorsSerializer}
+    )
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def calculate_cost(self, request, pk=None):
         """
@@ -242,22 +264,15 @@ class ServicePriceViewSet(viewsets.ModelViewSet):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(filters=False, responses={200: ServicePriceSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def current_prices(self, request):
         """Get only currently effective service prices."""
+        now = timezone.now()
         current_prices = (
             self.get_queryset()
-            .filter(
-                **{f + "__lte": timezone.now() for f in ["effective_from"]},
-                **{f + "__gte": timezone.now() for f in ["effective_until"] if hasattr(self.get_queryset().model, f)},
-            )
-            .filter(is_active=True)
-        )
-
-        # Apply additional filtering
-        now = timezone.now()
-        current_prices = current_prices.filter(effective_from__lte=now).filter(
-            Q(effective_until__isnull=True) | Q(effective_until__gte=now)
+            .filter(is_active=True, effective_from__lte=now)
+            .filter(Q(effective_until__isnull=True) | Q(effective_until__gte=now))
         )
 
         serializer = self.get_serializer(current_prices, many=True)
@@ -321,6 +336,9 @@ class BillingRecordViewSet(viewsets.ModelViewSet):
         """Set the user when creating billing records."""
         serializer.save(user=self.request.user)
 
+    @extend_schema(
+        request=BillingApprovalSerializer, responses={200: BillingRecordApprovedSerializer, 400: ErrorOrFieldErrors}
+    )
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
     def approve(self, request, pk=None):
         """
@@ -351,6 +369,7 @@ class BillingRecordViewSet(viewsets.ModelViewSet):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(filters=False, responses={200: BillingSummaryStatsSerializer})
     @action(detail=False, methods=["get"])
     def summary(self, request):
         """
@@ -372,8 +391,6 @@ class BillingRecordViewSet(viewsets.ModelViewSet):
             by_status[status_code] = {"count": count, "total_amount": amount, "label": status_choice[1]}
 
         # By time period (last 12 months)
-        from datetime import timedelta
-
         now = timezone.now()
         by_period = {}
 
@@ -401,7 +418,8 @@ class BillingRecordViewSet(viewsets.ModelViewSet):
         serializer = BillingRecordSummarySerializer(summary_data)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(filters=False, responses={200: BillingRecordSerializer(many=True), 403: ErrorSerializer})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def pending_approval(self, request):
         """
         Get billing records pending approval.
@@ -413,6 +431,7 @@ class BillingRecordViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(pending_records, many=True)
         return Response(serializer.data)
 
+    @extend_schema(responses={200: BillingRecordSerializer(many=True)})
     @action(detail=False, methods=["get"])
     def my_records(self, request):
         """
@@ -429,7 +448,8 @@ class BillingRecordViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(user_records, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(filters=False, responses={200: CostCenterTotalSerializer(many=True), 403: ErrorSerializer})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def by_cost_center(self, request):
         """
         Get billing records grouped by cost center.

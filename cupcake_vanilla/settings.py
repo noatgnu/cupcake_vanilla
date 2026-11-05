@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "drf_spectacular",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "django_filters",
@@ -297,6 +298,31 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 50,
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "CUPCAKE API",
+    "DESCRIPTION": "REST API of the CUPCAKE backend, including the metadata, instrument, protocol, "
+    "billing and communication modules that are enabled on this installation.",
+    "VERSION": "1",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
+    "SCHEMA_PATH_PREFIX": r"/api/v1",
+    "ENUM_NAME_OVERRIDES": {
+        "ExperimentSessionStatusEnum": ["processing", "running", "completed", "ready", "draft"],
+        "NotificationTypeEnum": "ccmc.models.NotificationType",
+        "BillingUnitEnum": "ccsc.models.BillableItemType.BILLING_UNIT_CHOICES",
+        "InstrumentAlertTypeEnum": ["warranty_expiring", "maintenance_due", "maintenance_completed"],
+        "ReagentAlertTypeEnum": ["low_stock", "expired", "expiring_soon"],
+        "PluginLifecycleStatusEnum": "ccc.plugin.model.Plugin.LIFECYCLE_CHOICES",
+        "AccountMergeRequestStatusEnum": "ccc.models.AccountMergeRequest.STATUS_CHOICES",
+        "AsyncTaskStatusEnum": "ccc.models.AsyncTaskStatus.TASK_STATUS_CHOICES",
+        "BillingRecordStatusEnum": "ccsc.models.BillingRecord.STATUS_CHOICES",
+        "InstrumentJobStatusEnum": "ccm.models.InstrumentJob.STATUS_CHOICES",
+        "ChunkedUploadStatusEnum": "drf_chunked_upload.models.AbstractChunkedUpload.STATUS_CHOICES",
+    },
 }
 
 # CORS configuration

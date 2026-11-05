@@ -126,7 +126,7 @@ class Notification(models.Model):
 
     def is_expired(self):
         """Check if notification has expired."""
-        return self.expires_at and timezone.now() > self.expires_at
+        return bool(self.expires_at and timezone.now() > self.expires_at)
 
 
 class MessageThread(models.Model):

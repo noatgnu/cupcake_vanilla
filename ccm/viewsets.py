@@ -12,19 +12,38 @@ from django.utils import timezone
 
 import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from ccc.api_schema import ActionMessageSerializer, DetailSerializer, ErrorSerializer
 from ccc.mixins import DeletionLogMixin
-from ccc.models import AnnotationFolder, ResourceType
+from ccc.models import Annotation, AnnotationFolder, ResourceType
 from ccc.serializers import AnnotationFolderSerializer
 from ccv.models import LabGroup, MetadataColumn, MetadataTableTemplate
 from ccv.serializers import MetadataColumnSerializer, MetadataTableSerializer
 
+from .api_schema import (
+    ColumnValuesSerializer,
+    InstrumentTestNotificationSerializer,
+    JobAutocompleteSerializer,
+    JobChangedSerializer,
+    JobMetadataCreatedSerializer,
+    JobMetadataFromTemplateSerializer,
+    MaintenanceCheckSerializer,
+    MetadataColumnAddedSerializer,
+    MetadataColumnFieldsSerializer,
+    MetadataValueUpdatedSerializer,
+    MetadataValueUpdateSerializer,
+    ReagentTestNotificationSerializer,
+    TestNotificationSentSerializer,
+    TranscriptionQueuedSerializer,
+    WarrantyCheckSerializer,
+)
 from .communication import send_maintenance_alert, send_reagent_alert
 from .models import (
     ExternalContact,
@@ -46,7 +65,14 @@ from .models import (
     StoredReagentAnnotation,
     SupportInformation,
 )
-from .permissions import InstrumentJobPermission
+from .permissions import (
+    InstrumentJobPermission,
+    booking_in_readable_session_q,
+    instrument_manager_q,
+    instrument_viewer_q,
+    reads_one_object,
+    session_reader_q,
+)
 from .serializers import (
     ExternalContactDetailsSerializer,
     ExternalContactSerializer,
@@ -68,6 +94,7 @@ from .serializers import (
     StoredReagentAnnotationSerializer,
     StoredReagentSerializer,
     SupportInformationSerializer,
+    queue_annotation_transcription,
 )
 
 
@@ -122,14 +149,16 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
         return InstrumentSerializer
 
     def get_queryset(self):
-        """Filter instruments based on user permissions."""
-        queryset = super().get_queryset()
-
-        if self.request.user.is_staff:
+        """Every instrument for staff; otherwise those the user can see, and an enabled one linked from a readable session."""
+        user = self.request.user
+        queryset = Instrument.objects.all()
+        if user.is_staff or user.is_superuser:
             return queryset
-        else:
-            # Regular users can see enabled, non-vaulted instruments and their own
-            return queryset.filter(Q(enabled=True, is_vaulted=False) | Q(user=self.request.user))
+        visible_q = instrument_viewer_q(user)
+        if reads_one_object(self):
+            linked_bookings = InstrumentUsage.objects.filter(booking_in_readable_session_q(user))
+            visible_q |= Q(enabled=True, id__in=linked_bookings.values("instrument_id"))
+        return queryset.filter(visible_q).distinct()
 
     def perform_create(self, serializer):
         """
@@ -158,6 +187,7 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
             raise PermissionDenied("Only staff or admin users can delete instruments")
         super().perform_destroy(instance)
 
+    @extend_schema(tags=["instruments"], request=None, responses={200: WarrantyCheckSerializer, 500: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def check_warranty(self, request, pk=None):
         """Check warranty status for an instrument."""
@@ -182,6 +212,9 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
         except Exception as e:
             return Response({"error": f"Warranty check failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @extend_schema(
+        tags=["instruments"], request=None, responses={200: MaintenanceCheckSerializer, 500: ErrorSerializer}
+    )
     @action(detail=True, methods=["post"])
     def check_maintenance(self, request, pk=None):
         """Check maintenance status for an instrument."""
@@ -209,6 +242,17 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
                 {"error": f"Maintenance check failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["instruments"],
+        request=InstrumentTestNotificationSerializer,
+        responses={
+            200: TestNotificationSentSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def send_test_notification(self, request, pk=None):
         """
@@ -270,6 +314,7 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(tags=["instruments"], responses={200: MetadataTableSerializer, 404: ErrorSerializer})
     @action(detail=True, methods=["get"])
     def metadata(self, request, pk=None):
         """Get metadata table details for this instrument."""
@@ -281,6 +326,16 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
         serializer = MetadataTableSerializer(instrument.metadata_table)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["instruments"],
+        request=MetadataColumnFieldsSerializer,
+        responses={
+            201: MetadataColumnAddedSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def add_metadata_column(self, request, pk=None):
         """Add a column to the instrument's metadata table."""
@@ -318,6 +373,11 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
                 {"error": f"Failed to create column: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["instruments"],
+        parameters=[OpenApiParameter("column_id", int, OpenApiParameter.PATH)],
+        responses={200: ActionMessageSerializer, 404: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["delete"], url_path="remove_metadata_column/(?P<column_id>[^/.]+)")
     def remove_metadata_column(self, request, pk=None, column_id=None):
         """Remove a column from the instrument's metadata table."""
@@ -339,6 +399,16 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
                 {"error": f"Failed to remove column: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["instruments"],
+        request=MetadataValueUpdateSerializer,
+        responses={
+            200: MetadataValueUpdatedSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["patch"])
     def update_metadata_value(self, request, pk=None):
         """Update default values in the instrument's metadata table."""
@@ -368,6 +438,7 @@ class InstrumentViewSet(DeletionLogMixin, BaseViewSet):
                 {"error": f"Failed to update metadata value: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(tags=["instruments"], responses={200: AnnotationFolderSerializer(many=True), 404: ErrorSerializer})
     @action(detail=True, methods=["get"])
     def folders(self, request, pk=None):
         """Get annotation folders for this instrument."""
@@ -449,6 +520,11 @@ class InstrumentJobViewSet(BaseViewSet):
             raise PermissionDenied("You don't have permission to delete this job")
         super().perform_destroy(instance)
 
+    @extend_schema(
+        tags=["instrument-jobs"],
+        request=None,
+        responses={200: JobChangedSerializer, 400: ErrorSerializer, 403: DetailSerializer},
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def submit(self, request, pk=None):
         """
@@ -470,6 +546,11 @@ class InstrumentJobViewSet(BaseViewSet):
         serializer = self.get_serializer(job)
         return Response({"message": "Job submitted successfully", "job": serializer.data})
 
+    @extend_schema(
+        tags=["instrument-jobs"],
+        request=None,
+        responses={200: JobChangedSerializer, 400: ErrorSerializer, 403: DetailSerializer},
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def complete(self, request, pk=None):
         """
@@ -500,6 +581,11 @@ class InstrumentJobViewSet(BaseViewSet):
         serializer = self.get_serializer(job)
         return Response({"message": "Job completed successfully", "job": serializer.data})
 
+    @extend_schema(
+        tags=["instrument-jobs"],
+        request=None,
+        responses={200: JobChangedSerializer, 400: ErrorSerializer, 403: DetailSerializer},
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def cancel(self, request, pk=None):
         """
@@ -527,6 +613,7 @@ class InstrumentJobViewSet(BaseViewSet):
         serializer = self.get_serializer(job)
         return Response({"message": "Job cancelled successfully", "job": serializer.data})
 
+    @extend_schema(tags=["instrument-jobs"], responses={200: InstrumentJobSerializer(many=True)})
     @action(detail=False, methods=["get"])
     def my_jobs(self, request):
         """Get current user's jobs."""
@@ -540,6 +627,7 @@ class InstrumentJobViewSet(BaseViewSet):
         serializer = self.get_serializer(user_jobs, many=True)
         return Response(serializer.data)
 
+    @extend_schema(tags=["instrument-jobs"], responses={200: InstrumentJobSerializer(many=True)})
     @action(detail=False, methods=["get"])
     def assigned_jobs(self, request):
         """Get jobs assigned to current user (for staff)."""
@@ -553,6 +641,7 @@ class InstrumentJobViewSet(BaseViewSet):
         serializer = self.get_serializer(assigned_jobs, many=True)
         return Response(serializer.data)
 
+    @extend_schema(tags=["instrument-jobs"], filters=False, responses={200: JobAutocompleteSerializer})
     @action(detail=False, methods=["get"])
     def autocomplete_fields(self, request):
         """
@@ -605,6 +694,15 @@ class InstrumentJobViewSet(BaseViewSet):
             {"funders": list(funders), "cost_centers": list(cost_centers), "search_engines": search_engines}
         )
 
+    @extend_schema(
+        tags=["instrument-jobs"],
+        filters=False,
+        parameters=[
+            OpenApiParameter("project_id", int, required=True),
+            OpenApiParameter("column_name", str, required=True),
+        ],
+        responses={200: ColumnValuesSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def project_column_values(self, request):
         project_id = request.query_params.get("project_id")
@@ -641,6 +739,17 @@ class InstrumentJobViewSet(BaseViewSet):
 
         return Response({"values": seen})
 
+    @extend_schema(
+        tags=["instrument-jobs"],
+        request=JobMetadataFromTemplateSerializer,
+        responses={
+            201: JobMetadataCreatedSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def create_metadata_from_template(self, request, pk=None):
         """Create a metadata table for this job from an existing template."""
@@ -744,10 +853,47 @@ class InstrumentUsageViewSet(DeletionLogMixin, BaseViewSet):
     ordering_fields = ["time_started", "time_ended", "usage_hours", "created_at"]
     ordering = ["-time_started"]
 
-    def perform_create(self, serializer):
-        """Set the user when creating usage record."""
-        serializer.save(user=self.request.user)
+    def get_queryset(self):
+        """
+        Bookings on instruments the user can see, and a single booking linked from a readable session.
 
+        Changes are limited to the user's own bookings and those on instruments they manage.
+        """
+        user = self.request.user
+        queryset = InstrumentUsage.objects.all()
+        if user.is_staff or user.is_superuser:
+            return queryset
+        if self.request.method not in SAFE_METHODS:
+            return queryset.filter(Q(user=user) | instrument_manager_q(user, "instrument__")).distinct()
+        visible_q = instrument_viewer_q(user, "instrument__")
+        if reads_one_object(self):
+            visible_q |= booking_in_readable_session_q(user)
+        return queryset.filter(visible_q).distinct()
+
+    def perform_create(self, serializer):
+        """Only users who can book the instrument, and only when it accepts bookings, can create a booking."""
+        instrument = serializer.validated_data.get("instrument")
+        user = self.request.user
+        if instrument is not None:
+            if not instrument.user_can_book(user):
+                raise PermissionDenied("You cannot book this instrument")
+            if not instrument.accepts_bookings and not (user.is_staff or user.is_superuser):
+                raise PermissionDenied("This instrument does not accept bookings")
+        serializer.save(user=user)
+
+    def perform_update(self, serializer):
+        """Only the booker who can still book the instrument, its managers, or staff can change a booking."""
+        if not serializer.instance.user_can_edit(self.request.user):
+            raise PermissionDenied("You cannot change this booking")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Only the booker who can still book the instrument, its managers, or staff can delete a booking."""
+        if not instance.user_can_delete(self.request.user):
+            raise PermissionDenied("You cannot delete this booking")
+        super().perform_destroy(instance)
+
+    @extend_schema(tags=["instrument-usage"], responses={200: InstrumentUsageSerializer(many=True)})
     @action(detail=False, methods=["get"])
     def my_usage(self, request):
         """Get current user's usage records."""
@@ -909,7 +1055,10 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
             queryset = StoredReagent.objects.all()
         else:
             accessible_ids = {reagent.id for reagent in StoredReagent.objects.all() if reagent.can_access(user)}
-            queryset = StoredReagent.objects.filter(id__in=accessible_ids)
+            accessible_q = Q(id__in=accessible_ids)
+            if reads_one_object(self):
+                accessible_q |= session_reader_q(user, "reagent_actions__session__")
+            queryset = StoredReagent.objects.filter(accessible_q).distinct()
 
         storage_object_id = self.request.query_params.get("storage_object")
         include_sub_storage = self.request.query_params.get("include_sub_storage", "").lower() == "true"
@@ -940,7 +1089,8 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
         """Set the user when creating a stored reagent."""
         serializer.save(user=self.request.user)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["stored-reagents"], responses={200: StoredReagentSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def low_stock(self, request):
         """Get stored reagents with low stock based on individual threshold."""
         low_stock_reagents = self.get_queryset().filter(
@@ -950,6 +1100,17 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
         serializer = self.get_serializer(low_stock_reagents, many=True)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["stored-reagents"],
+        request=ReagentTestNotificationSerializer,
+        responses={
+            200: TestNotificationSentSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def send_test_notification(self, request, pk=None):
         """
@@ -1007,6 +1168,7 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(tags=["stored-reagents"], responses={200: MetadataTableSerializer, 404: ErrorSerializer})
     @action(detail=True, methods=["get"])
     def metadata(self, request, pk=None):
         """Get metadata table details for this stored reagent."""
@@ -1020,6 +1182,16 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
         serializer = MetadataTableSerializer(stored_reagent.metadata_table)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=["stored-reagents"],
+        request=MetadataColumnFieldsSerializer,
+        responses={
+            201: MetadataColumnAddedSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def add_metadata_column(self, request, pk=None):
         """Add a column to the stored reagent's metadata table."""
@@ -1059,6 +1231,11 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
                 {"error": f"Failed to create column: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["stored-reagents"],
+        parameters=[OpenApiParameter("column_id", int, OpenApiParameter.PATH)],
+        responses={200: ActionMessageSerializer, 404: ErrorSerializer, 500: ErrorSerializer},
+    )
     @action(detail=True, methods=["delete"], url_path="remove_metadata_column/(?P<column_id>[^/.]+)")
     def remove_metadata_column(self, request, pk=None, column_id=None):
         """Remove a column from the stored reagent's metadata table."""
@@ -1082,6 +1259,16 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
                 {"error": f"Failed to remove column: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["stored-reagents"],
+        request=MetadataValueUpdateSerializer,
+        responses={
+            200: MetadataValueUpdatedSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+            500: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["patch"])
     def update_metadata_value(self, request, pk=None):
         """Update default values in the stored reagent's metadata table."""
@@ -1113,6 +1300,9 @@ class StoredReagentViewSet(DeletionLogMixin, BaseViewSet):
                 {"error": f"Failed to update metadata value: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @extend_schema(
+        tags=["stored-reagents"], responses={200: AnnotationFolderSerializer(many=True), 404: ErrorSerializer}
+    )
     @action(detail=True, methods=["get"])
     def folders(self, request, pk=None):
         """Get annotation folders for this stored reagent."""
@@ -1259,7 +1449,10 @@ class ReagentSubscriptionViewSet(BaseViewSet):
         """Set the user when creating subscription."""
         serializer.save(user=self.request.user)
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(
+        tags=["reagent-subscriptions"], filters=False, responses={200: ReagentSubscriptionSerializer(many=True)}
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def my_subscriptions(self, request):
         """Get current user's reagent subscriptions."""
         user_subscriptions = self.get_queryset().filter(user=request.user)
@@ -1278,10 +1471,32 @@ class ReagentActionViewSet(BaseViewSet):
     ordering_fields = ["quantity", "created_at"]
     ordering = ["-created_at"]
 
-    def perform_create(self, serializer):
-        """Set the user when creating action record."""
-        serializer.save(user=self.request.user)
+    def get_queryset(self):
+        """Own actions, and actions of a session the user can read when reading one action or one session's actions."""
+        queryset = super().get_queryset()
+        user = self.request.user
+        if user.is_staff or self.request.method not in SAFE_METHODS:
+            return queryset
+        if self.detail or self.request.query_params.get("session"):
+            linked = ReagentAction.objects.filter(session_reader_q(user, "session__"))
+            queryset = (queryset | linked).distinct()
+        return queryset
 
+    def perform_create(self, serializer):
+        """Set the user when creating action record; the user must have access to the stored reagent."""
+        stored_reagent = serializer.validated_data["reagent"]
+        user = self.request.user
+        if not (user.is_staff or user.is_superuser or stored_reagent.can_access(user)):
+            raise PermissionDenied("You do not have access to this stored reagent")
+        serializer.save(user=user)
+
+    def perform_destroy(self, instance):
+        """Only the booker within the deletion window, or staff, can delete a reagent action."""
+        if not instance.user_can_delete(self.request.user):
+            raise PermissionDenied("This reagent booking can no longer be deleted")
+        instance.delete()
+
+    @extend_schema(tags=["reagent-actions"], responses={200: ReagentActionSerializer(many=True)})
     @action(detail=False, methods=["get"])
     def my_actions(self, request):
         """Get current user's reagent actions."""
@@ -1307,14 +1522,13 @@ class InstrumentPermissionViewSet(BaseViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        """Filter permissions by user access."""
+        """Staff see all permissions; others see their own and those of instruments they own or manage."""
         user = self.request.user
         if user.is_staff:
             return self.queryset
-        # Users can only see permissions for instruments they can manage
+        managed_instruments = InstrumentPermission.objects.filter(user=user, can_manage=True).values("instrument_id")
         return self.queryset.filter(
-            Q(instrument__created_by=user)
-            | Q(instrument__instrumentpermission__user=user, instrument__instrumentpermission__can_manage=True)
+            Q(user=user) | Q(instrument__user=user) | Q(instrument_id__in=managed_instruments)
         ).distinct()
 
 
@@ -1382,10 +1596,7 @@ class InstrumentAnnotationViewSet(BaseViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            from ccc.models import Annotation
-
             folder_id = request.data.get("folder")
-            from ccc.models import AnnotationFolder
 
             folder = AnnotationFolder.objects.get(id=folder_id) if folder_id else None
 
@@ -1512,10 +1723,7 @@ class StoredReagentAnnotationViewSet(BaseViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            from ccc.models import Annotation
-
             folder_id = request.data.get("folder")
-            from ccc.models import AnnotationFolder
 
             folder = AnnotationFolder.objects.get(id=folder_id) if folder_id else None
 
@@ -1650,8 +1858,6 @@ class MaintenanceLogAnnotationViewSet(BaseViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            from ccc.models import Annotation
-
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
                 annotation_type=annotation_type,
@@ -1777,9 +1983,6 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            from ccc.models import Annotation
-            from ccm.serializers import queue_annotation_transcription
-
             annotation = Annotation.objects.create(
                 annotation=annotation_text,
                 annotation_type=annotation_type,
@@ -1863,6 +2066,16 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
 
         instance.delete()
 
+    @extend_schema(
+        tags=["instrument-job-annotations"],
+        request=None,
+        responses={
+            200: TranscriptionQueuedSerializer,
+            400: ErrorSerializer,
+            403: DetailSerializer,
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["post"])
     def retrigger_transcription(self, request, pk=None):
         """
@@ -1896,8 +2109,6 @@ class InstrumentJobAnnotationViewSet(ModelViewSet):
         annotation.language = None
         annotation.translation = None
         annotation.save(update_fields=["transcribed", "transcription", "language", "translation"])
-
-        from ccm.serializers import queue_annotation_transcription
 
         queue_annotation_transcription(annotation, auto_transcribe=True)
 

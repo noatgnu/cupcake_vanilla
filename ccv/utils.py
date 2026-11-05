@@ -21,7 +21,7 @@ from .models import FavouriteMetadataOption, MetadataColumn, MetadataTable, Samp
 class VariationSpecRange(TypedDict, total=False):
     """Specification for range-based variation."""
 
-    columnId: int
+    column_id: int
     type: Literal["range"]
     start: int
     end: int
@@ -31,7 +31,7 @@ class VariationSpecRange(TypedDict, total=False):
 class VariationSpecList(TypedDict):
     """Specification for list-based variation."""
 
-    columnId: int
+    column_id: int
     type: Literal["list"]
     values: List[Any]
 
@@ -39,7 +39,7 @@ class VariationSpecList(TypedDict):
 class VariationSpecPattern(TypedDict, total=False):
     """Specification for pattern-based variation."""
 
-    columnId: int
+    column_id: int
     type: Literal["pattern"]
     pattern: str
     count: int
@@ -51,10 +51,10 @@ VariationSpec = VariationSpecRange | VariationSpecList | VariationSpecPattern
 class AutofillSpec(TypedDict):
     """Complete autofill specification structure."""
 
-    templateSamples: List[int]
-    targetSampleCount: int
+    template_samples: List[int]
+    target_sample_count: int
     variations: List[VariationSpec]
-    fillStrategy: Literal["cartesian_product", "sequential", "interleaved"]
+    fill_strategy: Literal["cartesian_product", "sequential", "interleaved"]
 
 
 def sort_metadata(
@@ -1098,17 +1098,17 @@ class AutofillSpecValidator:
         """
         self.errors = []
 
-        template_samples = self.spec.get("templateSamples", [])
+        template_samples = self.spec.get("template_samples", [])
         if not template_samples:
-            self.errors.append("templateSamples is required")
+            self.errors.append("template_samples is required")
 
-        target_count = self.spec.get("targetSampleCount")
+        target_count = self.spec.get("target_sample_count")
         if not target_count or target_count < 1:
-            self.errors.append("targetSampleCount must be a positive integer")
+            self.errors.append("target_sample_count must be a positive integer")
 
         if target_count and target_count > self.table.sample_count:
             self.errors.append(
-                f"targetSampleCount ({target_count}) cannot exceed table sample_count ({self.table.sample_count})"
+                f"target_sample_count ({target_count}) cannot exceed table sample_count ({self.table.sample_count})"
             )
 
         variations = self.spec.get("variations", [])
@@ -1116,12 +1116,12 @@ class AutofillSpecValidator:
             self.errors.append("variations is required and must not be empty")
 
         for var in variations:
-            if "columnId" not in var:
-                self.errors.append("Each variation must have columnId")
+            if "column_id" not in var:
+                self.errors.append("Each variation must have column_id")
             if "type" not in var:
                 self.errors.append("Each variation must have type")
 
-            column_id = var.get("columnId")
+            column_id = var.get("column_id")
             if column_id and not self.table.columns.filter(id=column_id).exists():
                 self.errors.append(f"Column {column_id} not found in table")
 
@@ -1159,7 +1159,7 @@ class SampleVariationGenerator:
         result = {}
 
         for var in self.variations:
-            column_id = var["columnId"]
+            column_id = var["column_id"]
             var_type = var["type"]
 
             if var_type == "range":
@@ -1293,8 +1293,8 @@ class SampleVariationGenerator:
         """
         return {
             "status": "success",
-            "samplesModified": self.target_count,
-            "columnsModified": len(self.variations),
-            "variationsCombinations": len(sample_variations),
+            "samples_modified": self.target_count,
+            "columns_modified": len(self.variations),
+            "variations_combinations": len(sample_variations),
             "strategy": fill_strategy,
         }

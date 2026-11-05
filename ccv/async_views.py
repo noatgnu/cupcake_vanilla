@@ -1,18 +1,31 @@
 """
 Async task management views for handling export/import operations via RQ.
 """
+import os
+
+from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
 from django_rq import get_queue
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from sdrf_pipelines.sdrf.schemas import SchemaRegistry
 
+from ccc.api_schema import ActionMessageSerializer, ErrorOrFieldErrors, ErrorSerializer
 from ccc.models import AsyncTaskStatus, TaskResult
+from ccv.api_schema import (
+    AsyncTaskDetailSerializer,
+    AvailableValidationSchemaSerializer,
+    CleanupResultSerializer,
+    TaskDownloadUrlSerializer,
+)
 from ccv.models import MetadataTable
 from ccv.serializers import (
     AsyncTaskListSerializer,
@@ -22,6 +35,7 @@ from ccv.serializers import (
     MetadataExportSerializer,
     MetadataImportSerializer,
     MetadataValidationSerializer,
+    TaskCreateResponseSerializer,
 )
 from ccv.tasks import (
     export_excel_template_task,
@@ -65,6 +79,8 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         """Filter queryset to user's tasks only."""
+        if getattr(self, "swagger_fake_view", False):
+            return AsyncTaskStatus.objects.none()
         return AsyncTaskStatus.objects.filter(user=self.request.user).order_by("-created_at")
 
     def get_serializer_class(self):
@@ -73,6 +89,7 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
             return AsyncTaskStatusSerializer
         return AsyncTaskListSerializer
 
+    @extend_schema(tags=["async-tasks"], responses={200: AsyncTaskDetailSerializer, 404: ErrorSerializer})
     def retrieve(self, request, pk=None):
         """Get specific task details."""
         try:
@@ -100,6 +117,10 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response(data)
 
+    @extend_schema(
+        tags=["async-tasks"],
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["delete"])
     def cancel(self, request, pk=None):
         """Cancel a queued/running task or delete a completed task."""
@@ -139,6 +160,7 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response({"error": "Invalid task status"}, status=status.HTTP_400_BAD_REQUEST)
 
+    @extend_schema(tags=["async-tasks"], responses={200: ActionMessageSerializer})
     @action(detail=False, methods=["delete"])
     def cleanup_completed(self, request):
         """Delete all completed, failed, and cancelled tasks for the user."""
@@ -164,6 +186,15 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
 
         return Response({"message": f"Deleted {deleted_count} completed tasks"})
 
+    @extend_schema(
+        tags=["async-tasks"],
+        responses={
+            200: TaskDownloadUrlSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+            410: ErrorSerializer,
+        },
+    )
     @action(detail=True, methods=["get"])
     def download_url(self, request, pk=None):
         """Generate a signed download URL for task result file."""
@@ -202,6 +233,19 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
             }
         )
 
+    @extend_schema(
+        tags=["async-tasks"],
+        auth=[],
+        parameters=[
+            OpenApiParameter("token", str, required=True, description="Signed token from download_url"),
+        ],
+        responses={
+            (200, "application/octet-stream"): OpenApiTypes.BINARY,
+            (400, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Missing token"),
+            (403, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="Invalid or expired token"),
+            (404, "text/html"): OpenApiResponse(OpenApiTypes.STR, description="File not found"),
+        },
+    )
     @action(detail=True, methods=["get"], permission_classes=[])
     def download(self, request, pk=None):
         """Direct download endpoint with signed token verification.
@@ -227,15 +271,10 @@ class AsyncTaskViewSet(viewsets.ReadOnlyModelViewSet):
         task_result.record_download()
 
         # Check if running in Electron environment (no nginx)
-        from django.conf import settings
-
         is_electron = getattr(settings, "IS_ELECTRON_ENVIRONMENT", False)
-        print(f"ELECTRON_DEBUG: IS_ELECTRON_ENVIRONMENT = {is_electron}")
 
         if is_electron:
             # Use simple HttpResponse with file content for Electron to avoid all Content-Length issues
-            import os
-
             file_path = task_result.get_file_path()
             if not os.path.exists(file_path):
                 return HttpResponse("File not found", status=404)
@@ -274,6 +313,11 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["async-export"],
+        request=MetadataExportSerializer,
+        responses={202: TaskCreateResponseSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def excel_template(self, request):
         """Queue Excel template export task."""
@@ -327,6 +371,11 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @extend_schema(
+        tags=["async-export"],
+        request=MetadataExportSerializer,
+        responses={202: TaskCreateResponseSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def sdrf_file(self, request):
         """Queue SDRF file export task."""
@@ -378,6 +427,11 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @extend_schema(
+        tags=["async-export"],
+        request=BulkExportSerializer,
+        responses={202: TaskCreateResponseSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def multiple_sdrf_files(self, request):
         """Queue bulk SDRF files export task."""
@@ -436,6 +490,11 @@ class AsyncExportViewSet(viewsets.GenericViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @extend_schema(
+        tags=["async-export"],
+        request=BulkExcelExportSerializer,
+        responses={202: TaskCreateResponseSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def multiple_excel_templates(self, request):
         """Queue bulk Excel templates export task."""
@@ -507,6 +566,11 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["async-import"],
+        request={"multipart/form-data": MetadataImportSerializer},
+        responses={202: TaskCreateResponseSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def sdrf_file(self, request):
         """Queue SDRF file import task."""
@@ -570,6 +634,11 @@ class AsyncImportViewSet(viewsets.GenericViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @extend_schema(
+        tags=["async-import"],
+        request={"multipart/form-data": MetadataImportSerializer},
+        responses={202: TaskCreateResponseSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def excel_file(self, request):
         """Queue Excel file import task."""
@@ -640,11 +709,10 @@ class AsyncValidationViewSet(viewsets.GenericViewSet):
     serializer_class = MetadataValidationSerializer
     permission_classes = [IsAuthenticated]
 
-    @action(detail=False, methods=["get"])
+    @extend_schema(tags=["async-validation"], responses={200: AvailableValidationSchemaSerializer(many=True)})
+    @action(detail=False, methods=["get"], pagination_class=None)
     def available_schemas(self, request):
         """Get list of available validation schemas from sdrf-pipelines."""
-        from sdrf_pipelines.sdrf.schemas import SchemaRegistry
-
         registry = SchemaRegistry()
         schema_names = registry.get_schema_names()
         manifest = registry.manifest or {}
@@ -672,6 +740,16 @@ class AsyncValidationViewSet(viewsets.GenericViewSet):
 
         return Response(schemas)
 
+    @extend_schema(
+        tags=["async-validation"],
+        request=MetadataValidationSerializer,
+        responses={
+            202: TaskCreateResponseSerializer,
+            400: ErrorOrFieldErrors,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"])
     def metadata_table(self, request):
         """Queue metadata table validation task."""
@@ -725,6 +803,11 @@ class AsyncValidationViewSet(viewsets.GenericViewSet):
         )
 
 
+@extend_schema(
+    tags=["async-tasks"],
+    request=None,
+    responses={200: CleanupResultSerializer, 403: ErrorSerializer},
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def cleanup_expired_files(request):

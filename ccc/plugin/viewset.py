@@ -1,9 +1,23 @@
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from ccc.api_schema import (
+    DetailSerializer,
+    ErrorSerializer,
+    PluginBroadcastResultSerializer,
+    PluginBroadcastSerializer,
+    PluginProgressSerializer,
+    PluginPushSerializer,
+    PluginRegisterSerializer,
+    PluginSentSerializer,
+    PluginStartupSerializer,
+    PluginWithTokenSerializer,
+)
 from ccc.plugin.auth import PluginTokenAuthentication
 from ccc.plugin.model import Plugin
 from ccc.plugin.permissions import IsPluginAuthenticated
@@ -52,10 +66,15 @@ class PluginViewSet(viewsets.ModelViewSet):
         """Map actions to their required permission classes."""
         if getattr(self, "action", None) in ("startup", "push", "report_progress"):
             return [IsPluginAuthenticated()]
-        if self.action in ("destroy", "partial_update", "register", "reset_token"):
+        if self.action in ("destroy", "partial_update", "register", "reset_token", "broadcast"):
             return [permissions.IsAdminUser()]
         return [permissions.IsAuthenticated()]
 
+    @extend_schema(
+        tags=["plugins"],
+        request=PluginRegisterSerializer,
+        responses={200: PluginWithTokenSerializer, 400: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="register")
     def register(self, request):
         """Register a new plugin or update an existing one by name.
@@ -90,6 +109,7 @@ class PluginViewSet(viewsets.ModelViewSet):
             data["token"] = plugin._plain_token
         return Response(data, status=status.HTTP_200_OK)
 
+    @extend_schema(tags=["plugins"], request=PluginStartupSerializer, responses={200: PluginSerializer})
     @action(detail=False, methods=["post"], url_path="startup")
     def startup(self, request):
         """Called by a plugin process on boot to announce its address and mark itself running.
@@ -119,6 +139,9 @@ class PluginViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(plugin).data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        tags=["plugins"], request=PluginProgressSerializer, responses={200: PluginSerializer, 400: ErrorSerializer}
+    )
     @action(detail=False, methods=["post"], url_path="report-progress")
     def report_progress(self, request):
         """Report the plugin's own lifecycle stage or operational progress.
@@ -157,6 +180,7 @@ class PluginViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(plugin).data, status=status.HTTP_200_OK)
 
+    @extend_schema(tags=["plugins"], request=PluginPushSerializer, responses={200: PluginSentSerializer})
     @action(detail=False, methods=["post"], url_path="push")
     def push(self, request):
         """Broadcast an arbitrary payload from a running plugin to its subscribers.
@@ -184,6 +208,7 @@ class PluginViewSet(viewsets.ModelViewSet):
         )
         return Response({"sent": True}, status=status.HTTP_200_OK)
 
+    @extend_schema(tags=["plugins"], request=None, responses={200: PluginWithTokenSerializer})
     @action(detail=True, methods=["post"], url_path="reset-token")
     def reset_token(self, request, pk=None):
         """Regenerate the startup token for a plugin.
@@ -199,12 +224,18 @@ class PluginViewSet(viewsets.ModelViewSet):
         data["token"] = plugin._plain_token
         return Response(data, status=status.HTTP_200_OK)
 
+    @extend_schema(tags=["plugins"], responses={200: OpenApiTypes.OBJECT})
     @action(detail=True, methods=["get"], url_path="manifest")
     def manifest(self, request, pk=None):
         """Return the cached manifest for a plugin."""
         plugin = self.get_object()
         return Response(plugin.manifest_cache)
 
+    @extend_schema(
+        tags=["plugins"],
+        request=PluginBroadcastSerializer,
+        responses={200: PluginBroadcastResultSerializer, 400: ErrorSerializer, 403: DetailSerializer},
+    )
     @action(detail=True, methods=["post"], url_path="broadcast")
     def broadcast(self, request, pk=None):
         """Broadcast a message to all WebSocket subscribers of this plugin (admin only)."""

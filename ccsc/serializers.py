@@ -9,11 +9,25 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import BillableItemType, BillingRecord, ServicePrice, ServiceTier
 
 User = get_user_model()
+
+
+class RecordCostBreakdownSerializer(serializers.Serializer):
+    """Amounts of a billing record."""
+
+    quantity = serializers.DecimalField(max_digits=10, decimal_places=3, coerce_to_string=False)
+    unit_price = serializers.DecimalField(max_digits=10, decimal_places=2, coerce_to_string=False)
+    subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
+    setup_fee = serializers.DecimalField(max_digits=10, decimal_places=2, coerce_to_string=False)
+    discount_amount = serializers.DecimalField(max_digits=10, decimal_places=2, coerce_to_string=False)
+    tax_amount = serializers.DecimalField(max_digits=10, decimal_places=2, coerce_to_string=False)
+    total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, coerce_to_string=False)
+    currency = serializers.CharField()
 
 
 class ServiceTierSerializer(serializers.ModelSerializer):
@@ -44,13 +58,13 @@ class ServiceTierSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at", "active_prices_count"]
 
-    def get_features_display(self, obj):
+    def get_features_display(self, obj) -> str:
         """Return features as formatted string for display."""
         if obj.features:
             return ", ".join(obj.features)
         return "No features listed"
 
-    def get_active_prices_count(self, obj):
+    def get_active_prices_count(self, obj) -> int:
         """Return count of active service prices for this tier."""
         return obj.prices.filter(is_active=True).count()
 
@@ -96,7 +110,7 @@ class BillableItemTypeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at", "active_prices_count"]
 
-    def get_active_prices_count(self, obj):
+    def get_active_prices_count(self, obj) -> int:
         """Return count of active service prices for this item type."""
         return obj.prices.filter(is_active=True).count()
 
@@ -136,7 +150,7 @@ class ServicePriceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at", "is_current"]
 
-    def get_is_current(self, obj):
+    def get_is_current(self, obj) -> bool:
         """Check if this price is currently effective."""
         return obj.is_current()
 
@@ -194,7 +208,9 @@ class BillingRecordSerializer(serializers.ModelSerializer):
     billable_item_name = serializers.CharField(source="service_price.billable_item_type.name", read_only=True)
     billing_unit_display = serializers.CharField(source="service_price.get_billing_unit_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
-    approved_by_username = serializers.CharField(source="approved_by.username", read_only=True)
+    approved_by_username = serializers.CharField(
+        source="approved_by.username", read_only=True, allow_null=True, default=None
+    )
     can_be_modified = serializers.SerializerMethodField()
     cost_breakdown = serializers.SerializerMethodField()
     billing_period_days = serializers.SerializerMethodField()
@@ -254,15 +270,16 @@ class BillingRecordSerializer(serializers.ModelSerializer):
             "billing_period_days",
         ]
 
-    def get_can_be_modified(self, obj):
+    def get_can_be_modified(self, obj) -> bool:
         """Check if billing record can be modified."""
         return obj.can_be_modified()
 
+    @extend_schema_field(RecordCostBreakdownSerializer())
     def get_cost_breakdown(self, obj):
         """Get detailed cost breakdown."""
         return obj.get_cost_breakdown()
 
-    def get_billing_period_days(self, obj):
+    def get_billing_period_days(self, obj) -> int | None:
         """Calculate billing period duration in days."""
         if obj.billing_period_start and obj.billing_period_end:
             delta = obj.billing_period_end - obj.billing_period_start

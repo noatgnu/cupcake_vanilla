@@ -34,13 +34,13 @@ class AutofillSpecValidatorTest(TestCase):
     def test_valid_spec(self):
         """Test validation with valid specification."""
         spec = {
-            "templateSamples": [1, 2],
-            "targetSampleCount": 50,
+            "template_samples": [1, 2],
+            "target_sample_count": 50,
             "variations": [
-                {"columnId": self.column1.id, "type": "range", "start": 1, "end": 10},
-                {"columnId": self.column2.id, "type": "list", "values": ["TMT126", "TMT127"]},
+                {"column_id": self.column1.id, "type": "range", "start": 1, "end": 10},
+                {"column_id": self.column2.id, "type": "list", "values": ["TMT126", "TMT127"]},
             ],
-            "fillStrategy": "cartesian_product",
+            "fill_strategy": "cartesian_product",
         }
 
         validator = AutofillSpecValidator(spec, self.table)
@@ -48,38 +48,38 @@ class AutofillSpecValidatorTest(TestCase):
         self.assertEqual(len(validator.errors), 0)
 
     def test_missing_template_samples(self):
-        """Test validation fails when templateSamples is missing."""
+        """Test validation fails when template_samples is missing."""
         spec = {
-            "templateSamples": [],
-            "targetSampleCount": 50,
-            "variations": [{"columnId": self.column1.id, "type": "range"}],
-            "fillStrategy": "cartesian_product",
+            "template_samples": [],
+            "target_sample_count": 50,
+            "variations": [{"column_id": self.column1.id, "type": "range"}],
+            "fill_strategy": "cartesian_product",
         }
 
         validator = AutofillSpecValidator(spec, self.table)
         self.assertFalse(validator.is_valid())
-        self.assertIn("templateSamples is required", validator.errors)
+        self.assertIn("template_samples is required", validator.errors)
 
     def test_invalid_target_count(self):
-        """Test validation fails when targetSampleCount is invalid."""
+        """Test validation fails when target_sample_count is invalid."""
         spec = {
-            "templateSamples": [1],
-            "targetSampleCount": 0,
-            "variations": [{"columnId": self.column1.id, "type": "range"}],
-            "fillStrategy": "cartesian_product",
+            "template_samples": [1],
+            "target_sample_count": 0,
+            "variations": [{"column_id": self.column1.id, "type": "range"}],
+            "fill_strategy": "cartesian_product",
         }
 
         validator = AutofillSpecValidator(spec, self.table)
         self.assertFalse(validator.is_valid())
-        self.assertIn("targetSampleCount must be a positive integer", validator.errors)
+        self.assertIn("target_sample_count must be a positive integer", validator.errors)
 
     def test_target_count_exceeds_sample_count(self):
-        """Test validation fails when targetSampleCount exceeds table sample_count."""
+        """Test validation fails when target_sample_count exceeds table sample_count."""
         spec = {
-            "templateSamples": [1],
-            "targetSampleCount": 150,
-            "variations": [{"columnId": self.column1.id, "type": "range"}],
-            "fillStrategy": "cartesian_product",
+            "template_samples": [1],
+            "target_sample_count": 150,
+            "variations": [{"column_id": self.column1.id, "type": "range"}],
+            "fill_strategy": "cartesian_product",
         }
 
         validator = AutofillSpecValidator(spec, self.table)
@@ -89,10 +89,10 @@ class AutofillSpecValidatorTest(TestCase):
     def test_missing_variations(self):
         """Test validation fails when variations is empty."""
         spec = {
-            "templateSamples": [1],
-            "targetSampleCount": 50,
+            "template_samples": [1],
+            "target_sample_count": 50,
             "variations": [],
-            "fillStrategy": "cartesian_product",
+            "fill_strategy": "cartesian_product",
         }
 
         validator = AutofillSpecValidator(spec, self.table)
@@ -102,10 +102,10 @@ class AutofillSpecValidatorTest(TestCase):
     def test_invalid_column_id(self):
         """Test validation fails when column doesn't exist."""
         spec = {
-            "templateSamples": [1],
-            "targetSampleCount": 50,
-            "variations": [{"columnId": 99999, "type": "range"}],
-            "fillStrategy": "cartesian_product",
+            "template_samples": [1],
+            "target_sample_count": 50,
+            "variations": [{"column_id": 99999, "type": "range"}],
+            "fill_strategy": "cartesian_product",
         }
 
         validator = AutofillSpecValidator(spec, self.table)
@@ -131,7 +131,7 @@ class SampleVariationGeneratorTest(TestCase):
 
     def test_generate_range_variations(self):
         """Test generating range-based variations."""
-        variations = [{"columnId": self.column1.id, "type": "range", "start": 1, "end": 5, "step": 1}]
+        variations = [{"column_id": self.column1.id, "type": "range", "start": 1, "end": 5, "step": 1}]
 
         generator = SampleVariationGenerator(self.table, [1, 2], variations, 10)
         variations_data = generator.generate_variations()
@@ -141,7 +141,7 @@ class SampleVariationGeneratorTest(TestCase):
 
     def test_generate_list_variations(self):
         """Test generating list-based variations."""
-        variations = [{"columnId": self.column2.id, "type": "list", "values": ["TMT126", "TMT127", "TMT128"]}]
+        variations = [{"column_id": self.column2.id, "type": "list", "values": ["TMT126", "TMT127", "TMT128"]}]
 
         generator = SampleVariationGenerator(self.table, [1], variations, 10)
         variations_data = generator.generate_variations()
@@ -151,7 +151,7 @@ class SampleVariationGeneratorTest(TestCase):
 
     def test_generate_pattern_variations(self):
         """Test generating pattern-based variations."""
-        variations = [{"columnId": self.column1.id, "type": "pattern", "pattern": "sample_{i}", "count": 3}]
+        variations = [{"column_id": self.column1.id, "type": "pattern", "pattern": "sample_{i}", "count": 3}]
 
         generator = SampleVariationGenerator(self.table, [1], variations, 10)
         variations_data = generator.generate_variations()
@@ -206,16 +206,16 @@ class SampleVariationGeneratorTest(TestCase):
 
     def test_get_summary(self):
         """Test getting operation summary."""
-        variations = [{"columnId": self.column1.id, "type": "range", "start": 1, "end": 5}]
+        variations = [{"column_id": self.column1.id, "type": "range", "start": 1, "end": 5}]
         sample_variations = [{self.column1.id: 1}, {self.column1.id: 2}]
 
         generator = SampleVariationGenerator(self.table, [1, 2], variations, 10)
         summary = generator.get_summary(sample_variations, "cartesian_product")
 
         self.assertEqual(summary["status"], "success")
-        self.assertEqual(summary["samplesModified"], 10)
-        self.assertEqual(summary["columnsModified"], 1)
-        self.assertEqual(summary["variationsCombinations"], 2)
+        self.assertEqual(summary["samples_modified"], 10)
+        self.assertEqual(summary["columns_modified"], 1)
+        self.assertEqual(summary["variations_combinations"], 2)
         self.assertEqual(summary["strategy"], "cartesian_product")
 
 
@@ -240,31 +240,31 @@ class AdvancedAutofillAPITest(APITestCase):
         """Test advanced autofill with cartesian product strategy."""
         url = f"/api/v1/metadata-tables/{self.table.pk}/advanced_autofill/"
         data = {
-            "templateSamples": [1, 2],
-            "targetSampleCount": 20,
+            "template_samples": [1, 2],
+            "target_sample_count": 20,
             "variations": [
-                {"columnId": self.column1.id, "type": "range", "start": 1, "end": 5, "step": 1},
-                {"columnId": self.column2.id, "type": "list", "values": ["TMT126", "TMT127"]},
+                {"column_id": self.column1.id, "type": "range", "start": 1, "end": 5, "step": 1},
+                {"column_id": self.column2.id, "type": "list", "values": ["TMT126", "TMT127"]},
             ],
-            "fillStrategy": "cartesian_product",
+            "fill_strategy": "cartesian_product",
         }
 
         response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["status"], "success")
-        self.assertEqual(response.data["samplesModified"], 20)
-        self.assertEqual(response.data["columnsModified"], 2)
+        self.assertEqual(response.data["samples_modified"], 20)
+        self.assertEqual(response.data["columns_modified"], 2)
         self.assertEqual(response.data["strategy"], "cartesian_product")
 
     def test_advanced_autofill_sequential(self):
         """Test advanced autofill with sequential strategy."""
         url = f"/api/v1/metadata-tables/{self.table.pk}/advanced_autofill/"
         data = {
-            "templateSamples": [1],
-            "targetSampleCount": 10,
-            "variations": [{"columnId": self.column1.id, "type": "range", "start": 1, "end": 3}],
-            "fillStrategy": "sequential",
+            "template_samples": [1],
+            "target_sample_count": 10,
+            "variations": [{"column_id": self.column1.id, "type": "range", "start": 1, "end": 3}],
+            "fill_strategy": "sequential",
         }
 
         response = self.client.post(url, data, format="json")
@@ -279,10 +279,10 @@ class AdvancedAutofillAPITest(APITestCase):
 
         url = f"/api/v1/metadata-tables/{self.table.pk}/advanced_autofill/"
         data = {
-            "templateSamples": [1],
-            "targetSampleCount": 10,
-            "variations": [{"columnId": self.column1.id, "type": "range", "start": 1, "end": 5}],
-            "fillStrategy": "cartesian_product",
+            "template_samples": [1],
+            "target_sample_count": 10,
+            "variations": [{"column_id": self.column1.id, "type": "range", "start": 1, "end": 5}],
+            "fill_strategy": "cartesian_product",
         }
 
         response = self.client.post(url, data, format="json")
@@ -294,10 +294,10 @@ class AdvancedAutofillAPITest(APITestCase):
         """Test advanced autofill with invalid specification."""
         url = f"/api/v1/metadata-tables/{self.table.pk}/advanced_autofill/"
         data = {
-            "templateSamples": [],
-            "targetSampleCount": 10,
+            "template_samples": [],
+            "target_sample_count": 10,
             "variations": [],
-            "fillStrategy": "cartesian_product",
+            "fill_strategy": "cartesian_product",
         }
 
         response = self.client.post(url, data, format="json")
@@ -312,10 +312,10 @@ class AdvancedAutofillAPITest(APITestCase):
 
         url = f"/api/v1/metadata-tables/{self.table.pk}/advanced_autofill/"
         data = {
-            "templateSamples": [1],
-            "targetSampleCount": 10,
-            "variations": [{"columnId": self.column1.id, "type": "range", "start": 1, "end": 5}],
-            "fillStrategy": "cartesian_product",
+            "template_samples": [1],
+            "target_sample_count": 10,
+            "variations": [{"column_id": self.column1.id, "type": "range", "start": 1, "end": 5}],
+            "fill_strategy": "cartesian_product",
         }
 
         response = self.client.post(url, data, format="json")
@@ -336,12 +336,12 @@ class AdvancedAutofillAPITest(APITestCase):
 
         url = f"/api/v1/metadata-tables/{self.table.pk}/advanced_autofill/"
         data = {
-            "templateSamples": [1],
-            "targetSampleCount": 50,
+            "template_samples": [1],
+            "target_sample_count": 50,
             "variations": [
-                {"columnId": fraction_col.id, "type": "range", "start": 1, "end": 5, "step": 1},
+                {"column_id": fraction_col.id, "type": "range", "start": 1, "end": 5, "step": 1},
                 {
-                    "columnId": label_col.id,
+                    "column_id": label_col.id,
                     "type": "list",
                     "values": [
                         "TMT126",
@@ -357,16 +357,16 @@ class AdvancedAutofillAPITest(APITestCase):
                     ],
                 },
             ],
-            "fillStrategy": "cartesian_product",
+            "fill_strategy": "cartesian_product",
         }
 
         response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["status"], "success")
-        self.assertEqual(response.data["samplesModified"], 50)
-        self.assertEqual(response.data["columnsModified"], 2)
-        self.assertEqual(response.data["variationsCombinations"], 50)
+        self.assertEqual(response.data["samples_modified"], 50)
+        self.assertEqual(response.data["columns_modified"], 2)
+        self.assertEqual(response.data["variations_combinations"], 50)
         self.assertEqual(response.data["strategy"], "cartesian_product")
 
         fraction_col.refresh_from_db()

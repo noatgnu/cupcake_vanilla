@@ -11,12 +11,15 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
+
+from ccc.api_schema import ActionMessageSerializer, CurrentUserSerializer, ErrorSerializer, LogoutSerializer
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -148,6 +151,11 @@ def login_view(request):
         return JsonResponse({"error": "Invalid credentials"}, status=401)
 
 
+@extend_schema(
+    tags=["auth"],
+    request=LogoutSerializer,
+    responses={200: ActionMessageSerializer, 400: ErrorSerializer},
+)
 @api_view(["POST"])
 def logout_view(request):
     """
@@ -174,6 +182,7 @@ def logout_view(request):
         return Response({"error": "Invalid token"}, status=status.HTTP_400_BAD_REQUEST)
 
 
+@extend_schema(tags=["auth"], responses={200: CurrentUserSerializer, 401: ErrorSerializer})
 @api_view(["GET"])
 def user_profile_view(request):
     """

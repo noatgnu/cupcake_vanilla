@@ -544,6 +544,7 @@ class CCMViewSetTests(APITestCase):
     def test_instrument_usage_my_usage(self):
         """Test my_usage endpoint for instrument usage."""
         instrument = Instrument.objects.create(instrument_name="Test Instrument")
+        InstrumentPermission.objects.create(instrument=instrument, user=self.user, can_view=True)
 
         # Create usage record for current user
         InstrumentUsage.objects.create(
@@ -571,6 +572,7 @@ class CCMViewSetTests(APITestCase):
     def test_instrument_usage_filter_by_updated_at(self):
         """Test incremental sync filtering: updated_at__gte/__lte on InstrumentUsage."""
         instrument = Instrument.objects.create(instrument_name="Sync Test Instrument")
+        InstrumentPermission.objects.create(instrument=instrument, user=self.user, can_view=True)
         usage = InstrumentUsage.objects.create(
             instrument=instrument, user=self.user, description="Sync test run", time_started=timezone.now()
         )
@@ -589,6 +591,7 @@ class CCMViewSetTests(APITestCase):
     def test_instrument_usage_destroy_creates_deletion_log(self):
         """Test that deleting an instrument usage writes a DeletionLog tombstone for mobile delta sync."""
         instrument = Instrument.objects.create(instrument_name="Deletable Usage Instrument")
+        InstrumentPermission.objects.create(instrument=instrument, user=self.user, can_view=True, can_book=True)
         usage = InstrumentUsage.objects.create(
             instrument=instrument, user=self.user, description="Deletable run", time_started=timezone.now()
         )

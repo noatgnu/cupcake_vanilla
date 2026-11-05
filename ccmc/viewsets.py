@@ -4,15 +4,34 @@ ViewSets for CUPCAKE Core Macaron Communication (CCMC) models.
 Provides REST API endpoints for messaging, notifications, and communication functionality.
 """
 
+from uuid import UUID
+
+from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from ccc.api_schema import ActionMessageSerializer, ErrorSerializer
+
+from .api_schema import (
+    NotificationsMarkedReadSerializer,
+    NotificationStatsSerializer,
+    ParticipantAddedSerializer,
+    ParticipantSettingsSerializer,
+    ThreadArchivedSerializer,
+    ThreadParticipantPageSerializer,
+    ThreadReadSerializer,
+    ThreadUsernameSerializer,
+    WebRTCSessionEndedSerializer,
+)
 from .models import (
     DeliveryStatus,
     Message,
@@ -62,6 +81,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter notifications based on user permissions."""
+        if getattr(self, "swagger_fake_view", False):
+            return Notification.objects.none()
         user = self.request.user
 
         # Staff users can see all notifications they sent or received
@@ -79,6 +100,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
         """Set sender when creating notification."""
         serializer.save(sender=self.request.user)
 
+    @extend_schema(request=None, responses={200: NotificationSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def mark_read(self, request, pk=None):
         """Mark notification as read."""
@@ -95,6 +117,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(notification)
         return Response(serializer.data)
 
+    @extend_schema(responses={200: NotificationSerializer(many=True)})
     @action(detail=False, methods=["get"])
     def unread(self, request):
         """Get unread notifications for current user."""
@@ -111,6 +134,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=None, responses={200: NotificationsMarkedReadSerializer})
     @action(detail=False, methods=["post"])
     def mark_all_read(self, request):
         """Mark all unread notifications as read for current user."""
@@ -120,6 +144,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
         return Response({"success": True, "message": f"Marked {updated_count} notifications as read"})
 
+    @extend_schema(filters=False, responses={200: NotificationStatsSerializer})
     @action(detail=False, methods=["get"])
     def stats(self, request):
         """Get notification statistics for current user."""
@@ -165,6 +190,8 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter threads based on user participation."""
+        if getattr(self, "swagger_fake_view", False):
+            return MessageThread.objects.none()
         user = self.request.user
 
         # Users can see threads they participate in
@@ -186,6 +213,10 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
         headers = self.get_success_headers(output_serializer.data)
         return Response(output_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
+    @extend_schema(
+        request=ThreadUsernameSerializer,
+        responses={200: ParticipantAddedSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def add_participant(self, request, pk=None):
         """Add participant to thread."""
@@ -202,8 +233,6 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
             return Response({"error": "Only moderators can add participants"}, status=status.HTTP_403_FORBIDDEN)
 
         try:
-            from django.contrib.auth import get_user_model
-
             User = get_user_model()
             user_to_add = User.objects.get(username=username, is_active=True)
 
@@ -224,6 +253,10 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    @extend_schema(
+        request=ThreadUsernameSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def remove_participant(self, request, pk=None):
         """Remove participant from thread."""
@@ -240,8 +273,6 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
             return Response({"error": "Only moderators can remove participants"}, status=status.HTTP_403_FORBIDDEN)
 
         try:
-            from django.contrib.auth import get_user_model
-
             User = get_user_model()
             user_to_remove = User.objects.get(username=username)
 
@@ -260,6 +291,10 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    @extend_schema(
+        parameters=[OpenApiParameter("limit", int), OpenApiParameter("offset", int)],
+        responses={200: ThreadParticipantPageSerializer},
+    )
     @action(detail=True, methods=["get"])
     def participants(self, request, pk=None):
         """Get thread participants."""
@@ -274,6 +309,7 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
         serializer = ThreadParticipantSerializer(participants, many=True)
         return Response(serializer.data)
 
+    @extend_schema(request=None, responses={200: ThreadArchivedSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def archive(self, request, pk=None):
         """Archive/unarchive thread."""
@@ -292,6 +328,20 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
                 "is_archived": thread.is_archived,
             }
         )
+
+    @extend_schema(request=None, responses={200: ThreadReadSerializer, 404: ErrorSerializer})
+    @action(detail=True, methods=["post"])
+    def mark_read(self, request, pk=None):
+        """Mark the thread as read for the current user."""
+        thread = self.get_object()
+        participant = ThreadParticipant.objects.filter(thread=thread, user=request.user).first()
+        if participant is None:
+            return Response({"error": "You are not a participant of this thread"}, status=status.HTTP_404_NOT_FOUND)
+
+        participant.last_read_at = timezone.now()
+        participant.save(update_fields=["last_read_at"])
+
+        return Response({"message": "Thread marked as read", "last_read_at": participant.last_read_at})
 
 
 class MessageViewSet(viewsets.ModelViewSet):
@@ -312,6 +362,8 @@ class MessageViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter messages based on thread participation."""
+        if getattr(self, "swagger_fake_view", False):
+            return Message.objects.none()
         user = self.request.user
 
         # Users can see messages in threads they participate in
@@ -321,8 +373,26 @@ class MessageViewSet(viewsets.ModelViewSet):
             .prefetch_related("annotations")
         )
 
+    def require_participant(self, thread):
+        """Raise PermissionDenied unless the user participates in the thread."""
+        if not thread.participants.filter(pk=self.request.user.pk).exists():
+            raise PermissionDenied("You are not a participant of this thread")
+
+    def require_reply_in_thread(self, reply_to, thread):
+        """Raise ValidationError unless the replied-to message belongs to the same thread."""
+        if reply_to is not None and reply_to.thread_id != thread.pk:
+            raise ValidationError({"reply_to": "The replied-to message is not in this thread"})
+
+    def require_sender(self, message):
+        """Raise PermissionDenied unless the user sent the message."""
+        if message.sender_id != self.request.user.pk:
+            raise PermissionDenied("Only the message sender can change this message")
+
     def perform_create(self, serializer):
-        """Set sender and update thread timestamp."""
+        """Set sender and update thread timestamp; only thread participants can post."""
+        thread = serializer.validated_data["thread"]
+        self.require_participant(thread)
+        self.require_reply_in_thread(serializer.validated_data.get("reply_to"), thread)
         message = serializer.save(sender=self.request.user)
 
         # Update thread last_message_at
@@ -332,10 +402,18 @@ class MessageViewSet(viewsets.ModelViewSet):
         return message
 
     def perform_update(self, serializer):
-        """Mark message as edited when updated."""
-        message = serializer.save(is_edited=True)
-        return message
+        """Mark message as edited when updated; only the sender can edit, within the same thread."""
+        message = serializer.instance
+        self.require_sender(message)
+        self.require_reply_in_thread(serializer.validated_data.get("reply_to"), message.thread)
+        return serializer.save(is_edited=True, thread=message.thread)
 
+    def perform_destroy(self, instance):
+        """Only the sender can delete the message."""
+        self.require_sender(instance)
+        instance.delete()
+
+    @extend_schema(request=None, responses={200: ActionMessageSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def soft_delete(self, request, pk=None):
         """Soft delete message."""
@@ -350,6 +428,11 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         return Response({"message": "Message deleted"})
 
+    @extend_schema(
+        filters=False,
+        parameters=[OpenApiParameter("thread_id", OpenApiTypes.UUID, required=True)],
+        responses={200: MessageSerializer(many=True), 400: ErrorSerializer, 404: ErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def thread_messages(self, request):
         """Get messages for a specific thread."""
@@ -360,8 +443,6 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         # Check if user participates in thread
         try:
-            from uuid import UUID
-
             thread_uuid = UUID(thread_id)
             thread = MessageThread.objects.get(id=thread_uuid, participants=request.user)
         except (ValueError, MessageThread.DoesNotExist):
@@ -390,11 +471,16 @@ class ThreadParticipantViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         """Filter participants based on thread access."""
+        if getattr(self, "swagger_fake_view", False):
+            return ThreadParticipant.objects.none()
         user = self.request.user
 
         # Users can see participants of threads they participate in
         return ThreadParticipant.objects.filter(thread__participants=user).select_related("user", "thread")
 
+    @extend_schema(
+        request=ParticipantSettingsSerializer, responses={200: ThreadParticipantSerializer, 403: ErrorSerializer}
+    )
     @action(detail=True, methods=["post"])
     def update_settings(self, request, pk=None):
         """Update participant settings (only own settings)."""
@@ -413,6 +499,7 @@ class ThreadParticipantViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(participant)
         return Response(serializer.data)
 
+    @extend_schema(request=None, responses={200: ThreadReadSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def mark_read(self, request, pk=None):
         """Mark thread as read for participant."""
@@ -468,18 +555,15 @@ class WebRTCSessionViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         if not self.check_edit_permission(serializer.instance):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("You don't have permission to edit this WebRTC session")
         serializer.save()
 
     def perform_destroy(self, instance):
         if not self.check_edit_permission(instance):
-            from rest_framework.exceptions import PermissionDenied
-
             raise PermissionDenied("You don't have permission to delete this WebRTC session")
         instance.delete()
 
+    @extend_schema(request=None, responses={200: WebRTCSessionEndedSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["post"])
     def end_session(self, request, pk=None):
         session = self.get_object()

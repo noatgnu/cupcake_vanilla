@@ -5,17 +5,33 @@ import logging
 from django.db.models import Count, Q
 
 from choux import APIError
+from drf_spectacular.utils import OpenApiParameter, PolymorphicProxySerializer, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from ccc.api_schema import ErrorSerializer
 from ccc.models import AsyncTaskStatus, LabGroup
 from ccc.permissions import IsOwnerEditorViewerOrNoAccess
 from ccrv.models import ProtocolModel, Session, StepVariation
 from ccrv.serializers import ProtocolModelSerializer
 from cupcake_protocols_io import browser
 from cupcake_protocols_io.accounts import ProtocolsIOAccountMissing, client_for, connect_account, disconnect_account
+from cupcake_protocols_io.api_schema import (
+    AccountStatusSerializer,
+    BrowseItemsPageSerializer,
+    ExportQueuedSerializer,
+    ImportByUrlSerializer,
+    ImportFromAccountSerializer,
+    ProtocolExportRequestSerializer,
+    ProtocolsIOErrorSerializer,
+    ProtocolsNotExportedSerializer,
+    SessionExportRequestSerializer,
+    SessionExportStatusSerializer,
+    SingleObjectSchema,
+    WorkspacePageSerializer,
+)
 from cupcake_protocols_io.exporter import protocol_reference
 from cupcake_protocols_io.importer import import_protocol, import_protocol_from_url
 from cupcake_protocols_io.models import ProtocolsIOAccount
@@ -61,6 +77,16 @@ class ProtocolsIOProtocolViewSet(viewsets.GenericViewSet):
         """Return the representation of an imported protocol."""
         return ProtocolModelSerializer(protocol, context=self.get_serializer_context()).data
 
+    @extend_schema(
+        tags=["protocols-io"],
+        request=ImportByUrlSerializer,
+        responses={
+            201: ProtocolModelSerializer,
+            400: ErrorSerializer,
+            500: ErrorSerializer,
+            502: ProtocolsIOErrorSerializer,
+        },
+    )
     @action(detail=False, methods=["post"], url_path="import")
     def import_protocol(self, request):
         """
@@ -93,6 +119,11 @@ class ProtocolsIOProtocolViewSet(viewsets.GenericViewSet):
         protocol.save()
         return Response(self.created(protocol), status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        tags=["protocols-io"],
+        request=ImportFromAccountSerializer,
+        responses={201: ProtocolModelSerializer, 400: ErrorSerializer, 502: ProtocolsIOErrorSerializer},
+    )
     @action(detail=False, methods=["post"])
     def import_from_account(self, request):
         """
@@ -120,6 +151,11 @@ class ProtocolsIOProtocolViewSet(viewsets.GenericViewSet):
         protocol.save()
         return Response(self.created(protocol), status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        tags=["protocols-io"],
+        request=ProtocolExportRequestSerializer,
+        responses={202: ExportQueuedSerializer, 400: ErrorSerializer},
+    )
     @action(detail=True, methods=["post"])
     def export(self, request, pk=None):
         """
@@ -153,6 +189,7 @@ class ProtocolsIOProtocolViewSet(viewsets.GenericViewSet):
             {"task_id": str(task.id), "message": "protocols.io export queued"}, status=status.HTTP_202_ACCEPTED
         )
 
+    @extend_schema(tags=["protocols-io"], responses={200: ProtocolsIOExportSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def exports(self, request, pk=None):
         """List the protocols.io protocols this protocol was exported into, most recent first."""
@@ -171,6 +208,18 @@ class ProtocolsIOSessionViewSet(viewsets.GenericViewSet):
         """Return the sessions the user can see."""
         return visible_to(self.queryset, self.request.user)
 
+    @extend_schema(
+        tags=["protocols-io"],
+        request=SessionExportRequestSerializer,
+        responses={
+            202: ExportQueuedSerializer,
+            400: PolymorphicProxySerializer(
+                component_name="SessionExportRejected",
+                serializers=[ProtocolsNotExportedSerializer, ErrorSerializer],
+                resource_type_field_name=None,
+            ),
+        },
+    )
     @action(detail=True, methods=["post"])
     def export(self, request, pk=None):
         """
@@ -238,6 +287,7 @@ class ProtocolsIOSessionViewSet(viewsets.GenericViewSet):
             {"task_id": str(task.id), "message": "protocols.io session export queued"}, status=status.HTTP_202_ACCEPTED
         )
 
+    @extend_schema(tags=["protocols-io"], responses={200: SessionExportStatusSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def status(self, request, pk=None):
         """
@@ -270,6 +320,7 @@ class ProtocolsIOSessionViewSet(viewsets.GenericViewSet):
             )
         return Response(entries)
 
+    @extend_schema(tags=["protocols-io"], responses={200: ProtocolsIORunSerializer(many=True)})
     @action(detail=True, methods=["get"])
     def runs(self, request, pk=None):
         """List the protocols.io runs this session was exported into, most recent first."""
@@ -284,7 +335,9 @@ class ProtocolsIOAccountViewSet(viewsets.ViewSet):
     """Connect, inspect and disconnect the requesting user's protocols.io account."""
 
     permission_classes = [IsAuthenticated]
+    schema = SingleObjectSchema()
 
+    @extend_schema(tags=["protocols-io"], responses={200: AccountStatusSerializer})
     def list(self, request):
         """Return whether the user has a connected account and which one."""
         account = ProtocolsIOAccount.objects.filter(user=request.user).first()
@@ -292,6 +345,11 @@ class ProtocolsIOAccountViewSet(viewsets.ViewSet):
             return Response({"connected": False})
         return Response({"connected": True, **ProtocolsIOAccountSerializer(account).data})
 
+    @extend_schema(
+        tags=["protocols-io"],
+        request=ProtocolsIOConnectSerializer,
+        responses={201: AccountStatusSerializer, 400: ProtocolsIOErrorSerializer},
+    )
     def create(self, request):
         """Check a protocols.io access token and save it for the user."""
         serializer = ProtocolsIOConnectSerializer(data=request.data)
@@ -307,6 +365,7 @@ class ProtocolsIOAccountViewSet(viewsets.ViewSet):
             {"connected": True, **ProtocolsIOAccountSerializer(account).data}, status=status.HTTP_201_CREATED
         )
 
+    @extend_schema(tags=["protocols-io"], responses={204: None})
     @action(detail=False, methods=["delete"])
     def disconnect(self, request):
         """Remove the user's saved protocols.io account."""
@@ -336,11 +395,24 @@ class ProtocolsIOBrowseViewSet(viewsets.ViewSet):
                 {"error": "protocols.io request failed", "detail": str(error)}, status=status.HTTP_502_BAD_GATEWAY
             )
 
+    @extend_schema(
+        tags=["protocols-io"],
+        parameters=[OpenApiParameter("page", int, description="1 when not given")],
+        responses={200: WorkspacePageSerializer, 400: ErrorSerializer, 502: ProtocolsIOErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def workspaces(self, request):
         """List the workspaces the user is a member of."""
         return self._respond(request, browser.list_workspaces)
 
+    @extend_schema(
+        tags=["protocols-io"],
+        parameters=[
+            OpenApiParameter("workspace", str, required=True),
+            OpenApiParameter("page", int, description="1 when not given"),
+        ],
+        responses={200: BrowseItemsPageSerializer, 400: ErrorSerializer, 502: ProtocolsIOErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def workspace_items(self, request):
         """List the top-level folders of the workspace given by ``workspace``."""
@@ -349,6 +421,14 @@ class ProtocolsIOBrowseViewSet(viewsets.ViewSet):
             return Response({"error": "workspace is required"}, status=status.HTTP_400_BAD_REQUEST)
         return self._respond(request, lambda client, page: browser.workspace_folders(client, workspace, page))
 
+    @extend_schema(
+        tags=["protocols-io"],
+        parameters=[
+            OpenApiParameter("folder", str, required=True),
+            OpenApiParameter("page", int, description="1 when not given"),
+        ],
+        responses={200: BrowseItemsPageSerializer, 400: ErrorSerializer, 502: ProtocolsIOErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def folder_items(self, request):
         """List the folders and protocols in the folder given by ``folder``."""
@@ -357,6 +437,14 @@ class ProtocolsIOBrowseViewSet(viewsets.ViewSet):
             return Response({"error": "folder is required"}, status=status.HTTP_400_BAD_REQUEST)
         return self._respond(request, lambda client, page: browser.folder_items(client, folder, page))
 
+    @extend_schema(
+        tags=["protocols-io"],
+        parameters=[
+            OpenApiParameter("q", str, required=True),
+            OpenApiParameter("page", int, description="1 when not given"),
+        ],
+        responses={200: BrowseItemsPageSerializer, 400: ErrorSerializer, 502: ProtocolsIOErrorSerializer},
+    )
     @action(detail=False, methods=["get"])
     def search(self, request):
         """Search protocols in every workspace the user can see for the text given by ``q``."""

@@ -415,7 +415,7 @@ class PluginManifestTest(APITestCase):
 
 class PluginBroadcastTest(APITestCase):
     def setUp(self):
-        self.user = _make_user("broaduser")
+        self.user = _make_user("broaduser", staff=True)
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
         self.plugin = _make_plugin()
@@ -463,6 +463,11 @@ class PluginBroadcastTest(APITestCase):
         self.client.force_authenticate(user=None)
         response = self._broadcast({"scope": "global", "payload": {}})
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_broadcast_by_non_admin_returns_403(self):
+        self.client.force_authenticate(user=_make_user("regularbroaduser"))
+        response = self._broadcast({"scope": "global", "payload": {}})
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class PluginStaffMutationTest(APITestCase):
