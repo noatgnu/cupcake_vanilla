@@ -57,6 +57,30 @@ class AutofillSpec(TypedDict):
     fill_strategy: Literal["cartesian_product", "sequential", "interleaved"]
 
 
+def sample_modifier_values(modifiers) -> Dict[int, str]:
+    """
+    Map each 1-based sample number to its value from a column's modifiers.
+
+    Modifier sample ranges look like "1,2,3" or "4-6"; when ranges overlap, the first modifier wins.
+    """
+    values = {}
+    if not modifiers or not isinstance(modifiers, list):
+        return values
+    for modifier in modifiers:
+        if not isinstance(modifier, dict) or not modifier.get("samples", ""):
+            continue
+        for part in modifier["samples"].split(","):
+            part = part.strip()
+            if "-" in part:
+                start, end = part.split("-")
+                numbers = range(int(start), int(end) + 1)
+            else:
+                numbers = (int(part),)
+            for number in numbers:
+                values.setdefault(number, modifier.get("value", ""))
+    return values
+
+
 def sort_metadata(
     metadata_columns: List[MetadataColumn], sample_number: int, metadata_table=None
 ) -> Tuple[List[List[str]], Dict[int, Dict[str, Any]]]:
@@ -106,6 +130,7 @@ def sort_metadata(
 
     # Create data rows
     result = [headers]
+    modifier_values = {metadata.id: sample_modifier_values(metadata.modifiers) for metadata in sorted_metadata}
 
     for sample_idx in range(sample_number):
         row = []
@@ -121,26 +146,7 @@ def sort_metadata(
                     # Independent samples that are not in any pool show as "not pooled"
                     value = "not pooled"
             else:
-                # Check for sample-specific modifiers
-                if metadata.modifiers and isinstance(metadata.modifiers, list):
-                    # Look for sample-specific values in modifiers
-                    for modifier in metadata.modifiers:
-                        if isinstance(modifier, dict):
-                            sample_range = modifier.get("samples", "")
-                            # Parse sample range string (can be "1,2,3" or "4-6")
-                            if sample_range:
-                                sample_indices = []
-                                for part in sample_range.split(","):
-                                    part = part.strip()
-                                    if "-" in part:
-                                        start, end = part.split("-")
-                                        sample_indices.extend(range(int(start), int(end) + 1))
-                                    else:
-                                        sample_indices.append(int(part))
-
-                                if (sample_idx + 1) in sample_indices:
-                                    value = modifier.get("value", "")
-                                    break
+                value = modifier_values[metadata.id].get(sample_idx + 1, "")
 
                 # Use default value if no modifier found
                 if not value:

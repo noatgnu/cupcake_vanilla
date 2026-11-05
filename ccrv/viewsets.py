@@ -448,6 +448,17 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
             self.queryset, self.request.user, prefix="", include_public=asks_for_one(self, "unique_id")
         )
 
+    def perform_destroy(self, instance):
+        """Delete the session, then the annotations and files that only this session used."""
+        annotation_ids = set(StepAnnotation.objects.filter(session=instance).values_list("annotation_id", flat=True))
+        annotation_ids |= set(
+            SessionAnnotation.objects.filter(session=instance).values_list("annotation_id", flat=True)
+        )
+        super().perform_destroy(instance)
+        for annotation in Annotation.objects.filter(id__in=annotation_ids):
+            if not annotation.is_attached():
+                annotation.delete_with_file()
+
     def list(self, request, *args, **kwargs):
         """List sessions; asking for a public session by its unique id unlocks it for the user."""
         self.unlock_by_unique_id(request.query_params.get("unique_id"), request.user)

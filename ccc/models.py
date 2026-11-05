@@ -1625,6 +1625,18 @@ class Annotation(AbstractResource):
             return f"{self.get_annotation_type_display()}: {preview}"
         return f"{self.get_annotation_type_display()}: [File]"
 
+    def is_attached(self):
+        """Whether the annotation is filed in a folder, or any resource, message or thread still uses it."""
+        if self.folder_id:
+            return True
+        return any(getattr(self, relation.get_accessor_name()).exists() for relation in self._meta.related_objects)
+
+    def delete_with_file(self):
+        """Delete the annotation and its uploaded file."""
+        if self.file:
+            self.file.delete(save=False)
+        self.delete()
+
     def _check_parent_resource_permission(self, user, permission_method):
         """
         Check permissions on parent resources via junction models.
