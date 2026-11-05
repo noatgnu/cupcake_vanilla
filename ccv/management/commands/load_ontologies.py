@@ -36,6 +36,23 @@ from tqdm import tqdm
 from ccv.data_sources import last_modified_release, obo_release, record_source
 from ccv.models import BTOTerm, CellOntology, DiseaseOntologyTerm, MondoDisease, PSIMSOntology, UberonAnatomy
 
+TEMPORARY_HTTP_STATUSES = (429, 500, 502, 503, 504)
+DOWNLOAD_ATTEMPTS = 4
+
+
+def download(url, timeout):
+    """GET the url, retrying connection errors, timeouts and temporary server errors with increasing waits."""
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            response = requests.get(url, timeout=timeout)
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise
+        else:
+            if response.status_code not in TEMPORARY_HTTP_STATUSES or attempt == DOWNLOAD_ATTEMPTS:
+                return response
+        time.sleep(10 * attempt)
+
 
 class OBOParser:
     """Generic OBO format parser for ontology files."""
@@ -209,7 +226,7 @@ class Command(BaseCommand):
         mondo_url = "http://purl.obolibrary.org/obo/mondo.obo"
 
         try:
-            response = requests.get(mondo_url, timeout=120)
+            response = download(mondo_url, timeout=120)
             response.raise_for_status()
 
             parser = OBOParser()
@@ -291,7 +308,7 @@ class Command(BaseCommand):
         uberon_url = "http://purl.obolibrary.org/obo/uberon.obo"
 
         try:
-            response = requests.get(uberon_url, timeout=120)
+            response = download(uberon_url, timeout=120)
             response.raise_for_status()
 
             parser = OBOParser()
@@ -377,7 +394,7 @@ class Command(BaseCommand):
 
         try:
             self.stdout.write("Downloading NCBI taxonomy data (this may take a while)...")
-            response = requests.get(names_url, timeout=300)
+            response = download(names_url, timeout=300)
             response.raise_for_status()
 
             # Create temporary directory for extraction
@@ -1075,7 +1092,7 @@ class Command(BaseCommand):
         psims_url = "http://purl.obolibrary.org/obo/ms.obo"
 
         try:
-            response = requests.get(psims_url, timeout=120)
+            response = download(psims_url, timeout=120)
             response.raise_for_status()
 
             parser = OBOParser()
@@ -1167,7 +1184,7 @@ class Command(BaseCommand):
         cl_url = "http://purl.obolibrary.org/obo/cl.obo"
 
         try:
-            response = requests.get(cl_url, timeout=120)
+            response = download(cl_url, timeout=120)
             response.raise_for_status()
 
             parser = OBOParser()
@@ -1257,7 +1274,7 @@ class Command(BaseCommand):
         bto_url = "http://purl.obolibrary.org/obo/bto.obo"
 
         try:
-            response = requests.get(bto_url, timeout=120)
+            response = download(bto_url, timeout=120)
             response.raise_for_status()
 
             parser = OBOParser()
@@ -1332,7 +1349,7 @@ class Command(BaseCommand):
         doid_url = "http://purl.obolibrary.org/obo/doid.obo"
 
         try:
-            response = requests.get(doid_url, timeout=120)
+            response = download(doid_url, timeout=120)
             response.raise_for_status()
 
             parser = OBOParser()
