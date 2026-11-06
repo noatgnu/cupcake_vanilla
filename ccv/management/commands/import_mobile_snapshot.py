@@ -34,7 +34,7 @@ from django.utils.dateparse import parse_datetime
 import requests
 
 from ccv.management.commands.export_mobile_snapshot import _scalar_fields
-from ccv.models import MetadataColumnTemplate
+from ccv.models import MetadataColumnTemplate, VocabularyTerm
 from ccv.ontology_registry import registry
 
 GITHUB_RELEASES_API = "https://api.github.com/repos/noatgnu/cupcake-webgui/releases"
@@ -124,14 +124,15 @@ class Command(BaseCommand):
             descriptor = registry.get(entry["name"])
             if descriptor is None:
                 raise CommandError(f"Unknown ontology type_key: {entry['name']}")
+            fixed = descriptor.base_filter if descriptor.model is VocabularyTerm else None
             return self._import_scalar_table(
-                descriptor.model, entry["name"], sqlite_path, replaced=descriptor.base_queryset()
+                descriptor.model, entry["name"], sqlite_path, replaced=descriptor.base_queryset(), fixed=fixed
             )
         if entry["dataset"] == "column-template":
             return self._import_scalar_table(MetadataColumnTemplate, "column_template", sqlite_path)
         raise CommandError(f"Unsupported dataset for import: {entry['dataset']}")
 
-    def _import_scalar_table(self, model, sqlite_table, sqlite_path, batch_size=2000, replaced=None):
+    def _import_scalar_table(self, model, sqlite_table, sqlite_path, batch_size=2000, replaced=None, fixed=None):
         """Stream rows from the sqlite table in batches rather than materializing the whole
         table as model instances at once -- ncbi_taxonomy alone is ~2.9M rows, so building
         every instance in memory before a single bulk_create would risk the exact kind of OOM
@@ -162,7 +163,8 @@ class Command(BaseCommand):
                         exported_columns = set(rows[0].keys())
                         usable_fields = [f for f in fields if f.column in exported_columns]
                     batch = [
-                        model(**{f.attname: _deserialize(f, row[f.column]) for f in usable_fields}) for row in rows
+                        model(**{f.attname: _deserialize(f, row[f.column]) for f in usable_fields}, **(fixed or {}))
+                        for row in rows
                     ]
                     model.objects.bulk_create(batch, batch_size=batch_size)
                     total += len(batch)

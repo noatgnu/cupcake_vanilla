@@ -52,6 +52,8 @@ EXPECTED_TYPE_KEYS = [
     "protocols_io_reagent",
     "protocols_io_unit",
 ]
+ADDON_TYPE_KEYS = ["protocols_io_reagent", "protocols_io_unit"]
+BUILTIN_TYPE_KEYS = [key for key in EXPECTED_TYPE_KEYS if key not in ADDON_TYPE_KEYS]
 
 EXPECTED_SDRF_NAMES = [
     "ncbitaxon",
@@ -134,15 +136,15 @@ class RegistryCompletenessTest(TestCase):
     """Verify all required type_keys and SDRF names are registered."""
 
     def test_all_type_keys_registered(self):
-        """All 14 ontology type_keys must be present in the registry."""
-        registered = set(registry._descriptors.keys())
+        """Every built-in and add-on ontology type resolves to a descriptor."""
         for key in EXPECTED_TYPE_KEYS:
-            self.assertIn(key, registered, f"Missing type_key: {key}")
+            self.assertIsNotNone(registry.get(key), f"Missing type_key: {key}")
 
     def test_no_unexpected_type_keys(self):
-        """Registry must not contain undocumented type_keys."""
-        registered = set(registry._descriptors.keys())
-        self.assertEqual(registered, set(EXPECTED_TYPE_KEYS))
+        """Only the built-in ontologies are described in code; add-on vocabularies come from their rows."""
+        self.assertEqual(set(registry._descriptors.keys()), set(BUILTIN_TYPE_KEYS))
+        for key in ADDON_TYPE_KEYS:
+            self.assertEqual(registry.get(key).model_label, "ccv.VocabularyTerm")
 
     def test_all_sdrf_names_registered(self):
         """All 14 SDRF short-names must have at least one mapping."""

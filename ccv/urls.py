@@ -42,6 +42,7 @@ from .viewsets import (
     TissueViewSet,
     UberonAnatomyViewSet,
     UnimodViewSet,
+    VocabularyViewSet,
 )
 
 app_name = "ccv"
@@ -71,6 +72,7 @@ router.register(r"ontology/cell-types", CellOntologyViewSet, basename="cellontol
 router.register(r"ontology/bto", BTOTermViewSet, basename="btoterm")
 router.register(r"ontology/doid", DiseaseOntologyTermViewSet, basename="doidterm")
 router.register(r"ontology/search", OntologySearchViewSet, basename="ontologysearch")
+router.register(r"vocabularies", VocabularyViewSet, basename="vocabulary")
 router.register(r"schemas", SchemaViewSet, basename="schema")
 router.register(r"sdrf-defaults", SDRFDefaultsViewSet, basename="sdrfdefaults")
 router.register(r"shared-tables", SharedTableViewSet, basename="sharedtable")

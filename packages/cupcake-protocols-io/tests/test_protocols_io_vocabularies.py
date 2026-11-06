@@ -20,7 +20,7 @@ from ccv.external_vocabularies import ExternalTermData, refresh_from_platform, s
 from ccv.external_vocabularies.tasks import refresh_external_vocabulary_task, request_refresh
 from ccv.management.commands.export_mobile_snapshot import _dump_queryset
 from ccv.management.commands.import_mobile_snapshot import Command as ImportCommand
-from ccv.models import ExternalTerm
+from ccv.models import VocabularyTerm
 from ccv.ontology_registry import registry
 from cupcake_protocols_io.external_vocabularies import reagent_term, reagents, unit_term, units
 
@@ -41,8 +41,8 @@ REMOVED = {"id": 99, "type_id": 3, "name": "old", "aliases": [], "deleted": True
 
 
 def stored(platform="protocols_io", kind="reagent"):
-    """Return the cached terms of one platform and kind."""
-    return ExternalTerm.objects.filter(platform=platform, kind=kind)
+    """Return the stored terms of the vocabulary for one platform and kind."""
+    return VocabularyTerm.objects.filter(vocabulary__key=f"{platform}_{kind}")
 
 
 @override_settings(CACHES=LOCAL_CACHE, PROTOCOLS_IO_ACCESS_TOKEN="token")
@@ -64,11 +64,11 @@ class StoreTermsTest(TestCase):
     def test_same_id_on_another_kind_is_a_separate_term(self):
         store_terms(reagents, [reagent_term({**RIPA, "id": 1})])
         store_terms(units, [unit_term(MICROLITRE)])
-        self.assertEqual(ExternalTerm.objects.filter(external_id="1").count(), 2)
+        self.assertEqual(VocabularyTerm.objects.filter(external_id="1").count(), 2)
 
     def test_terms_without_id_or_name_are_skipped(self):
         self.assertEqual(store_terms(reagents, [ExternalTermData("", "x"), ExternalTermData("5", "")]), 0)
-        self.assertFalse(ExternalTerm.objects.exists())
+        self.assertFalse(VocabularyTerm.objects.exists())
 
 
 @override_settings(CACHES=LOCAL_CACHE, PROTOCOLS_IO_ACCESS_TOKEN="token")
@@ -104,7 +104,7 @@ class RefreshFromPlatformTest(TestCase):
                 self.assertEqual(refresh_from_platform("protocols_io_reagent", "RIPA"), 0)
             self.assertEqual(refresh_from_platform("protocols_io_reagent", "RIPA"), 0)
         search.assert_called_once()
-        self.assertFalse(ExternalTerm.objects.exists())
+        self.assertFalse(VocabularyTerm.objects.exists())
 
 
 class ProtocolsIOTermTest(TestCase):
@@ -288,9 +288,7 @@ class SnapshotIsolationTest(TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "units.sqlite"
             _dump_queryset(descriptor.base_queryset(), "protocols_io_unit", path)
-            imported = ImportCommand()._import_scalar_table(
-                descriptor.model, "protocols_io_unit", path, replaced=descriptor.base_queryset()
-            )
+            imported = ImportCommand()._import_entry({"dataset": "ontology", "name": "protocols_io_unit"}, path)
         self.assertEqual(imported, 1)
         self.assertEqual(stored(kind="unit").count(), 1)
         self.assertEqual(stored(kind="reagent").count(), 1)

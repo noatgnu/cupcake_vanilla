@@ -11,6 +11,7 @@ from .models import (
     BTOTerm,
     CellOntology,
     ChEBICompound,
+    DataSourceVersion,
     DiseaseOntologyTerm,
     FavouriteMetadataOption,
     HumanDisease,
@@ -30,8 +31,19 @@ from .models import (
     Tissue,
     UberonAnatomy,
     Unimod,
+    Vocabulary,
 )
 from .ontology_registry import registry
+
+
+def validate_vocabulary_key(value, user=None):
+    """Raise a validation error unless the value is empty or the key of a vocabulary the user can use."""
+    if not value:
+        return value
+    vocabularies = Vocabulary.objects.visible_to(user) if user is not None else Vocabulary.objects.usable()
+    if not vocabularies.filter(key=value).exists():
+        raise serializers.ValidationError(f"{value!r} is not an available vocabulary")
+    return value
 
 
 class MetadataColumnSerializer(serializers.ModelSerializer):
@@ -74,6 +86,11 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at", "suggested_values", "possible_default_values", "display_name"]
+
+    def validate_ontology_type(self, value):
+        """The key of a vocabulary the requesting user can use, or empty."""
+        request = self.context.get("request")
+        return validate_vocabulary_key(value, request.user if request else None)
 
     def get_display_name(self, obj) -> str:
         """
@@ -710,6 +727,11 @@ class MetadataColumnTemplateSerializer(serializers.ModelSerializer):
             "can_delete",
             "base_column",
         ]
+
+    def validate_ontology_type(self, value):
+        """The key of a vocabulary the requesting user can use, or empty."""
+        request = self.context.get("request")
+        return validate_vocabulary_key(value, request.user if request else None)
 
     def get_can_edit(self, obj) -> bool:
         """Check if current user can edit this template."""
@@ -1503,3 +1525,64 @@ class ExcelLaunchClaimResponseSerializer(serializers.Serializer):
     table_id = serializers.IntegerField()
     table_name = serializers.CharField()
     user = ExcelLaunchUserSerializer()
+
+
+class VocabularyFilterPresetSerializer(serializers.Serializer):
+    """A named search filter offered as its own choice."""
+
+    label = serializers.CharField()
+    filters = serializers.DictField(child=serializers.CharField())
+
+
+class VocabularySourceVersionSerializer(serializers.ModelSerializer):
+    """The upstream release a vocabulary was loaded from."""
+
+    class Meta:
+        model = DataSourceVersion
+        fields = ["version", "released", "source_url", "retrieved_at"]
+
+
+class VocabularySerializer(serializers.ModelSerializer):
+    """A vocabulary columns can use as their ontology type."""
+
+    lab_group_name = serializers.CharField(source="lab_group.name", read_only=True, allow_null=True, default=None)
+    owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
+    plugin_name = serializers.CharField(source="plugin.name", read_only=True, allow_null=True, default=None)
+    live_search = serializers.SerializerMethodField()
+    filter_presets = VocabularyFilterPresetSerializer(many=True, read_only=True)
+    source_version = VocabularySourceVersionSerializer(read_only=True, allow_null=True)
+
+    class Meta:
+        model = Vocabulary
+        fields = [
+            "id",
+            "key",
+            "label",
+            "kind",
+            "description",
+            "provider",
+            "storage",
+            "status",
+            "approved",
+            "lab_group",
+            "lab_group_name",
+            "owner",
+            "owner_username",
+            "plugin",
+            "plugin_name",
+            "sdrf_short_name",
+            "min_term_length",
+            "filter_presets",
+            "live_search",
+            "term_count",
+            "last_loaded_at",
+            "last_error",
+            "source_version",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_live_search(self, obj) -> bool:
+        """Whether searches also ask the vocabulary's platform for terms."""
+        return bool(obj.live_search_adapter)

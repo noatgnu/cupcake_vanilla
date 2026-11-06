@@ -17,7 +17,7 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from ccc.models import AbstractResource, LabGroup, ResourceType
-from ccv.ontology_registry import ontology_type_choices, registry
+from ccv.ontology_registry import registry
 
 
 class BaseMetadataTable(AbstractResource):
@@ -1341,11 +1341,10 @@ class MetadataColumn(models.Model):
     modifiers = models.JSONField(default=list, blank=True, help_text="Sample-specific value modifications")
 
     ontology_type = models.CharField(
-        max_length=50,
+        max_length=100,
         blank=True,
         null=True,
-        choices=ontology_type_choices,
-        help_text="Type of ontology to use for validation and suggestions",
+        help_text="Key of the vocabulary used for validation and suggestions",
     )
 
     ontology_options = models.JSONField(blank=True, null=True, help_text="Ontology options")
@@ -3535,11 +3534,10 @@ class MetadataColumnTemplate(AbstractResource):
     # These are table-specific properties, not template properties
 
     ontology_type = models.CharField(
-        max_length=50,
+        max_length=100,
         blank=True,
         null=True,
-        choices=ontology_type_choices,
-        help_text="Type of ontology to use for validation and suggestions",
+        help_text="Key of the vocabulary used for validation and suggestions",
     )
 
     ontology_options = models.JSONField(blank=True, null=True, help_text="Ontology options")
@@ -3926,31 +3924,137 @@ class DiseaseOntologyTerm(models.Model):
         return f"{self.name} ({self.identifier})"
 
 
-class ExternalTerm(models.Model):
-    """Controlled vocabulary term from an external platform, cached locally for search and offline use."""
+class VocabularyQuerySet(models.QuerySet):
+    """Vocabulary queries."""
 
-    platform = models.CharField(max_length=50, help_text="Platform the term comes from, for example protocols_io")
-    kind = models.CharField(max_length=50, help_text="Kind of term, for example reagent or unit")
-    external_id = models.CharField(max_length=255, help_text="Identifier of the term on the platform")
+    def usable(self):
+        """Approved vocabularies that are not disabled."""
+        return self.filter(approved=True).exclude(status=Vocabulary.STATUS_DISABLED)
+
+    def visible_to(self, user):
+        """Usable vocabularies available to everyone or to one of the user's lab groups; all of them for staff."""
+        if user.is_staff or user.is_superuser:
+            return self.usable()
+        return self.usable().filter(
+            models.Q(lab_group__isnull=True) | models.Q(lab_group_id__in=LabGroup.get_accessible_group_ids(user))
+        )
+
+
+class Vocabulary(models.Model):
+    """A controlled vocabulary columns can use as their ontology type: built-in, from an add-on, custom or from a plugin."""
+
+    PROVIDER_BUILTIN = "builtin"
+    PROVIDER_ADDON = "addon"
+    PROVIDER_CUSTOM = "custom"
+    PROVIDER_PLUGIN = "plugin"
+    PROVIDER_CHOICES = [
+        (PROVIDER_BUILTIN, "Built-in"),
+        (PROVIDER_ADDON, "Add-on"),
+        (PROVIDER_CUSTOM, "Custom"),
+        (PROVIDER_PLUGIN, "Plugin"),
+    ]
+    STORAGE_BUILTIN = "builtin"
+    STORAGE_TERMS = "terms"
+    STORAGE_CHOICES = [
+        (STORAGE_BUILTIN, "Its own built-in table"),
+        (STORAGE_TERMS, "Vocabulary terms table"),
+    ]
+    STATUS_ACTIVE = "active"
+    STATUS_LOADING = "loading"
+    STATUS_UNAVAILABLE = "unavailable"
+    STATUS_DISABLED = "disabled"
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_LOADING, "Loading"),
+        (STATUS_UNAVAILABLE, "Unavailable"),
+        (STATUS_DISABLED, "Disabled"),
+    ]
+
+    key = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Ontology type key used by columns, for example mondo or custom.lab_strains",
+    )
+    label = models.CharField(max_length=255)
+    kind = models.CharField(max_length=50, blank=True, default="", help_text="Kind of term, for example reagent")
+    description = models.TextField(blank=True, default="")
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
+    storage = models.CharField(max_length=20, choices=STORAGE_CHOICES)
+    live_search_adapter = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Dotted path of the class that searches the vocabulary's platform live",
+    )
+    plugin = models.ForeignKey(
+        "ccc.Plugin", on_delete=models.CASCADE, null=True, blank=True, related_name="vocabularies"
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="owned_vocabularies"
+    )
+    lab_group = models.ForeignKey(
+        LabGroup,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="vocabularies",
+        help_text="Lab group the vocabulary is limited to; available to everyone when empty",
+    )
+    approved = models.BooleanField(default=True, help_text="Whether users can see and use the vocabulary")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    sdrf_short_name = models.CharField(
+        max_length=50, blank=True, default="", help_text="Ontology short name in SDRF values, for example MONDO"
+    )
+    min_term_length = models.PositiveSmallIntegerField(default=3, help_text="Shortest live search text")
+    filter_presets = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Named search filters offered as separate choices, for example [{"label": "Instrument (MS)", '
+        '"filters": {"term_type": "instrument"}}]',
+    )
+    term_count = models.PositiveIntegerField(default=0)
+    last_loaded_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    source_version = models.ForeignKey(
+        "DataSourceVersion", on_delete=models.SET_NULL, null=True, blank=True, related_name="vocabularies"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = VocabularyQuerySet.as_manager()
+
+    class Meta:
+        app_label = "ccv"
+        ordering = ["label"]
+        verbose_name_plural = "Vocabularies"
+
+    def __str__(self):
+        return f"{self.label} ({self.key})"
+
+
+class VocabularyTerm(models.Model):
+    """A term of a vocabulary whose terms are kept in this generic table: add-on, custom and plugin vocabularies."""
+
+    vocabulary = models.ForeignKey(Vocabulary, on_delete=models.CASCADE, related_name="terms")
+    external_id = models.CharField(max_length=255, help_text="Identifier of the term in its vocabulary")
     name = models.TextField()
     description = models.TextField(blank=True, default="")
     synonyms = models.TextField(blank=True, default="", help_text="Semicolon-separated other names")
-    data = models.JSONField(default=dict, blank=True, help_text="Full record from the platform")
-    fetched_at = models.DateTimeField(help_text="When the term was last received from the platform")
+    data = models.JSONField(default=dict, blank=True, help_text="Full record of the term")
+    obsolete = models.BooleanField(default=False)
+    fetched_at = models.DateTimeField(help_text="When the term was last loaded or received")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         app_label = "ccv"
         ordering = ["name"]
-        verbose_name = "External Term"
-        verbose_name_plural = "External Terms"
         constraints = [
-            models.UniqueConstraint(fields=["platform", "kind", "external_id"], name="unique_external_term"),
+            models.UniqueConstraint(fields=["vocabulary", "external_id"], name="unique_vocabulary_term"),
         ]
-        indexes = [models.Index(fields=["platform", "kind", "name"])]
+        indexes = [models.Index(fields=["vocabulary", "name"])]
 
     def __str__(self):
-        return f"{self.name} ({self.platform} {self.kind} {self.external_id})"
+        return f"{self.name} ({self.vocabulary.key} {self.external_id})"
 
 
 class DataSourceVersion(models.Model):

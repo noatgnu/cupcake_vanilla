@@ -11,7 +11,12 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
-from ccv.external_vocabularies.base import ExternalTermData, ExternalVocabularyError, ExternalVocabularySource, sources
+from ccv.external_vocabularies.base import (
+    ExternalTermData,
+    ExternalVocabularyError,
+    ExternalVocabularySource,
+    live_search_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +24,11 @@ UPDATED_FIELDS = ["name", "description", "synonyms", "data", "fetched_at"]
 
 
 def _term_model():
-    return apps.get_model("ccv", "ExternalTerm")
+    return apps.get_model("ccv", "VocabularyTerm")
+
+
+def _vocabulary_model():
+    return apps.get_model("ccv", "Vocabulary")
 
 
 def _term_digest(term: str) -> str:
@@ -63,21 +72,24 @@ def pop_waiting_users(source: ExternalVocabularySource, term: str) -> list[int]:
 
 def store_terms(source: ExternalVocabularySource, terms: Iterable[ExternalTermData]) -> int:
     """
-    Insert or update terms in the local cache.
+    Insert or update terms of the source's vocabulary in the vocabulary terms table.
 
     Args:
-        source: Source the terms come from.
+        source: Source the terms come from; its key is the vocabulary's key.
         terms: Terms to store.
 
     Returns:
         Number of terms stored.
     """
+    vocabulary = _vocabulary_model().objects.filter(key=source.key).first()
+    if vocabulary is None:
+        logger.warning("No vocabulary %s to store terms in", source.key)
+        return 0
     model = _term_model()
     now = timezone.now()
     rows = {
         term.external_id: model(
-            platform=source.platform,
-            kind=source.kind,
+            vocabulary=vocabulary,
             external_id=term.external_id,
             name=term.name,
             description=term.description,
@@ -93,9 +105,12 @@ def store_terms(source: ExternalVocabularySource, terms: Iterable[ExternalTermDa
     model.objects.bulk_create(
         list(rows.values()),
         update_conflicts=True,
-        unique_fields=["platform", "kind", "external_id"],
+        unique_fields=["vocabulary", "external_id"],
         update_fields=UPDATED_FIELDS,
     )
+    vocabulary.term_count = model.objects.filter(vocabulary=vocabulary).count()
+    vocabulary.last_loaded_at = now
+    vocabulary.save(update_fields=["term_count", "last_loaded_at", "updated_at"])
     return len(rows)
 
 
@@ -113,7 +128,7 @@ def refresh_from_platform(source_key: str, term: str) -> int:
     Returns:
         Number of terms stored by this call.
     """
-    source = sources.get(source_key)
+    source = live_search_source(source_key)
     if source is None or not source.searchable or not source.is_configured():
         return 0
     text = term.strip()

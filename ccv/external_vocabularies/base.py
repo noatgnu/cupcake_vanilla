@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
+
+from django.apps import apps
+from django.utils.module_loading import import_string
+
+logger = logging.getLogger(__name__)
 
 
 class ExternalVocabularyError(Exception):
@@ -36,9 +42,9 @@ class ExternalVocabularySource(ABC):
     """
     A vocabulary of one kind from one external platform.
 
-    Searchable sources are queried when users search and their results are kept in the local
-    cache. Sources that can be listed in full are loaded with the ``load_external_vocabulary``
-    management command.
+    A vocabulary row names its source class in ``live_search_adapter``. Searchable sources are
+    queried when users search and their results are kept in the vocabulary terms table. Sources
+    that can be listed in full are loaded with the ``load_external_vocabulary`` management command.
 
     Attributes:
         key: Unique key, also used as the ontology type of the vocabulary.
@@ -88,46 +94,27 @@ class ExternalVocabularySource(ABC):
         raise NotImplementedError(f"{self.key} cannot be loaded in full")
 
 
-class SourceRegistry:
-    """Registered external vocabulary sources, by key."""
+def live_search_source(key: str) -> ExternalVocabularySource | None:
+    """
+    The live-search source of a vocabulary, from the class its row in the vocabulary table names.
 
-    def __init__(self) -> None:
-        """Start with no registered sources."""
-        self._sources: dict[str, ExternalVocabularySource] = {}
-        self._listeners: list[Callable[[ExternalVocabularySource], None]] = []
+    Args:
+        key: Key of the vocabulary.
 
-    def register(self, source: ExternalVocabularySource) -> ExternalVocabularySource:
-        """
-        Add a source.
-
-        Raises:
-            ValueError: When another source already uses the same key.
-        """
-        if source.key in self._sources:
-            raise ValueError(f"an external vocabulary source with key {source.key!r} is already registered")
-        self._sources[source.key] = source
-        for listener in self._listeners:
-            listener(source)
-        return source
-
-    def on_register(self, listener: Callable[[ExternalVocabularySource], None]) -> None:
-        """
-        Call ``listener`` with every registered source, now and whenever another source is registered.
-
-        Args:
-            listener: Called with one source at a time.
-        """
-        self._listeners.append(listener)
-        for source in self.all():
-            listener(source)
-
-    def get(self, key: str) -> ExternalVocabularySource | None:
-        """Return the source with ``key``, or ``None``."""
-        return self._sources.get(key)
-
-    def all(self) -> list[ExternalVocabularySource]:
-        """Return every registered source."""
-        return list(self._sources.values())
-
-
-sources = SourceRegistry()
+    Returns:
+        A source instance, or ``None`` when the vocabulary has no live-search class or it cannot be loaded.
+    """
+    path = (
+        apps.get_model("ccv", "Vocabulary")
+        .objects.filter(key=key)
+        .exclude(live_search_adapter="")
+        .values_list("live_search_adapter", flat=True)
+        .first()
+    )
+    if not path:
+        return None
+    try:
+        return import_string(path)()
+    except ImportError:
+        logger.warning("Live-search class %s of vocabulary %s cannot be loaded", path, key)
+        return None

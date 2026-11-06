@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Callable
 
+from django.apps import apps
 from django.db import models as django_models
 from django.db.models import Case, IntegerField, Value, When
-
-from ccv.external_vocabularies import ExternalVocabularySource, sources
 
 
 def _parse_unimod_additional_data(additional_data: list) -> tuple[dict, dict]:
@@ -82,8 +81,6 @@ class OntologyDescriptor:
     @cached_property
     def model(self):
         """Lazy model class resolution to avoid circular imports."""
-        from django.apps import apps
-
         return apps.get_model(self.model_label)
 
     @property
@@ -209,10 +206,33 @@ class OntologyRegistry:
         self._sdrf_mappings.setdefault(mapping.sdrf_name, []).append(mapping)
 
     def get(self, type_key: str) -> OntologyDescriptor | None:
-        return self._descriptors.get(type_key)
+        """The built-in descriptor for the type, or one built from its row in the vocabulary table."""
+        if not type_key:
+            return None
+        descriptor = self._descriptors.get(type_key)
+        if descriptor is not None:
+            return descriptor
+        vocabulary = (
+            apps.get_model("ccv", "Vocabulary")
+            .objects.filter(key=type_key, storage="terms")
+            .exclude(status="disabled")
+            .first()
+        )
+        return term_descriptor(vocabulary) if vocabulary else None
+
+    def builtin_choices(self) -> list[tuple[str, str]]:
+        """The built-in ontology types, without reading the database."""
+        return [d.choices_tuple for d in self._descriptors.values()]
 
     def choices(self) -> list[tuple[str, str]]:
-        return [d.choices_tuple for d in self._descriptors.values()]
+        """Every vocabulary users can see, from the vocabulary table."""
+        rows = (
+            apps.get_model("ccv", "Vocabulary")
+            .objects.filter(approved=True)
+            .exclude(status="disabled")
+            .values_list("key", "label")
+        )
+        return list(rows)
 
     def get_model(self, type_key: str):
         desc = self.get(type_key)
@@ -571,8 +591,8 @@ registry.register(
 )
 
 
-def _serialize_external_term(data: dict, type_key: str) -> dict:
-    """Serializer for terms cached from external platforms."""
+def _serialize_vocabulary_term(data: dict, type_key: str) -> dict:
+    """Serializer for terms kept in the generic vocabulary terms table."""
     return {
         "id": data.get("external_id", ""),
         "value": data.get("name", ""),
@@ -580,8 +600,7 @@ def _serialize_external_term(data: dict, type_key: str) -> dict:
         "description": data.get("description", "") or "",
         "ontology_type": type_key,
         "full_data": {
-            "platform": data.get("platform", ""),
-            "kind": data.get("kind", ""),
+            "vocabulary": type_key,
             "external_id": data.get("external_id", ""),
             "name": data.get("name", ""),
             "description": data.get("description", ""),
@@ -591,37 +610,30 @@ def _serialize_external_term(data: dict, type_key: str) -> dict:
     }
 
 
-def external_descriptor(source: ExternalVocabularySource) -> OntologyDescriptor:
-    """Build the ontology descriptor for an external vocabulary source."""
+def term_descriptor(vocabulary) -> OntologyDescriptor:
+    """Build the descriptor for a vocabulary whose terms are kept in the generic vocabulary terms table."""
     return OntologyDescriptor(
-        type_key=source.key,
-        label=source.label,
-        model_label="ccv.ExternalTerm",
+        type_key=vocabulary.key,
+        label=vocabulary.label,
+        model_label="ccv.VocabularyTerm",
         search_fields=["name", "synonyms", "external_id", "description"],
         id_field="external_id",
         value_field="name",
         display_field="name",
         description_field="description",
-        full_data_fields=["platform", "kind", "external_id", "name", "description", "synonyms", "data"],
+        full_data_fields=["external_id", "name", "description", "synonyms", "data"],
         priority_fields=["name", "synonyms"],
         sort_field="name",
-        custom_serializer=_serialize_external_term,
-        base_filter={"platform": source.platform, "kind": source.kind},
-        remote_source=source.key if source.searchable else None,
+        custom_serializer=_serialize_vocabulary_term,
+        base_filter={"vocabulary_id": vocabulary.pk},
+        remote_source=vocabulary.key if vocabulary.live_search_adapter else None,
     )
 
 
 def ontology_type_choices() -> list[tuple[str, str]]:
-    """Return the registered ontology types as model field choices."""
-    return registry.choices()
+    """The built-in ontology types; kept for migrations that referenced field choices."""
+    return registry.builtin_choices()
 
-
-def register_external_source(source: ExternalVocabularySource) -> None:
-    """Make an external vocabulary source searchable as an ontology type."""
-    registry.register(external_descriptor(source))
-
-
-sources.on_register(register_external_source)
 
 # ---------------------------------------------------------------------------
 # SDRF ontology short-name → internal type mappings

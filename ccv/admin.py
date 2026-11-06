@@ -14,7 +14,6 @@ from .models import (
     CellOntology,
     ChEBICompound,
     DiseaseOntologyTerm,
-    ExternalTerm,
     FavouriteMetadataOption,
     HumanDisease,
     MetadataColumn,
@@ -33,6 +32,8 @@ from .models import (
     Tissue,
     UberonAnatomy,
     Unimod,
+    Vocabulary,
+    VocabularyTerm,
 )
 
 
@@ -595,14 +596,24 @@ class CellOntologyAdmin(admin.ModelAdmin):
         return base_display
 
 
-@admin.register(ExternalTerm)
-class ExternalTermAdmin(admin.ModelAdmin):
-    """Admin interface for terms cached from external platforms."""
+@admin.register(Vocabulary)
+class VocabularyAdmin(admin.ModelAdmin):
+    """Admin interface for vocabularies."""
 
-    list_display = ["name", "platform", "kind", "external_id", "description", "fetched_at"]
-    list_filter = ["platform", "kind"]
+    list_display = ["key", "label", "provider", "storage", "status", "approved", "term_count", "last_loaded_at"]
+    list_filter = ["provider", "storage", "status", "approved"]
+    search_fields = ["key", "label", "description"]
+    readonly_fields = ["term_count", "last_loaded_at", "created_at", "updated_at"]
+
+
+@admin.register(VocabularyTerm)
+class VocabularyTermAdmin(admin.ModelAdmin):
+    """Admin interface for terms of vocabularies kept in the generic terms table."""
+
+    list_display = ["name", "vocabulary", "external_id", "obsolete", "fetched_at"]
+    list_filter = ["vocabulary", "obsolete"]
     search_fields = ["name", "external_id", "synonyms", "description"]
-    ordering = ["platform", "kind", "name"]
+    list_select_related = ["vocabulary"]
     readonly_fields = ["fetched_at", "created_at"]
 
 

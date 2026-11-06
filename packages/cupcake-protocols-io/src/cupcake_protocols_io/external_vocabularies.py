@@ -8,7 +8,7 @@ from typing import Any
 from choux import ChouxError, ProtocolsIO, RateLimiter
 from choux.units import unit_kind
 
-from ccv.external_vocabularies.base import ExternalTermData, ExternalVocabularyError, ExternalVocabularySource, sources
+from ccv.external_vocabularies.base import ExternalTermData, ExternalVocabularyError, ExternalVocabularySource
 from cupcake_protocols_io import conf
 
 rate_limiter = RateLimiter()
@@ -108,5 +108,5 @@ class ProtocolsIOUnitSource(ExternalVocabularySource):
         return [unit_term(unit) for unit in units if not unit.get("deleted")]
 
 
-reagents = sources.register(ProtocolsIOReagentSource())
-units = sources.register(ProtocolsIOUnitSource())
+reagents = ProtocolsIOReagentSource()
+units = ProtocolsIOUnitSource()

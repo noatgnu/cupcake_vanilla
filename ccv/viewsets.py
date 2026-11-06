@@ -164,6 +164,7 @@ from .models import (
     Tissue,
     UberonAnatomy,
     Unimod,
+    Vocabulary,
 )
 from .ontology_registry import registry
 from .permissions import MetadataColumnAccessPermission, MetadataTableAccessPermission
@@ -215,6 +216,7 @@ from .serializers import (
     TissueSerializer,
     UberonAnatomySerializer,
     UnimodSerializer,
+    VocabularySerializer,
 )
 from .tasks.import_utils import (
     apply_column_override,
@@ -6231,6 +6233,56 @@ class DiseaseOntologyTermViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({"results": suggestions})
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=["vocabularies"],
+        parameters=[
+            OpenApiParameter("provider", str, enum=[choice for choice, _ in Vocabulary.PROVIDER_CHOICES]),
+            OpenApiParameter("kind", str),
+            OpenApiParameter("status", str, enum=[choice for choice, _ in Vocabulary.STATUS_CHOICES]),
+            OpenApiParameter("lab_group", int, description="Vocabularies limited to this lab group"),
+            OpenApiParameter("search", str, description="Text in the key, label or description"),
+            OpenApiParameter(
+                "include_unapproved", bool, description="Staff only: also list vocabularies waiting for approval"
+            ),
+        ],
+    ),
+    retrieve=extend_schema(tags=["vocabularies"]),
+)
+class VocabularyViewSet(viewsets.ReadOnlyModelViewSet):
+    """Vocabularies columns can use as their ontology type, looked up by key."""
+
+    serializer_class = VocabularySerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = "key"
+    lookup_value_regex = r"[^/]+"
+    filter_backends = []
+
+    def get_queryset(self):
+        """Vocabularies the user can use, with ones waiting for approval for staff who ask for them."""
+        user = self.request.user
+        params = self.request.query_params
+        if (user.is_staff or user.is_superuser) and params.get("include_unapproved") == "true":
+            queryset = Vocabulary.objects.exclude(status=Vocabulary.STATUS_DISABLED)
+        else:
+            queryset = Vocabulary.objects.visible_to(user)
+        for param, lookup in (
+            ("provider", "provider"),
+            ("kind", "kind"),
+            ("status", "status"),
+            ("lab_group", "lab_group_id"),
+        ):
+            value = params.get(param)
+            if value:
+                queryset = queryset.filter(**{lookup: value})
+        search = params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(key__icontains=search) | Q(label__icontains=search) | Q(description__icontains=search)
+            )
+        return queryset.select_related("lab_group", "owner", "plugin", "source_version")
+
+
 class OntologySearchViewSet(viewsets.ViewSet):
     """Unified ontology search for SDRF validation."""
 
@@ -6413,6 +6465,21 @@ class OntologySearchViewSet(viewsets.ViewSet):
 
         # Convert match_type to search_type format used by unified method
         search_type = "istartswith" if match_type == "startswith" else "icontains"
+
+        if ontology_type and not Vocabulary.objects.visible_to(request.user).filter(key=ontology_type).exists():
+            return Response(
+                {
+                    "ontology_type": ontology_type,
+                    "suggestions": [],
+                    "search_term": query,
+                    "search_type": match_type,
+                    "limit": limit,
+                    "count": 0,
+                    "custom_filters": custom_filters if custom_filters else None,
+                    "has_more": False,
+                    "remote_pending": False,
+                }
+            )
 
         suggestions_with_types = []
         remote_pending = request_refresh(ontology_type, query, user_id=request.user.id)

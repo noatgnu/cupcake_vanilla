@@ -11,7 +11,7 @@ from django_rq import job
 from redis.exceptions import RedisError
 
 from ccc.notification_service import BaseNotificationService
-from ccv.external_vocabularies.base import sources
+from ccv.external_vocabularies.base import live_search_source
 from ccv.external_vocabularies.cache import (
     add_waiting_user,
     pending_cache_key,
@@ -39,7 +39,7 @@ def refresh_external_vocabulary_task(source_key: str, term: str) -> int:
         Number of terms stored.
     """
     stored = refresh_from_platform(source_key, term)
-    source = sources.get(source_key)
+    source = live_search_source(source_key)
     if source is None:
         return stored
     notifier = BaseNotificationService()
@@ -73,7 +73,7 @@ def request_refresh(ontology_type: str | None, term: str, *, user_id: int | None
     descriptor = registry.get(ontology_type) if ontology_type else None
     if descriptor is None or not descriptor.remote_source:
         return False
-    source = sources.get(descriptor.remote_source)
+    source = live_search_source(descriptor.remote_source)
     text = (term or "").strip()
     if source is None or not source.searchable or not source.is_configured() or len(text) < source.min_term_length:
         return False

@@ -4,7 +4,8 @@ Management command to load a complete external vocabulary into the local cache.
 
 from django.core.management.base import BaseCommand, CommandError
 
-from ccv.external_vocabularies import ExternalVocabularyError, sources, store_terms
+from ccv.external_vocabularies import ExternalVocabularyError, live_search_source, store_terms
+from ccv.models import Vocabulary
 
 
 class Command(BaseCommand):
@@ -21,9 +22,11 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        source = sources.get(options["source"])
+        source = live_search_source(options["source"])
         if source is None:
-            known = ", ".join(sorted(item.key for item in sources.all()))
+            known = ", ".join(
+                Vocabulary.objects.exclude(live_search_adapter="").order_by("key").values_list("key", flat=True)
+            )
             raise CommandError(f"Unknown source {options['source']!r}. Known sources: {known}")
         if not source.is_configured():
             raise CommandError(f"{source.key} is not configured on this instance")
