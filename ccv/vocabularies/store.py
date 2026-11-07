@@ -26,6 +26,9 @@ def store_imported_terms(
     """
     Insert or update terms of a vocabulary in batches, then record the load on the vocabulary.
 
+    Each batch is committed on its own; the removal of terms missing from the file and the record of the
+    load are committed together after the last batch.
+
     Args:
         vocabulary: The vocabulary the terms belong to.
         terms: Terms to store; later duplicates of an id replace earlier ones.
@@ -45,32 +48,34 @@ def store_imported_terms(
         nonlocal stored
         if not batch:
             return
-        VocabularyTerm.objects.bulk_create(
-            list(batch.values()),
-            update_conflicts=True,
-            unique_fields=["vocabulary", "external_id"],
-            update_fields=UPDATED_FIELDS,
-        )
+        with transaction.atomic():
+            VocabularyTerm.objects.bulk_create(
+                list(batch.values()),
+                update_conflicts=True,
+                unique_fields=["vocabulary", "external_id"],
+                update_fields=UPDATED_FIELDS,
+            )
         stored += len(batch)
         batch.clear()
         if on_progress:
             on_progress(stored)
 
+    for term in terms:
+        batch[term.external_id] = VocabularyTerm(
+            vocabulary=vocabulary,
+            external_id=term.external_id[:255],
+            name=term.name,
+            description=term.description,
+            synonyms=";".join(term.synonyms),
+            data=term.data,
+            obsolete=term.obsolete,
+            fetched_at=now,
+        )
+        if len(batch) >= BATCH_SIZE:
+            flush()
+    flush()
+
     with transaction.atomic():
-        for term in terms:
-            batch[term.external_id] = VocabularyTerm(
-                vocabulary=vocabulary,
-                external_id=term.external_id[:255],
-                name=term.name,
-                description=term.description,
-                synonyms=";".join(term.synonyms),
-                data=term.data,
-                obsolete=term.obsolete,
-                fetched_at=now,
-            )
-            if len(batch) >= BATCH_SIZE:
-                flush()
-        flush()
         removed = 0
         if replace:
             removed, _ = vocabulary.terms.filter(fetched_at__lt=now).delete()
