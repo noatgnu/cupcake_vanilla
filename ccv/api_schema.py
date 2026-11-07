@@ -1149,3 +1149,11 @@ class SchemaColumnDefinitionsSerializer(serializers.Serializer):
     schemas = serializers.ListField(child=serializers.CharField())
     columns = SchemaColumnDefinitionSerializer(many=True)
     total = serializers.IntegerField()
+
+
+class VocabularyInUseSerializer(serializers.Serializer):
+    """Why a vocabulary could not be deleted."""
+
+    error = serializers.CharField()
+    columns = serializers.IntegerField()
+    templates = serializers.IntegerField()

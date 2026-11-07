@@ -625,6 +625,7 @@ def term_descriptor(vocabulary) -> OntologyDescriptor:
         priority_fields=["name", "synonyms"],
         sort_field="name",
         custom_serializer=_serialize_vocabulary_term,
+        obsolete_filter=True,
         base_filter={"vocabulary_id": vocabulary.pk},
         remote_source=vocabulary.key if vocabulary.live_search_adapter else None,
     )

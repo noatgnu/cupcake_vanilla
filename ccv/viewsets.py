@@ -5,13 +5,16 @@ Django REST Framework ViewSets for CUPCAKE Vanilla metadata management.
 import io
 import json
 import re
+import tempfile
 import uuid
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models, transaction
 from django.db.models import Count, Min, Q
 from django.http import HttpResponse
+from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
 from django_filters.views import FilterMixin
@@ -23,7 +26,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.filters import SearchFilter
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
@@ -138,6 +141,7 @@ from .api_schema import (
     ValidateTableSerializer,
     ValueSerializer,
     ValueValiditySerializer,
+    VocabularyInUseSerializer,
 )
 from .async_views import AsyncExportViewSet, AsyncImportViewSet, AsyncValidationViewSet
 from .external_vocabularies.tasks import request_refresh
@@ -165,6 +169,7 @@ from .models import (
     UberonAnatomy,
     Unimod,
     Vocabulary,
+    VocabularyTerm,
 )
 from .ontology_registry import registry
 from .permissions import MetadataColumnAccessPermission, MetadataTableAccessPermission
@@ -216,7 +221,13 @@ from .serializers import (
     TissueSerializer,
     UberonAnatomySerializer,
     UnimodSerializer,
+    VocabularyCreateSerializer,
+    VocabularyImportSerializer,
+    VocabularyPreviewRequestSerializer,
+    VocabularyPreviewSerializer,
     VocabularySerializer,
+    VocabularyTermSerializer,
+    VocabularyUpdateSerializer,
 )
 from .tasks.import_utils import (
     apply_column_override,
@@ -226,6 +237,7 @@ from .tasks.import_utils import (
     suggest_mapping_by_position,
     synchronize_pools_with_import_data,
 )
+from .tasks.vocabulary_tasks import import_vocabulary_task
 from .utils import (
     AutofillSpecValidator,
     SampleVariationGenerator,
@@ -238,6 +250,8 @@ from .utils import (
     update_pooled_sample_column_for_table,
     validate_sdrf,
 )
+from .vocabularies.access import can_manage_lab_group_vocabularies, can_manage_vocabulary
+from .vocabularies.importers import VocabularyFileError, detect_format, preview_table
 
 
 @extend_schema_view(
@@ -6233,6 +6247,20 @@ class DiseaseOntologyTermViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({"results": suggestions})
 
 
+def metadata_table_context(request, user):
+    """The metadata table named by the request's metadata_table parameter, when the user can view it."""
+    table_id = str(request.query_params.get("metadata_table", "") or request.data.get("metadata_table", "") or "")
+    if not table_id.isdigit():
+        return None
+    table = MetadataTable.objects.filter(pk=int(table_id)).first()
+    return table if table and table.can_view(user) else None
+
+
+METADATA_TABLE_PARAMETER = OpenApiParameter(
+    "metadata_table", int, description="Also include the vocabularies of the lab group assigned to this table's job"
+)
+
+
 @extend_schema_view(
     list=extend_schema(
         tags=["vocabularies"],
@@ -6245,27 +6273,44 @@ class DiseaseOntologyTermViewSet(viewsets.ReadOnlyModelViewSet):
             OpenApiParameter(
                 "include_unapproved", bool, description="Staff only: also list vocabularies waiting for approval"
             ),
+            METADATA_TABLE_PARAMETER,
         ],
     ),
-    retrieve=extend_schema(tags=["vocabularies"]),
+    retrieve=extend_schema(tags=["vocabularies"], parameters=[METADATA_TABLE_PARAMETER]),
+    create=extend_schema(
+        tags=["vocabularies"],
+        request=VocabularyCreateSerializer,
+        responses={201: VocabularySerializer, 400: FieldErrorsSerializer, 403: ErrorSerializer},
+    ),
+    partial_update=extend_schema(
+        tags=["vocabularies"],
+        request=VocabularyUpdateSerializer,
+        responses={200: VocabularySerializer, 400: FieldErrorsSerializer, 403: ErrorSerializer},
+    ),
+    destroy=extend_schema(
+        tags=["vocabularies"], responses={204: None, 403: ErrorSerializer, 409: VocabularyInUseSerializer}
+    ),
 )
-class VocabularyViewSet(viewsets.ReadOnlyModelViewSet):
-    """Vocabularies columns can use as their ontology type, looked up by key."""
+class VocabularyViewSet(viewsets.ModelViewSet):
+    """Vocabularies columns can use as their ontology type, looked up by key; custom ones are managed here."""
 
     serializer_class = VocabularySerializer
     permission_classes = [IsAuthenticated]
     lookup_field = "key"
     lookup_value_regex = r"[^/]+"
     filter_backends = []
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
-        """Vocabularies the user can use, with ones waiting for approval for staff who ask for them."""
+        """Vocabularies the user can use for reading; custom vocabularies for changes, checked per object."""
+        if self.action in ("partial_update", "destroy", "import_terms", "import_preview"):
+            return Vocabulary.objects.filter(provider=Vocabulary.PROVIDER_CUSTOM).select_related("lab_group")
         user = self.request.user
         params = self.request.query_params
         if (user.is_staff or user.is_superuser) and params.get("include_unapproved") == "true":
             queryset = Vocabulary.objects.exclude(status=Vocabulary.STATUS_DISABLED)
         else:
-            queryset = Vocabulary.objects.visible_to(user)
+            queryset = Vocabulary.objects.visible_to(user, metadata_table_context(self.request, user))
         for param, lookup in (
             ("provider", "provider"),
             ("kind", "kind"),
@@ -6281,6 +6326,232 @@ class VocabularyViewSet(viewsets.ReadOnlyModelViewSet):
                 Q(key__icontains=search) | Q(label__icontains=search) | Q(description__icontains=search)
             )
         return queryset.select_related("lab_group", "owner", "plugin", "source_version")
+
+    def get_object(self):
+        """The vocabulary; changes need the user to manage it."""
+        vocabulary = super().get_object()
+        if self.action in ("partial_update", "destroy", "import_terms", "import_preview") and not can_manage_vocabulary(
+            self.request.user, vocabulary
+        ):
+            raise PermissionDenied("Only the lab group's managers, or staff for global vocabularies, can change it")
+        return vocabulary
+
+    def create(self, request, *args, **kwargs):
+        """Create a custom vocabulary."""
+        serializer = VocabularyCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if not can_manage_lab_group_vocabularies(request.user, data["lab_group"]):
+            raise PermissionDenied("Only the lab group's managers, or staff for global vocabularies, can add one")
+        vocabulary = Vocabulary.objects.create(
+            key=data["key"],
+            label=data["label"],
+            kind=data["kind"],
+            description=data["description"],
+            lab_group=data["lab_group"],
+            sdrf_short_name=data["sdrf_short_name"],
+            provider=Vocabulary.PROVIDER_CUSTOM,
+            storage=Vocabulary.STORAGE_TERMS,
+            owner=request.user,
+        )
+        return Response(
+            VocabularySerializer(vocabulary, context={"request": request}).data, status=status.HTTP_201_CREATED
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        """Change a custom vocabulary's details or availability."""
+        vocabulary = self.get_object()
+        serializer = VocabularyUpdateSerializer(vocabulary, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(VocabularySerializer(vocabulary, context={"request": request}).data)
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete a custom vocabulary and its terms, unless columns or templates still use it."""
+        vocabulary = self.get_object()
+        columns = MetadataColumn.objects.filter(ontology_type=vocabulary.key).count()
+        templates = MetadataColumnTemplate.objects.filter(ontology_type=vocabulary.key).count()
+        if columns or templates:
+            return Response(
+                {
+                    "error": "Columns or templates still use this vocabulary; make it unavailable instead",
+                    "columns": columns,
+                    "templates": templates,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        vocabulary.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        tags=["vocabularies"],
+        request={"multipart/form-data": VocabularyImportSerializer},
+        responses={202: TaskCreateResponseSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="import")
+    def import_terms(self, request, key=None):
+        """Queue the import of an OBO, OWL, CSV or TSV file into a custom vocabulary."""
+        vocabulary = self.get_object()
+        serializer = VocabularyImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        upload = data["file"]
+        try:
+            file_format = data.get("format") or detect_format(upload.name)
+        except VocabularyFileError as error:
+            return Response({"error": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        mapping = None
+        if file_format in ("csv", "tsv"):
+            if not data["name_column"]:
+                return Response(
+                    {"error": "Choose the column that holds the term names"}, status=status.HTTP_400_BAD_REQUEST
+                )
+            mapping = {
+                field: data[field]
+                for field in ("name_column", "id_column", "description_column", "synonyms_column", "synonym_separator")
+            }
+
+        directory = Path(settings.MEDIA_ROOT) / "vocabulary_imports"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{uuid.uuid4().hex}.{file_format}"
+        with open(path, "wb") as destination:
+            for chunk in upload.chunks():
+                destination.write(chunk)
+
+        vocabulary.status = Vocabulary.STATUS_LOADING
+        vocabulary.save(update_fields=["status", "updated_at"])
+        task = AsyncTaskStatus.objects.create(
+            task_type="IMPORT_VOCABULARY",
+            user=request.user,
+            parameters={
+                "vocabulary": vocabulary.key,
+                "file_name": upload.name,
+                "format": file_format,
+                "mode": data["mode"],
+            },
+        )
+        job = import_vocabulary_task.delay(
+            vocabulary_id=vocabulary.id,
+            file_path=str(path),
+            file_format=file_format,
+            file_name=upload.name,
+            replace=data["mode"] == "replace",
+            mapping=mapping,
+            task_id=str(task.id),
+        )
+        if job:
+            task.rq_job_id = job.id
+            task.save(update_fields=["rq_job_id"])
+        return Response(
+            {"task_id": str(task.id), "message": "Vocabulary import queued"}, status=status.HTTP_202_ACCEPTED
+        )
+
+    @extend_schema(
+        tags=["vocabularies"],
+        request={"multipart/form-data": VocabularyPreviewRequestSerializer},
+        responses={200: VocabularyPreviewSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
+    )
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser], url_path="import_preview")
+    def import_preview(self, request, key=None):
+        """The columns and first rows of a CSV or TSV file, to choose which columns to import."""
+        self.get_object()
+        serializer = VocabularyPreviewRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        upload = serializer.validated_data["file"]
+        try:
+            file_format = serializer.validated_data.get("format") or detect_format(upload.name)
+            with tempfile.NamedTemporaryFile(suffix=f".{file_format}") as handle:
+                for chunk in upload.chunks():
+                    handle.write(chunk)
+                handle.flush()
+                preview = preview_table(Path(handle.name), file_format)
+        except VocabularyFileError as error:
+            return Response({"error": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(preview)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=["vocabularies"],
+        parameters=[
+            OpenApiParameter("vocabulary", str, required=True, description="Key of the vocabulary"),
+            OpenApiParameter("search", str, description="Text in the id, name, synonyms or description"),
+            OpenApiParameter("include_obsolete", bool),
+            METADATA_TABLE_PARAMETER,
+        ],
+    ),
+    retrieve=extend_schema(tags=["vocabularies"]),
+    create=extend_schema(tags=["vocabularies"]),
+    partial_update=extend_schema(tags=["vocabularies"]),
+    destroy=extend_schema(tags=["vocabularies"]),
+)
+class VocabularyTermViewSet(viewsets.ModelViewSet):
+    """Terms of vocabularies kept in the vocabulary terms table; terms of custom vocabularies are edited here."""
+
+    serializer_class = VocabularyTermSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = []
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        """Terms of one vocabulary the user can use, or of vocabularies the user manages for changes."""
+        user = self.request.user
+        if self.action != "list":
+            return VocabularyTerm.objects.select_related("vocabulary", "vocabulary__lab_group")
+        key = self.request.query_params.get("vocabulary", "")
+        vocabulary = (
+            Vocabulary.objects.visible_to(user, metadata_table_context(self.request, user)).filter(key=key).first()
+        )
+        if vocabulary is None:
+            return VocabularyTerm.objects.none()
+        queryset = vocabulary.terms.all()
+        if self.request.query_params.get("include_obsolete") != "true":
+            queryset = queryset.filter(obsolete=False)
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(external_id__icontains=search)
+                | Q(synonyms__icontains=search)
+                | Q(description__icontains=search)
+            )
+        return queryset.order_by("name")
+
+    def get_object(self):
+        """The term, if the user can use its vocabulary; changes need the user to manage it."""
+        term = super().get_object()
+        user = self.request.user
+        if not Vocabulary.objects.visible_to(user).filter(pk=term.vocabulary_id).exists() and not can_manage_vocabulary(
+            user, term.vocabulary
+        ):
+            raise NotFound()
+        if self.request.method not in ("GET", "HEAD", "OPTIONS") and not can_manage_vocabulary(user, term.vocabulary):
+            raise PermissionDenied("Only managers of a custom vocabulary can change its terms")
+        return term
+
+    def perform_create(self, serializer):
+        """Add a term to a custom vocabulary the user manages."""
+        vocabulary = serializer.validated_data["vocabulary"]
+        if not can_manage_vocabulary(self.request.user, vocabulary):
+            raise PermissionDenied("Only managers of a custom vocabulary can add terms")
+        if vocabulary.terms.filter(external_id=serializer.validated_data["external_id"]).exists():
+            raise ValidationError({"external_id": "A term with this id already exists in the vocabulary"})
+        serializer.save(fetched_at=timezone.now())
+        self._recount(vocabulary)
+
+    def perform_update(self, serializer):
+        """Change a term; it stays in its vocabulary."""
+        serializer.save(vocabulary=serializer.instance.vocabulary)
+
+    def perform_destroy(self, instance):
+        """Remove a term and recount its vocabulary."""
+        vocabulary = instance.vocabulary
+        instance.delete()
+        self._recount(vocabulary)
+
+    def _recount(self, vocabulary):
+        vocabulary.term_count = vocabulary.terms.count()
+        vocabulary.save(update_fields=["term_count", "updated_at"])
 
 
 class OntologySearchViewSet(viewsets.ViewSet):
@@ -6466,7 +6737,8 @@ class OntologySearchViewSet(viewsets.ViewSet):
         # Convert match_type to search_type format used by unified method
         search_type = "istartswith" if match_type == "startswith" else "icontains"
 
-        if ontology_type and not Vocabulary.objects.visible_to(request.user).filter(key=ontology_type).exists():
+        visible = Vocabulary.objects.visible_to(request.user, metadata_table_context(request, request.user))
+        if ontology_type and not visible.filter(key=ontology_type).exists():
             return Response(
                 {
                     "ontology_type": ontology_type,

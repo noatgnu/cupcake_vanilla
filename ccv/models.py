@@ -6,6 +6,7 @@ main CUPCAKE project. It focuses on metadata columns, sample pools,
 templates, and user preferences.
 """
 
+from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -3931,13 +3932,32 @@ class VocabularyQuerySet(models.QuerySet):
         """Approved vocabularies that are not disabled."""
         return self.filter(approved=True).exclude(status=Vocabulary.STATUS_DISABLED)
 
-    def visible_to(self, user):
-        """Usable vocabularies available to everyone or to one of the user's lab groups; all of them for staff."""
+    def visible_to(self, user, metadata_table=None):
+        """
+        Usable vocabularies available to everyone or to one of the user's lab groups; all of them for staff.
+
+        In a job's metadata table the user can access, the vocabularies of the lab group assigned to the job are
+        included too.
+        """
         if user.is_staff or user.is_superuser:
             return self.usable()
-        return self.usable().filter(
-            models.Q(lab_group__isnull=True) | models.Q(lab_group_id__in=LabGroup.get_accessible_group_ids(user))
-        )
+        visible = models.Q(lab_group__isnull=True) | models.Q(lab_group_id__in=LabGroup.get_accessible_group_ids(user))
+        job_lab_groups = job_lab_group_ids(metadata_table, user)
+        if job_lab_groups:
+            visible |= models.Q(lab_group_id__in=job_lab_groups)
+        return self.usable().filter(visible)
+
+
+def job_lab_group_ids(metadata_table, user) -> list[int]:
+    """Lab groups assigned to the jobs of a metadata table the user can view."""
+    if metadata_table is None or not apps.is_installed("ccm") or not metadata_table.can_view(user):
+        return []
+    instrument_job = apps.get_model("ccm", "InstrumentJob")
+    return list(
+        instrument_job.objects.filter(metadata_table=metadata_table)
+        .exclude(lab_group=None)
+        .values_list("lab_group_id", flat=True)
+    )
 
 
 class Vocabulary(models.Model):

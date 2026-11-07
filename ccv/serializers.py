@@ -2,10 +2,13 @@
 Django REST Framework serializers for CUPCAKE Vanilla metadata models.
 """
 
+import re
+
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from ccc.models import AsyncTaskStatus
+from ccc.models import AsyncTaskStatus, LabGroup
+from ccv.vocabularies.access import can_manage_vocabulary
 
 from .models import (
     BTOTerm,
@@ -32,15 +35,18 @@ from .models import (
     UberonAnatomy,
     Unimod,
     Vocabulary,
+    VocabularyTerm,
 )
 from .ontology_registry import registry
 
 
-def validate_vocabulary_key(value, user=None):
-    """Raise a validation error unless the value is empty or the key of a vocabulary the user can use."""
+def validate_vocabulary_key(value, user=None, metadata_table=None):
+    """Raise a validation error unless the value is empty or the key of a vocabulary the user can use in the table."""
     if not value:
         return value
-    vocabularies = Vocabulary.objects.visible_to(user) if user is not None else Vocabulary.objects.usable()
+    vocabularies = (
+        Vocabulary.objects.visible_to(user, metadata_table) if user is not None else Vocabulary.objects.usable()
+    )
     if not vocabularies.filter(key=value).exists():
         raise serializers.ValidationError(f"{value!r} is not an available vocabulary")
     return value
@@ -88,9 +94,13 @@ class MetadataColumnSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at", "suggested_values", "possible_default_values", "display_name"]
 
     def validate_ontology_type(self, value):
-        """The key of a vocabulary the requesting user can use, or empty."""
+        """The key of a vocabulary the requesting user can use in the column's table, or empty."""
         request = self.context.get("request")
-        return validate_vocabulary_key(value, request.user if request else None)
+        table = getattr(self.instance, "metadata_table", None)
+        table_id = str(getattr(self, "initial_data", {}).get("metadata_table", "")) if table is None else ""
+        if table_id.isdigit():
+            table = MetadataTable.objects.filter(pk=int(table_id)).first()
+        return validate_vocabulary_key(value, request.user if request else None, table)
 
     def get_display_name(self, obj) -> str:
         """
@@ -1549,6 +1559,7 @@ class VocabularySerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source="owner.username", read_only=True, allow_null=True, default=None)
     plugin_name = serializers.CharField(source="plugin.name", read_only=True, allow_null=True, default=None)
     live_search = serializers.SerializerMethodField()
+    can_manage = serializers.SerializerMethodField()
     filter_presets = VocabularyFilterPresetSerializer(many=True, read_only=True)
     source_version = VocabularySourceVersionSerializer(read_only=True, allow_null=True)
 
@@ -1574,6 +1585,7 @@ class VocabularySerializer(serializers.ModelSerializer):
             "min_term_length",
             "filter_presets",
             "live_search",
+            "can_manage",
             "term_count",
             "last_loaded_at",
             "last_error",
@@ -1586,3 +1598,117 @@ class VocabularySerializer(serializers.ModelSerializer):
     def get_live_search(self, obj) -> bool:
         """Whether searches also ask the vocabulary's platform for terms."""
         return bool(obj.live_search_adapter)
+
+    def get_can_manage(self, obj) -> bool:
+        """Whether the requesting user can change the vocabulary and its terms."""
+        request = self.context.get("request")
+        return bool(request) and can_manage_vocabulary(request.user, obj)
+
+
+class VocabularyCreateSerializer(serializers.Serializer):
+    """A new custom vocabulary, global (staff) or for one lab group (its managers)."""
+
+    slug = serializers.RegexField(
+        r"^[a-z0-9][a-z0-9_]{1,59}$",
+        required=False,
+        help_text="Lower-case letters, digits and underscores; the key becomes custom.<slug>. Made from the label when omitted.",
+    )
+    label = serializers.CharField(max_length=255)
+    kind = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
+    description = serializers.CharField(required=False, allow_blank=True, default="")
+    lab_group = serializers.PrimaryKeyRelatedField(
+        queryset=LabGroup.objects.all(), required=False, allow_null=True, default=None
+    )
+    sdrf_short_name = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        """Derive the key from the slug or label and refuse keys already in use."""
+        slug = attrs.get("slug") or re.sub(r"[^a-z0-9]+", "_", attrs["label"].lower()).strip("_")[:60]
+        if len(slug) < 2:
+            raise serializers.ValidationError({"slug": "Give a slug of at least two letters or digits"})
+        attrs["key"] = f"custom.{slug}"
+        if Vocabulary.objects.filter(key=attrs["key"]).exists():
+            raise serializers.ValidationError({"slug": f"The key {attrs['key']} is already in use"})
+        return attrs
+
+
+class VocabularyUpdateSerializer(serializers.ModelSerializer):
+    """Changes to a custom vocabulary."""
+
+    status = serializers.ChoiceField(
+        choices=[Vocabulary.STATUS_ACTIVE, Vocabulary.STATUS_UNAVAILABLE],
+        required=False,
+        help_text="unavailable keeps existing columns working but hides the vocabulary from new ones",
+    )
+
+    class Meta:
+        model = Vocabulary
+        fields = ["label", "kind", "description", "sdrf_short_name", "status"]
+
+
+class VocabularyImportSerializer(serializers.Serializer):
+    """A vocabulary file to import, with the CSV or TSV columns to read."""
+
+    file = serializers.FileField()
+    format = serializers.ChoiceField(
+        choices=["obo", "owl", "csv", "tsv"], required=False, help_text="Taken from the file extension when omitted"
+    )
+    mode = serializers.ChoiceField(
+        choices=["merge", "replace"], default="merge", help_text="replace removes terms that are not in the file"
+    )
+    name_column = serializers.CharField(required=False, allow_blank=True, default="")
+    id_column = serializers.CharField(
+        required=False, allow_blank=True, default="", help_text="Names are used as ids when empty"
+    )
+    description_column = serializers.CharField(required=False, allow_blank=True, default="")
+    synonyms_column = serializers.CharField(required=False, allow_blank=True, default="")
+    synonym_separator = serializers.CharField(required=False, allow_blank=True, default=";", max_length=5)
+
+
+class VocabularyPreviewRequestSerializer(serializers.Serializer):
+    """A CSV or TSV file to preview."""
+
+    file = serializers.FileField()
+    format = serializers.ChoiceField(choices=["csv", "tsv"], required=False)
+
+
+class VocabularyPreviewSerializer(serializers.Serializer):
+    """The columns and first rows of a CSV or TSV file."""
+
+    columns = serializers.ListField(child=serializers.CharField())
+    rows = serializers.ListField(child=serializers.ListField(child=serializers.CharField()))
+
+
+class VocabularyTermSerializer(serializers.ModelSerializer):
+    """A term of a vocabulary kept in the vocabulary terms table."""
+
+    vocabulary = serializers.SlugRelatedField(slug_field="key", queryset=Vocabulary.objects.all())
+    synonyms = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+
+    class Meta:
+        model = VocabularyTerm
+        fields = [
+            "id",
+            "vocabulary",
+            "external_id",
+            "name",
+            "description",
+            "synonyms",
+            "obsolete",
+            "data",
+            "fetched_at",
+        ]
+        read_only_fields = ["id", "fetched_at"]
+
+    def to_representation(self, instance):
+        """Synonyms as a list."""
+        data = super().to_representation(instance)
+        data["synonyms"] = [part for part in (instance.synonyms or "").split(";") if part]
+        return data
+
+    def to_internal_value(self, data):
+        """Synonyms stored semicolon-separated."""
+        values = super().to_internal_value(data)
+        if "synonyms" in values:
+            values["synonyms"] = ";".join(part.strip() for part in values["synonyms"] if part.strip())
+        return values

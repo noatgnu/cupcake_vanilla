@@ -12,6 +12,7 @@ BUILTIN_TASK_TYPES = [
     ("REORDER_TEMPLATE_COLUMNS", "Reorder Template Columns"),
     ("TRANSCRIBE_AUDIO", "Transcribe Audio"),
     ("TRANSCRIBE_VIDEO", "Transcribe Video"),
+    ("IMPORT_VOCABULARY", "Import Vocabulary"),
 ]
 
 TASK_TYPE_MAX_LENGTH = 25
