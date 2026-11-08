@@ -1,15 +1,22 @@
 """The vocabulary plugin template in plugins/templates/vocabulary, run against the backend's plugin endpoints."""
 
+import copy
 import importlib.util
+import json
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from django.conf import settings
+from django.core.cache import cache
 from django.test import override_settings
 
 from rest_framework.test import APIClient, APITestCase
 
+from ccc.plugin.connection import callback_key
 from ccc.plugin.model import Plugin
+from ccv.external_vocabularies import live_search_source, refresh_from_platform
 from ccv.models import Vocabulary
 
 TEMPLATE = Path(settings.BASE_DIR) / "plugins" / "templates" / "vocabulary"
@@ -36,10 +43,83 @@ class ClientBackend(template.Backend):
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class VocabularyPluginTemplateTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.manifest = template.read_manifest()
         self.plugin = Plugin.objects.create(name=self.manifest["name"], display_name="Example", version="1.0")
         self.backend = ClientBackend(self.plugin._plain_token)
-        self.backend.post("plugins/startup/", {"base_url": "http://plugin.local:8101", "manifest": self.manifest})
+        self.start(self.manifest)
+
+    def start(self, manifest):
+        """Serve the template on a free local port and announce it, as its main() does."""
+        template.PluginHandler.callback_key = ""
+        server, _ = template.serve(manifest, self.plugin._plain_token, 0, host="127.0.0.1")
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.server = server
+        self.base_url = f"http://127.0.0.1:{server.server_port}"
+        return template.announce(self.backend, self.base_url, manifest)
+
+    def live_manifest(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["vocabularies"][0]["liveSearch"] = True
+        return manifest
+
+    def get_plugin(self, path, key=None):
+        request = urllib.request.Request(f"{self.base_url}/{path}", headers={"Cupcake-Key": key or ""})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read())
+
+    def test_startup_completes_the_handshake_with_the_template(self):
+        self.plugin.refresh_from_db()
+        self.assertEqual(self.plugin.lifecycle_status, Plugin.LIFECYCLE_RUNNING)
+        self.assertIsNotNone(self.plugin.connection_verified_at)
+        self.assertEqual(template.PluginHandler.callback_key, callback_key(self.plugin))
+        self.assertEqual(self.get_plugin("cupcake/ping", callback_key(self.plugin))["name"], self.manifest["name"])
+
+    def test_the_template_refuses_calls_without_the_callback_key(self):
+        with self.assertRaises(urllib.error.HTTPError) as refused:
+            self.get_plugin("cupcake/ping", "wrong")
+        self.assertEqual(refused.exception.code, 401)
+
+    def test_live_search_vocabularies_are_searched_at_the_plugin(self):
+        self.start(self.live_manifest())
+        key = f"plugin.{self.manifest['name']}.strains"
+        Vocabulary.objects.filter(key=key).update(approved=True)
+        self.plugin.refresh_from_db()
+        source = live_search_source(key)
+        self.assertTrue(source.is_configured())
+        self.assertEqual([term.name for term in source.search("WT", 10)], ["wild type"])
+        self.assertEqual(refresh_from_platform(key, "type"), 1)
+        vocabulary = Vocabulary.objects.get(key=key)
+        self.assertEqual(list(vocabulary.terms.values_list("external_id", flat=True)), ["EXS:0001"])
+        self.assertEqual(vocabulary.status, Vocabulary.STATUS_ACTIVE)
+
+    def test_obsolete_terms_are_not_returned_by_live_search(self):
+        self.start(self.live_manifest())
+        key = f"plugin.{self.manifest['name']}.strains"
+        Vocabulary.objects.filter(key=key).update(approved=True)
+        self.assertEqual(live_search_source(key).search("retired", 10), [])
+
+    def test_live_search_waits_for_approval(self):
+        self.start(self.live_manifest())
+        self.assertFalse(live_search_source(f"plugin.{self.manifest['name']}.strains").is_configured())
+
+    def test_a_plugin_that_stops_answering_makes_its_vocabulary_unavailable(self):
+        self.start(self.live_manifest())
+        key = f"plugin.{self.manifest['name']}.strains"
+        Vocabulary.objects.filter(key=key).update(approved=True)
+        self.server.shutdown()
+        self.server.server_close()
+        self.assertEqual(refresh_from_platform(key, "wild"), 0)
+        vocabulary = Vocabulary.objects.get(key=key)
+        self.assertEqual(vocabulary.status, Vocabulary.STATUS_UNAVAILABLE)
+        self.assertTrue(vocabulary.last_error.startswith("Search failed"))
+
+    def test_live_search_vocabularies_are_not_sent_in_full(self):
+        manifest = self.live_manifest()
+        self.start(manifest)
+        template.sync_all(self.backend, manifest)
+        self.assertEqual(Vocabulary.objects.get(key=f"plugin.{self.manifest['name']}.strains").term_count, 0)
 
     def test_the_manifest_declares_valid_vocabularies(self):
         keys = [entry["key"] for entry in self.manifest["vocabularies"]]

@@ -1,3 +1,5 @@
+from django.utils import timezone
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from drf_spectacular.types import OpenApiTypes
@@ -19,9 +21,21 @@ from ccc.api_schema import (
     PluginWithTokenSerializer,
 )
 from ccc.plugin.auth import PluginTokenAuthentication
+from ccc.plugin.connection import PluginConnectionError, ping, verify_connection
 from ccc.plugin.model import Plugin
 from ccc.plugin.permissions import IsPluginAuthenticated
 from ccc.plugin.serializer import PluginSerializer
+
+
+def _connection_failed(plugin: Plugin, error: PluginConnectionError) -> Response:
+    """Record that the backend could not reach the plugin and answer with the reason."""
+    message = f"CUPCAKE could not reach the plugin at {plugin.base_url}: {error}"
+    plugin.lifecycle_status = Plugin.LIFECYCLE_ERROR
+    plugin.progress_message = message[:500]
+    plugin.connection_verified_at = None
+    plugin.save(update_fields=["lifecycle_status", "progress_message", "connection_verified_at", "updated_at"])
+    _broadcast_lifecycle(plugin)
+    return Response({"error": message}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 def _broadcast_lifecycle(plugin: Plugin) -> None:
@@ -49,7 +63,7 @@ class PluginViewSet(viewsets.ModelViewSet):
 
     Lifecycle:
       register/           (admin)         → lifecycle set to "installing"
-      startup/            (plugin token)  → lifecycle set to "running"
+      startup/            (plugin token)  → handshake with the plugin, then lifecycle set to "running"
       report-progress/    (plugin token)  → plugin self-reports any stage or progress
       push/               (plugin token)  → plugin broadcasts arbitrary runtime data
     """
@@ -66,7 +80,7 @@ class PluginViewSet(viewsets.ModelViewSet):
         """Map actions to their required permission classes."""
         if getattr(self, "action", None) in ("startup", "push", "report_progress"):
             return [IsPluginAuthenticated()]
-        if self.action in ("destroy", "partial_update", "register", "reset_token", "broadcast"):
+        if self.action in ("destroy", "partial_update", "register", "reset_token", "broadcast", "check_connection"):
             return [permissions.IsAdminUser()]
         return [permissions.IsAuthenticated()]
 
@@ -109,34 +123,64 @@ class PluginViewSet(viewsets.ModelViewSet):
             data["token"] = plugin._plain_token
         return Response(data, status=status.HTTP_200_OK)
 
-    @extend_schema(tags=["plugins"], request=PluginStartupSerializer, responses={200: PluginSerializer})
+    @extend_schema(
+        tags=["plugins"],
+        request=PluginStartupSerializer,
+        responses={200: PluginSerializer, 400: ErrorSerializer, 502: ErrorSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="startup")
     def startup(self, request):
         """Called by a plugin process on boot to announce its address and mark itself running.
 
         Authenticated with the plugin's own startup token (Plugin-Token header).
-        Updates base_url, manifest_cache, and lifecycle_status for the calling plugin.
-        Broadcasts a lifecycle update to all WebSocket subscribers.
+        Updates base_url and manifest_cache, then runs the handshake with the plugin at its address.
+        Sets lifecycle_status to running when the handshake succeeds and to error, answering 502,
+        when it fails. Broadcasts a lifecycle update to all WebSocket subscribers.
         """
         plugin = request.auth
-        update_fields = ["lifecycle_status", "progress_message", "updated_at"]
-
-        base_url = request.data.get("base_url", "")
+        base_url = request.data.get("base_url", "") or plugin.base_url
+        if not base_url:
+            return Response(
+                {"error": "base_url is required: the backend checks the connection to the plugin at it"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         manifest = request.data.get("manifest", {})
 
-        if base_url:
-            plugin.base_url = base_url
-            update_fields.append("base_url")
+        update_fields = ["base_url", "updated_at"]
+        plugin.base_url = base_url
         if manifest:
             plugin.manifest_cache = manifest
             update_fields.append("manifest_cache")
+        plugin.save(update_fields=update_fields)
+
+        try:
+            verify_connection(plugin, request.META.get("HTTP_PLUGIN_TOKEN", "").strip(), base_url)
+        except PluginConnectionError as error:
+            return _connection_failed(plugin, error)
 
         plugin.lifecycle_status = Plugin.LIFECYCLE_RUNNING
         plugin.progress_message = "Running"
-        plugin.save(update_fields=update_fields)
+        plugin.connection_verified_at = timezone.now()
+        plugin.save(update_fields=["lifecycle_status", "progress_message", "connection_verified_at", "updated_at"])
 
         _broadcast_lifecycle(plugin)
 
+        return Response(self.get_serializer(plugin).data, status=status.HTTP_200_OK)
+
+    @extend_schema(tags=["plugins"], request=None, responses={200: PluginSerializer, 502: ErrorSerializer})
+    @action(detail=True, methods=["post"], url_path="check-connection")
+    def check_connection(self, request, pk=None):
+        """Check that the backend reaches the plugin at its registered address (admin only).
+
+        Records the time of the check on success; on failure sets lifecycle_status to error and answers 502.
+        """
+        plugin = self.get_object()
+        try:
+            ping(plugin)
+        except PluginConnectionError as error:
+            return _connection_failed(plugin, error)
+        plugin.connection_verified_at = timezone.now()
+        plugin.save(update_fields=["connection_verified_at", "updated_at"])
         return Response(self.get_serializer(plugin).data, status=status.HTTP_200_OK)
 
     @extend_schema(

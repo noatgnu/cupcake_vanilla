@@ -20,7 +20,8 @@ class PluginSerializer(serializers.ModelSerializer):
             "lifecycle_status",
             "progress_message",
             "progress_data",
+            "connection_verified_at",
             "registered_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "registered_at", "updated_at"]
+        read_only_fields = ["id", "connection_verified_at", "registered_at", "updated_at"]

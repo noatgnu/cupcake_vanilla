@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 LOCAL_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]{0,59}$")
 KEY_MAX_LENGTH = Vocabulary._meta.get_field("key").max_length
+LIVE_SEARCH_ADAPTER = "ccv.vocabularies.plugin_search.PluginVocabularySource"
 
 
 def plugin_vocabulary_key(plugin: Plugin, local_key: str) -> str:
@@ -47,7 +48,8 @@ def sync_plugin_vocabularies(plugin: Plugin) -> None:
     """
     Create or update the plugin's vocabularies from its manifest and disable the ones it no longer declares.
 
-    New vocabularies wait for staff approval; approval is kept when the manifest changes.
+    New vocabularies wait for staff approval; approval is kept when the manifest changes. Entries with
+    ``liveSearch: true`` are searched at the plugin when users search them.
     """
     declared = declared_vocabularies(plugin)
     keys = set()
@@ -59,6 +61,9 @@ def sync_plugin_vocabularies(plugin: Plugin) -> None:
             "kind": str(entry.get("kind", "")).strip()[:50],
             "description": str(entry.get("description", "")).strip(),
             "sdrf_short_name": str(entry.get("sdrfShortName", entry.get("sdrf_short_name", ""))).strip()[:50],
+            "live_search_adapter": (
+                LIVE_SEARCH_ADAPTER if entry.get("liveSearch", entry.get("live_search")) is True else ""
+            ),
         }
         min_term_length = entry.get("minTermLength", entry.get("min_term_length"))
         if isinstance(min_term_length, int) and 1 <= min_term_length <= 20:
@@ -71,7 +76,7 @@ def sync_plugin_vocabularies(plugin: Plugin) -> None:
                 storage=Vocabulary.STORAGE_TERMS,
                 plugin=plugin,
                 approved=False,
-                status=Vocabulary.STATUS_LOADING,
+                status=Vocabulary.STATUS_ACTIVE if details["live_search_adapter"] else Vocabulary.STATUS_LOADING,
                 **details,
             )
             continue
@@ -81,6 +86,7 @@ def sync_plugin_vocabularies(plugin: Plugin) -> None:
         for field, value in details.items():
             setattr(vocabulary, field, value)
         if vocabulary.status == Vocabulary.STATUS_DISABLED:
-            vocabulary.status = Vocabulary.STATUS_ACTIVE if vocabulary.last_loaded_at else Vocabulary.STATUS_LOADING
+            ready = vocabulary.last_loaded_at or details["live_search_adapter"]
+            vocabulary.status = Vocabulary.STATUS_ACTIVE if ready else Vocabulary.STATUS_LOADING
         vocabulary.save()
     Vocabulary.objects.filter(plugin=plugin).exclude(key__in=keys).update(status=Vocabulary.STATUS_DISABLED)

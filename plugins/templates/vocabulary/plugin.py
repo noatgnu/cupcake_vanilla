@@ -1,24 +1,29 @@
 """
 CUPCAKE vocabulary plugin template.
 
-Announces the vocabularies in manifest.json to the CUPCAKE backend, sends their terms in batches and
-reloads them on a schedule. Terms come from ``terms/<key>.tsv`` (columns id, name, description, synonyms
-separated by ``;``, obsolete); replace ``load_terms`` to read them from another source.
+Serves its endpoints, announces the vocabularies in manifest.json to the CUPCAKE backend and answers the
+backend's handshake. Vocabularies are sent in batches and reloaded on a schedule, or, when declared with
+``liveSearch``, searched here when users search them. Terms come from ``terms/<key>.tsv`` (columns id,
+name, description, synonyms separated by ``;``, obsolete); replace ``load_terms`` or ``search_terms`` to
+read them from another source.
 
 Environment:
   PLUGIN_TOKEN       startup token written by ``cupcake-plugin register`` (required)
   CUPCAKE_BACKEND    backend address, for example http://localhost:8000 (required)
-  PLUGIN_PORT        port of the plugin's health endpoint (default 8101)
-  PLUGIN_BASE_URL    address the browser uses to reach the plugin (default http://localhost:<port>)
+  PLUGIN_PORT        port the plugin serves on (default 8101)
+  PLUGIN_BASE_URL    address the backend and the browser reach the plugin at (default http://localhost:<port>)
   REFRESH_HOURS      hours between reloads; 0 loads once (default 24)
 """
 
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -26,10 +31,13 @@ import urllib.request
 from collections.abc import Iterable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 HERE = Path(__file__).resolve().parent
 BATCH_SIZE = 1000
+SEARCH_LIMIT = 25
 TRUE_VALUES = {"1", "true", "yes", "y"}
+SEARCH_PATH = re.compile(r"^/cupcake/vocabularies/([a-z0-9][a-z0-9_]*)/search$")
 
 logger = logging.getLogger("vocabulary-plugin")
 
@@ -67,6 +75,11 @@ def read_manifest(path: Path = HERE / "manifest.json") -> dict:
     return json.loads(path.read_text())
 
 
+def live_search_keys(manifest: dict) -> set[str]:
+    """Keys of the vocabularies declared with ``liveSearch``."""
+    return {entry["key"] for entry in manifest.get("vocabularies", []) if entry.get("liveSearch") is True}
+
+
 def load_terms(local_key: str, directory: Path = HERE / "terms") -> Iterator[dict]:
     """
     Terms of one vocabulary as the backend expects them.
@@ -86,6 +99,20 @@ def load_terms(local_key: str, directory: Path = HERE / "terms") -> Iterator[dic
                 "synonyms": [part.strip() for part in (row.get("synonyms") or "").split(";") if part.strip()],
                 "obsolete": (row.get("obsolete") or "").strip().lower() in TRUE_VALUES,
             }
+
+
+def search_terms(local_key: str, text: str, limit: int) -> list[dict]:
+    """Terms of a live-search vocabulary whose id, name or a synonym contains text, at most limit of them."""
+    needle = text.strip().casefold()
+    found = []
+    for term in load_terms(local_key):
+        if term["obsolete"]:
+            continue
+        if any(needle in value.casefold() for value in (term["id"], term["name"], *term["synonyms"])):
+            found.append(term)
+            if len(found) >= limit:
+                break
+    return found
 
 
 def batches(terms: Iterable[dict], size: int = BATCH_SIZE) -> Iterator[list[dict]]:
@@ -120,8 +147,9 @@ def sync_vocabulary(backend: Backend, local_key: str, terms: Iterable[dict], ver
 
 
 def sync_all(backend: Backend, manifest: dict) -> None:
-    """Load every vocabulary of the manifest, reporting progress to the backend."""
-    vocabularies = manifest.get("vocabularies", [])
+    """Load every vocabulary of the manifest that is not searched live, reporting progress to the backend."""
+    live = live_search_keys(manifest)
+    vocabularies = [entry for entry in manifest.get("vocabularies", []) if entry["key"] not in live]
     for index, vocabulary in enumerate(vocabularies, start=1):
         local_key = vocabulary["key"]
         backend.post(
@@ -150,40 +178,126 @@ def refresh_loop(backend: Backend, manifest: dict, refresh_hours: float) -> None
         time.sleep(refresh_hours * 3600)
 
 
-class HealthHandler(BaseHTTPRequestHandler):
-    """Answers /health with the plugin's name and version."""
+def sign(secret: str, message: str) -> str:
+    """The hex HMAC-SHA256 of message keyed with secret."""
+    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+class PluginHandler(BaseHTTPRequestHandler):
+    """
+    The plugin's endpoints.
+
+    ``GET /health`` answers anyone. ``POST /cupcake/handshake`` answers the backend when its request is signed
+    with the plugin token and keeps the callback key it sends. ``GET /cupcake/ping`` and
+    ``GET /cupcake/vocabularies/<key>/search?q=&limit=`` answer requests that carry that key.
+    """
 
     manifest: dict = {}
+    token: str = ""
+    callback_key: str = ""
 
     def do_GET(self):
-        if self.path.rstrip("/") != "/health":
-            self.send_error(404)
+        url = urlsplit(self.path)
+        path = url.path.rstrip("/")
+        if path == "/health":
+            self.send_json(200, {"name": self.manifest.get("name"), "version": self.manifest.get("version")})
             return
-        body = json.dumps({"name": self.manifest.get("name"), "version": self.manifest.get("version")}).encode()
-        self.send_response(200)
+        if not self.from_backend():
+            self.send_json(401, {"error": "Cupcake-Key missing or not valid"})
+            return
+        if path == "/cupcake/ping":
+            self.send_json(200, {"name": self.manifest.get("name"), "version": self.manifest.get("version")})
+            return
+        match = SEARCH_PATH.match(path)
+        if not match or match.group(1) not in live_search_keys(self.manifest):
+            self.send_json(404, {"error": "Not found"})
+            return
+        query = parse_qs(url.query)
+        text = (query.get("q") or [""])[0]
+        try:
+            limit = min(max(int((query.get("limit") or [SEARCH_LIMIT])[0]), 1), SEARCH_LIMIT)
+        except ValueError:
+            limit = SEARCH_LIMIT
+        try:
+            results = search_terms(match.group(1), text, limit) if text.strip() else []
+        except OSError as error:
+            logger.error("%s: search failed: %s", match.group(1), error)
+            self.send_json(503, {"error": "Search failed"})
+            return
+        self.send_json(200, {"results": results})
+
+    def do_POST(self):
+        if urlsplit(self.path).path.rstrip("/") != "/cupcake/handshake":
+            self.send_json(404, {"error": "Not found"})
+            return
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            nonce, key = str(body["nonce"]), str(body["callback_key"])
+        except (ValueError, KeyError, TypeError):
+            self.send_json(400, {"error": "Handshake needs a nonce and a callback_key"})
+            return
+        expected = sign(self.token, f"handshake:{nonce}:{key}")
+        if not hmac.compare_digest(self.headers.get("Cupcake-Signature", ""), expected):
+            self.send_json(401, {"error": "Handshake not signed with this plugin's token"})
+            return
+        type(self).callback_key = key
+        self.send_json(200, {"name": self.manifest.get("name"), "proof": sign(self.token, f"proof:{nonce}")})
+
+    def from_backend(self) -> bool:
+        """Whether the request carries the callback key from the last handshake."""
+        key = self.headers.get("Cupcake-Key", "")
+        return bool(self.callback_key) and hmac.compare_digest(key, self.callback_key)
+
+    def send_json(self, status: int, body: dict) -> None:
+        data = json.dumps(body).encode()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(data)
 
     def log_message(self, format, *args):
         logger.debug(format, *args)
 
 
+def serve(manifest: dict, token: str, port: int, host: str = "0.0.0.0") -> tuple[ThreadingHTTPServer, threading.Thread]:
+    """Serve the plugin's endpoints on port in a background thread."""
+    PluginHandler.manifest = manifest
+    PluginHandler.token = token
+    server = ThreadingHTTPServer((host, port), PluginHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def announce(backend: Backend, base_url: str, manifest: dict) -> dict:
+    """
+    Announce the plugin to the backend, which then runs the handshake with the plugin at base_url.
+
+    Raises:
+        SystemExit: When the backend refuses the startup, for example because it cannot reach base_url.
+    """
+    try:
+        return backend.post("plugins/startup/", {"base_url": base_url, "manifest": manifest})
+    except urllib.error.HTTPError as error:
+        logger.error("Startup refused (%s): %s", error.code, error.read().decode(errors="replace"))
+        raise SystemExit(1)
+
+
 def main() -> None:
-    """Announce the plugin, serve its health endpoint and keep its vocabularies loaded."""
+    """Serve the plugin's endpoints, announce the plugin and keep its vocabularies loaded."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     manifest = read_manifest()
     port = int(os.environ.get("PLUGIN_PORT", "8101"))
     base_url = os.environ.get("PLUGIN_BASE_URL", f"http://localhost:{port}")
     refresh_hours = float(os.environ.get("REFRESH_HOURS", "24"))
-    backend = Backend(os.environ["CUPCAKE_BACKEND"], os.environ["PLUGIN_TOKEN"])
+    token = os.environ["PLUGIN_TOKEN"]
+    backend = Backend(os.environ["CUPCAKE_BACKEND"], token)
 
-    HealthHandler.manifest = manifest
-    server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
-    backend.post("plugins/startup/", {"base_url": base_url, "manifest": manifest})
+    _, server_thread = serve(manifest, token, port)
+    announce(backend, base_url, manifest)
     threading.Thread(target=refresh_loop, args=(backend, manifest, refresh_hours), daemon=True).start()
-    server.serve_forever()
+    server_thread.join()
 
 
 if __name__ == "__main__":

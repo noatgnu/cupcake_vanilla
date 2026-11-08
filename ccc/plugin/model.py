@@ -32,6 +32,9 @@ class Plugin(models.Model):
     lifecycle_status = models.CharField(max_length=20, choices=LIFECYCLE_CHOICES, default=LIFECYCLE_UNKNOWN)
     progress_message = models.CharField(max_length=500, blank=True)
     progress_data = models.JSONField(default=dict)
+    connection_verified_at = models.DateTimeField(
+        null=True, blank=True, help_text="When the backend last reached the plugin at its registered address"
+    )
     registered_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

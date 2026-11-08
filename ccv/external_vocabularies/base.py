@@ -68,6 +68,11 @@ class ExternalVocabularySource(ABC):
     def is_configured(self) -> bool:
         """Return whether the instance has the settings needed to reach the platform."""
 
+    @classmethod
+    def for_vocabulary(cls, vocabulary) -> ExternalVocabularySource:
+        """The source of the vocabulary row that names this class."""
+        return cls()
+
     def search(self, term: str, limit: int) -> list[ExternalTermData]:
         """
         Search the platform.
@@ -104,17 +109,11 @@ def live_search_source(key: str) -> ExternalVocabularySource | None:
     Returns:
         A source instance, or ``None`` when the vocabulary has no live-search class or it cannot be loaded.
     """
-    path = (
-        apps.get_model("ccv", "Vocabulary")
-        .objects.filter(key=key)
-        .exclude(live_search_adapter="")
-        .values_list("live_search_adapter", flat=True)
-        .first()
-    )
-    if not path:
+    vocabulary = apps.get_model("ccv", "Vocabulary").objects.filter(key=key).exclude(live_search_adapter="").first()
+    if vocabulary is None:
         return None
     try:
-        return import_string(path)()
+        return import_string(vocabulary.live_search_adapter).for_vocabulary(vocabulary)
     except ImportError:
-        logger.warning("Live-search class %s of vocabulary %s cannot be loaded", path, key)
+        logger.warning("Live-search class %s of vocabulary %s cannot be loaded", vocabulary.live_search_adapter, key)
         return None

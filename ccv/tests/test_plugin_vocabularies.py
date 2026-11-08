@@ -1,5 +1,7 @@
 """Plugin vocabularies: declared in the manifest, filled by the plugin, approved by staff before users see them."""
 
+from unittest.mock import patch
+
 from django.urls import reverse
 
 from rest_framework import serializers, status
@@ -77,12 +79,30 @@ class PluginVocabularyTests(APITestCase):
         manifest = {
             "vocabularies": [{"key": "strains", "label": "Strains v2"}, {"key": "lines", "label": "Cell lines"}]
         }
-        response = self.client.post(reverse("ccc:plugin-startup"), {"manifest": manifest}, format="json")
+        with patch("ccc.plugin.viewset.verify_connection"):
+            response = self.client.post(
+                reverse("ccc:plugin-startup"),
+                {"base_url": "http://plugin.local:8101", "manifest": manifest},
+                format="json",
+            )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         strains = Vocabulary.objects.get(key=KEY)
         self.assertEqual(strains.label, "Strains v2")
         self.assertTrue(strains.approved)
         self.assertFalse(Vocabulary.objects.get(key="plugin.strain-db.lines").approved)
+
+    def test_live_search_vocabularies_are_searched_at_the_plugin_and_ready_at_once(self):
+        self.plugin.manifest_cache = {"vocabularies": [{"key": "strains", "label": "Strains", "liveSearch": True}]}
+        self.plugin.save()
+        vocabulary = Vocabulary.objects.get(key=KEY)
+        self.assertEqual(vocabulary.live_search_adapter, "ccv.vocabularies.plugin_search.PluginVocabularySource")
+        self.assertEqual(vocabulary.status, Vocabulary.STATUS_LOADING)
+        Vocabulary.objects.filter(key=KEY).delete()
+        self.plugin.save()
+        self.assertEqual(Vocabulary.objects.get(key=KEY).status, Vocabulary.STATUS_ACTIVE)
+        self.plugin.manifest_cache = MANIFEST
+        self.plugin.save()
+        self.assertEqual(Vocabulary.objects.get(key=KEY).live_search_adapter, "")
 
     def test_vocabularies_left_out_of_the_manifest_are_disabled_and_come_back(self):
         self.plugin.manifest_cache = {"vocabularies": []}

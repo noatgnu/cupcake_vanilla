@@ -211,6 +211,9 @@ class PluginStartupTest(APITestCase):
     def setUp(self):
         self.plugin = _make_plugin("startup-plugin", base_url="http://old.local")
         self.client = APIClient()
+        handshake = patch("ccc.plugin.viewset.verify_connection")
+        self.handshake = handshake.start()
+        self.addCleanup(handshake.stop)
 
     def _startup(self, token, payload):
         return self.client.post(
@@ -243,6 +246,20 @@ class PluginStartupTest(APITestCase):
         self.plugin.refresh_from_db()
         self.assertEqual(self.plugin.base_url, "http://updated.local")
         self.assertEqual(self.plugin.manifest_cache, manifest)
+
+    def test_startup_runs_the_handshake_at_the_announced_address(self):
+        self._startup(self.plugin._plain_token, {"base_url": "http://new.local"})
+        plugin, token, base_url = self.handshake.call_args.args
+        self.assertEqual((plugin.pk, token, base_url), (self.plugin.pk, self.plugin._plain_token, "http://new.local"))
+        self.plugin.refresh_from_db()
+        self.assertIsNotNone(self.plugin.connection_verified_at)
+
+    def test_startup_without_any_address_is_refused(self):
+        self.plugin.base_url = ""
+        self.plugin.save()
+        response = self._startup(self.plugin._plain_token, {})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.handshake.assert_not_called()
 
     def test_startup_sets_lifecycle_running(self):
         response = self._startup(self.plugin._plain_token, {"base_url": "http://new.local"})
@@ -509,6 +526,9 @@ class PluginResetTokenTest(APITestCase):
         self.user = _make_user("resetuser")
         self.plugin = _make_plugin("reset-plugin")
         self.client = APIClient()
+        handshake = patch("ccc.plugin.viewset.verify_connection")
+        handshake.start()
+        self.addCleanup(handshake.stop)
 
     def test_reset_token_as_staff_returns_new_token(self):
         old_hash = self.plugin.token
