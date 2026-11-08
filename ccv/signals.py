@@ -5,7 +5,10 @@ Django signals for CUPCAKE Vanilla metadata models.
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from ccc.plugin.model import Plugin
+
 from .models import MetadataColumn, MetadataTableTemplate, SamplePool
+from .vocabularies.plugins import sync_plugin_vocabularies
 
 
 @receiver(post_save, sender=MetadataTableTemplate)
@@ -49,3 +52,10 @@ def update_pooled_sample_columns_on_pool_save(sender, instance, **kwargs):
     except Exception:
         # Silently continue if there's an issue updating pooled columns
         pass
+
+
+@receiver(post_save, sender=Plugin)
+def sync_vocabularies_from_plugin_manifest(sender, instance, update_fields=None, **kwargs):
+    """Keep a plugin's vocabularies in step with the vocabularies its manifest declares."""
+    if update_fields is None or "manifest_cache" in update_fields:
+        sync_plugin_vocabularies(instance)

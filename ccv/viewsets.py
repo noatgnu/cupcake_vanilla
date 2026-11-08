@@ -33,8 +33,16 @@ from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from sdrf_pipelines.sdrf.schemas import SchemaRegistry as SdrfSchemaRegistry
 
-from ccc.api_schema import ActionMessageSerializer, ErrorOrFieldErrors, ErrorSerializer, FieldErrorsSerializer
+from ccc.api_schema import (
+    ActionMessageSerializer,
+    DetailSerializer,
+    ErrorOrFieldErrors,
+    ErrorSerializer,
+    FieldErrorsSerializer,
+)
 from ccc.models import AsyncTaskStatus, LabGroup, ResourceRole, ResourceVisibility
+from ccc.plugin.auth import PluginTokenAuthentication
+from ccc.plugin.permissions import IsPluginAuthenticated
 from ccv.tasks.reorder_tasks import (
     reorder_metadata_table_columns_sync,
     reorder_metadata_table_columns_task,
@@ -208,6 +216,11 @@ from .serializers import (
     MSUniqueVocabulariesSerializer,
     NCBITaxonomySerializer,
     OntologySuggestionSerializer,
+    PluginLoadFinishedSerializer,
+    PluginLoadFinishSerializer,
+    PluginTermsSerializer,
+    PluginTermsStoredSerializer,
+    PluginVocabularySerializer,
     PSIMSOntologySerializer,
     SampleCountUpdateSerializer,
     SampleCountValidationSerializer,
@@ -221,6 +234,7 @@ from .serializers import (
     TissueSerializer,
     UberonAnatomySerializer,
     UnimodSerializer,
+    VocabularyApprovalSerializer,
     VocabularyCreateSerializer,
     VocabularyImportSerializer,
     VocabularyPreviewRequestSerializer,
@@ -251,7 +265,9 @@ from .utils import (
     validate_sdrf,
 )
 from .vocabularies.access import can_manage_lab_group_vocabularies, can_manage_vocabulary
-from .vocabularies.importers import VocabularyFileError, detect_format, preview_table
+from .vocabularies.importers import ImportedTerm, VocabularyFileError, detect_format, preview_table
+from .vocabularies.plugins import plugin_vocabulary_key
+from .vocabularies.store import finish_load, store_term_batch
 
 
 @extend_schema_view(
@@ -6305,6 +6321,8 @@ class VocabularyViewSet(viewsets.ModelViewSet):
         """Vocabularies the user can use for reading; custom vocabularies for changes, checked per object."""
         if self.action in ("partial_update", "destroy", "import_terms", "import_preview"):
             return Vocabulary.objects.filter(provider=Vocabulary.PROVIDER_CUSTOM).select_related("lab_group")
+        if self.action == "approve":
+            return Vocabulary.objects.select_related("lab_group", "owner", "plugin", "source_version")
         user = self.request.user
         params = self.request.query_params
         if (user.is_staff or user.is_superuser) and params.get("include_unapproved") == "true":
@@ -6448,6 +6466,23 @@ class VocabularyViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         tags=["vocabularies"],
+        request=VocabularyApprovalSerializer,
+        responses={200: VocabularySerializer, 400: ErrorSerializer, 403: ErrorSerializer},
+    )
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser])
+    def approve(self, request, key=None):
+        """Let users see and use a plugin vocabulary, or withdraw it again (staff only)."""
+        vocabulary = self.get_object()
+        if vocabulary.provider != Vocabulary.PROVIDER_PLUGIN:
+            return Response({"error": "Only plugin vocabularies need approval"}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = VocabularyApprovalSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        vocabulary.approved = serializer.validated_data["approved"]
+        vocabulary.save(update_fields=["approved", "updated_at"])
+        return Response(VocabularySerializer(vocabulary, context={"request": request}).data)
+
+    @extend_schema(
+        tags=["vocabularies"],
         request={"multipart/form-data": VocabularyPreviewRequestSerializer},
         responses={200: VocabularyPreviewSerializer, 400: ErrorOrFieldErrors, 403: ErrorSerializer},
     )
@@ -6552,6 +6587,83 @@ class VocabularyTermViewSet(viewsets.ModelViewSet):
     def _recount(self, vocabulary):
         vocabulary.term_count = vocabulary.terms.count()
         vocabulary.save(update_fields=["term_count", "updated_at"])
+
+
+class PluginVocabularyViewSet(viewsets.ViewSet):
+    """The calling plugin's vocabularies, looked up by the key its manifest declares, and the terms it sends."""
+
+    authentication_classes = [PluginTokenAuthentication]
+    permission_classes = [IsPluginAuthenticated]
+    lookup_field = "key"
+    lookup_value_regex = r"[a-z0-9][a-z0-9_]*"
+
+    def _vocabulary(self, key):
+        vocabulary = Vocabulary.objects.filter(
+            plugin=self.request.auth, key=plugin_vocabulary_key(self.request.auth, key)
+        ).first()
+        if vocabulary is None or vocabulary.status == Vocabulary.STATUS_DISABLED:
+            raise NotFound("The plugin's manifest does not declare this vocabulary")
+        return vocabulary
+
+    @extend_schema(tags=["plugins"], responses={200: PluginVocabularySerializer(many=True)})
+    def list(self, request):
+        """The vocabularies the plugin's manifest declares, with their approval and load state."""
+        vocabularies = Vocabulary.objects.filter(plugin=request.auth).exclude(status=Vocabulary.STATUS_DISABLED)
+        return Response(PluginVocabularySerializer(vocabularies.order_by("key"), many=True).data)
+
+    @extend_schema(tags=["plugins"], responses={200: PluginVocabularySerializer, 404: DetailSerializer})
+    def retrieve(self, request, key=None):
+        """One of the plugin's vocabularies."""
+        return Response(PluginVocabularySerializer(self._vocabulary(key)).data)
+
+    @extend_schema(
+        tags=["plugins"],
+        request=PluginTermsSerializer,
+        responses={200: PluginTermsStoredSerializer, 400: FieldErrorsSerializer, 404: DetailSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def terms(self, request, key=None):
+        """Add or update up to 1000 terms of one of the plugin's vocabularies."""
+        vocabulary = self._vocabulary(key)
+        serializer = PluginTermsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        received_at = timezone.now()
+        stored = store_term_batch(
+            vocabulary,
+            (
+                ImportedTerm(
+                    external_id=term["id"],
+                    name=term["name"],
+                    description=term["description"],
+                    synonyms=tuple(part.strip() for part in term["synonyms"] if part.strip()),
+                    obsolete=term["obsolete"],
+                    data=term["data"],
+                )
+                for term in serializer.validated_data["terms"]
+            ),
+            received_at,
+        )
+        return Response({"stored": stored, "received_at": received_at})
+
+    @extend_schema(
+        tags=["plugins"],
+        request=PluginLoadFinishSerializer,
+        responses={200: PluginLoadFinishedSerializer, 400: FieldErrorsSerializer, 404: DetailSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def finish(self, request, key=None):
+        """Record the end of a load of one of the plugin's vocabularies, removing terms not sent again."""
+        vocabulary = self._vocabulary(key)
+        serializer = PluginLoadFinishSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        removed = finish_load(
+            vocabulary,
+            replace_before=data["replace_before"],
+            version=data["version"],
+            source=data["source"] or request.auth.name,
+        )
+        return Response({**PluginVocabularySerializer(vocabulary).data, "removed": removed})
 
 
 class OntologySearchViewSet(viewsets.ViewSet):

@@ -1,0 +1,4 @@
+id	name	description	synonyms	obsolete
+EXS:0001	wild type	Unmodified reference strain	WT;wildtype
+EXS:0002	knockout A	Strain with gene A removed	KO-A
+EXS:0003	retired line	No longer kept		true

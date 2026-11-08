@@ -3929,8 +3929,8 @@ class VocabularyQuerySet(models.QuerySet):
     """Vocabulary queries."""
 
     def usable(self):
-        """Approved vocabularies that are not disabled."""
-        return self.filter(approved=True).exclude(status=Vocabulary.STATUS_DISABLED)
+        """Approved vocabularies that are not disabled and do not belong to an inactive plugin."""
+        return self.filter(approved=True).exclude(status=Vocabulary.STATUS_DISABLED).exclude(plugin__is_active=False)
 
     def visible_to(self, user, metadata_table=None):
         """

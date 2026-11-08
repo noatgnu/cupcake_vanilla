@@ -317,6 +317,7 @@ SPECTACULAR_SETTINGS = {
         "InstrumentAlertTypeEnum": ["warranty_expiring", "maintenance_due", "maintenance_completed"],
         "ReagentAlertTypeEnum": ["low_stock", "expired", "expiring_soon"],
         "PluginLifecycleStatusEnum": "ccc.plugin.model.Plugin.LIFECYCLE_CHOICES",
+        "VocabularyStatusEnum": "ccv.models.Vocabulary.STATUS_CHOICES",
         "AccountMergeRequestStatusEnum": "ccc.models.AccountMergeRequest.STATUS_CHOICES",
         "AsyncTaskStatusEnum": "ccc.models.AsyncTaskStatus.TASK_STATUS_CHOICES",
         "BillingRecordStatusEnum": "ccsc.models.BillingRecord.STATUS_CHOICES",

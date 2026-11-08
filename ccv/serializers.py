@@ -1712,3 +1712,77 @@ class VocabularyTermSerializer(serializers.ModelSerializer):
         if "synonyms" in values:
             values["synonyms"] = ";".join(part.strip() for part in values["synonyms"] if part.strip())
         return values
+
+
+class PluginVocabularySerializer(serializers.ModelSerializer):
+    """A vocabulary of the calling plugin, as the plugin sees it."""
+
+    local_key = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Vocabulary
+        fields = [
+            "key",
+            "local_key",
+            "label",
+            "approved",
+            "status",
+            "term_count",
+            "last_loaded_at",
+            "last_error",
+        ]
+        read_only_fields = fields
+
+    def get_local_key(self, obj) -> str:
+        """The key the plugin's manifest declares."""
+        return obj.key.split(".", 2)[-1]
+
+
+class PluginTermSerializer(serializers.Serializer):
+    """One term a plugin sends."""
+
+    id = serializers.CharField(max_length=255)
+    name = serializers.CharField()
+    description = serializers.CharField(required=False, allow_blank=True, default="")
+    synonyms = serializers.ListField(child=serializers.CharField(allow_blank=True), required=False, default=list)
+    obsolete = serializers.BooleanField(required=False, default=False)
+    data = serializers.DictField(required=False, default=dict)
+
+
+class PluginTermsSerializer(serializers.Serializer):
+    """A batch of terms a plugin sends for one of its vocabularies."""
+
+    terms = serializers.ListField(child=PluginTermSerializer(), min_length=1, max_length=1000)
+
+
+class PluginTermsStoredSerializer(serializers.Serializer):
+    """The result of storing a batch of plugin terms."""
+
+    stored = serializers.IntegerField()
+    received_at = serializers.DateTimeField(help_text="Time recorded on the stored terms")
+
+
+class PluginLoadFinishSerializer(serializers.Serializer):
+    """The end of a plugin's load of one of its vocabularies."""
+
+    replace_before = serializers.DateTimeField(
+        required=False, allow_null=True, default=None, help_text="Remove the terms last sent before this time"
+    )
+    version = serializers.CharField(required=False, allow_blank=True, default="", max_length=100)
+    source = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
+
+
+class PluginLoadFinishedSerializer(PluginVocabularySerializer):
+    """The vocabulary after a finished load, with the number of removed terms."""
+
+    removed = serializers.IntegerField(read_only=True)
+
+    class Meta(PluginVocabularySerializer.Meta):
+        fields = PluginVocabularySerializer.Meta.fields + ["removed"]
+        read_only_fields = fields
+
+
+class VocabularyApprovalSerializer(serializers.Serializer):
+    """Whether users can see and use a plugin vocabulary."""
+
+    approved = serializers.BooleanField()

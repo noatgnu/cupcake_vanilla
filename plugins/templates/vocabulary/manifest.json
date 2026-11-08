@@ -1,0 +1,16 @@
+{
+  "name": "example-vocabulary",
+  "displayName": "Example vocabulary",
+  "version": "1.0.0",
+  "description": "Provides the example strain vocabulary to CUPCAKE metadata columns",
+  "vocabularies": [
+    {
+      "key": "strains",
+      "label": "Example strains",
+      "kind": "strain",
+      "description": "Strains kept by the example lab",
+      "sdrfShortName": "EXS",
+      "minTermLength": 2
+    }
+  ]
+}

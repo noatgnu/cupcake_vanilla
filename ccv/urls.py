@@ -32,6 +32,7 @@ from .viewsets import (
     MSUniqueVocabulariesViewSet,
     NCBITaxonomyViewSet,
     OntologySearchViewSet,
+    PluginVocabularyViewSet,
     PSIMSOntologyViewSet,
     SamplePoolViewSet,
     SchemaViewSet,
@@ -75,6 +76,7 @@ router.register(r"ontology/doid", DiseaseOntologyTermViewSet, basename="doidterm
 router.register(r"ontology/search", OntologySearchViewSet, basename="ontologysearch")
 router.register(r"vocabularies", VocabularyViewSet, basename="vocabulary")
 router.register(r"vocabulary-terms", VocabularyTermViewSet, basename="vocabularyterm")
+router.register(r"plugin-vocabularies", PluginVocabularyViewSet, basename="pluginvocabulary")
 router.register(r"schemas", SchemaViewSet, basename="schema")
 router.register(r"sdrf-defaults", SDRFDefaultsViewSet, basename="sdrfdefaults")
 router.register(r"shared-tables", SharedTableViewSet, basename="sharedtable")
