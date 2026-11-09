@@ -2,9 +2,9 @@
 Standalone test plugin server.
 
 Starts an HTTP server that mimics a real plugin container.
-Registers itself with the CUPCAKE backend on boot, stores the plugin
-token returned on first registration, then calls startup to transition
-the plugin lifecycle to running.
+Serves its endpoints, registers itself with the CUPCAKE backend, stores the
+plugin token returned on first registration, then calls startup. The backend
+runs the handshake at /cupcake/handshake before it marks the plugin running.
 
 Relay endpoints let the integration test suite trigger plugin-token
 calls without holding the token itself:
@@ -19,11 +19,14 @@ Usage:
 """
 
 import argparse
+import hashlib
+import hmac
 import json
 import sys
+import threading
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _CARD_DATA = {"status": "ok", "version": "1.0.0", "uptime_seconds": 9999}
 _LIST_DATA = [{"id": 1, "name": "Alpha"}, {"id": 2, "name": "Beta"}, {"id": 3, "name": "Gamma"}]
@@ -39,7 +42,13 @@ _CHART_DATA = {
 _state: dict = {
     "backend": "",
     "plugin_token": "",
+    "callback_key": "",
 }
+
+
+def _sign(message: str) -> str:
+    """The hex HMAC-SHA256 of message keyed with the plugin token."""
+    return hmac.new(_state["plugin_token"].encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
 def _manifest(base_url: str) -> dict:
@@ -109,7 +118,14 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/rows": _TABLE_DATA,
             "/api/chart": _CHART_DATA,
         }
-        if self.path in routes:
+        if self.path == "/cupcake/ping":
+            if _state["callback_key"] and hmac.compare_digest(
+                self.headers.get("Cupcake-Key", ""), _state["callback_key"]
+            ):
+                self._json(200, {"name": "ci-test-plugin"})
+            else:
+                self._json(401, {"error": "Cupcake-Key missing or not valid"})
+        elif self.path in routes:
             self._json(200, routes[self.path])
         else:
             self.send_response(404)
@@ -119,7 +135,16 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
 
-        if self.path == "/api/push":
+        if self.path == "/cupcake/handshake":
+            nonce, key = str(body.get("nonce", "")), str(body.get("callback_key", ""))
+            if not _state["plugin_token"] or not hmac.compare_digest(
+                self.headers.get("Cupcake-Signature", ""), _sign(f"handshake:{nonce}:{key}")
+            ):
+                self._json(401, {"error": "Handshake not signed with this plugin's token"})
+                return
+            _state["callback_key"] = key
+            self._json(200, {"name": "ci-test-plugin", "proof": _sign(f"proof:{nonce}")})
+        elif self.path == "/api/push":
             self._json(200, _plugin_call("push/", {"payload": body}))
         elif self.path == "/api/report-progress":
             self._json(200, _plugin_call("report-progress/", body))
@@ -179,7 +204,7 @@ def _register(backend: str, token: str, base_url: str) -> dict:
 
 
 def main():
-    """Parse arguments, bind the HTTP server, register with the backend, call startup, then serve."""
+    """Parse arguments, serve the endpoints, register with the backend and call startup."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8001)
@@ -192,9 +217,11 @@ def main():
     _state["backend"] = args.backend
 
     handler = type("Handler", (_Handler,), {"base_url": base_url})
-    server = HTTPServer((args.host, args.port), handler)
+    server = ThreadingHTTPServer((args.host, args.port), handler)
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
 
-    print(f"[plugin] server bound at {base_url}", flush=True)
+    print(f"[plugin] serving at {base_url}", flush=True)
 
     token = _get_token(args.backend, args.username, args.password)
     result = _register(args.backend, token, base_url)
@@ -203,13 +230,13 @@ def main():
     if plugin_token:
         _state["plugin_token"] = plugin_token
         print(f"[plugin] registered (new), id={result.get('id')}", flush=True)
-        _plugin_call("startup/", {"base_url": base_url, "manifest": _manifest(base_url)})
-        print("[plugin] startup announced", flush=True)
+        started = _plugin_call("startup/", {"base_url": base_url, "manifest": _manifest(base_url)})
+        print(f"[plugin] startup answered: {started.get('lifecycle_status', started)}", flush=True)
     else:
         print(f"[plugin] registered (existing), id={result.get('id')}", flush=True)
 
     try:
-        server.serve_forever()
+        serving.join()
     except KeyboardInterrupt:
         print("[plugin] shutting down", flush=True)
         sys.exit(0)

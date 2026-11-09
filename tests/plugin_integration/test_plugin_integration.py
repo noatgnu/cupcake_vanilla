@@ -165,6 +165,15 @@ class TestPluginStartup:
     def test_base_url_stored_correctly(self, registered_plugin):
         assert registered_plugin["base_url"] == PLUGIN_BASE
 
+    def test_handshake_reached_the_plugin(self, token, registered_plugin):
+        data = _get(f"{API}/{registered_plugin['id']}/", token=token)
+        assert data["connection_verified_at"]
+
+    def test_staff_check_the_connection_again(self, token, registered_plugin):
+        data = _post(f"{API}/{registered_plugin['id']}/check-connection/", {}, token=token)
+        assert data["lifecycle_status"] == "running"
+        assert data["connection_verified_at"]
+
 
 class TestPluginRegistration:
     """Verify the registration API."""
