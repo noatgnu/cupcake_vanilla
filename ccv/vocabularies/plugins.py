@@ -48,8 +48,7 @@ def sync_plugin_vocabularies(plugin: Plugin) -> None:
     """
     Create or update the plugin's vocabularies from its manifest and disable the ones it no longer declares.
 
-    New vocabularies wait for staff approval; approval is kept when the manifest changes. Entries with
-    ``liveSearch: true`` are searched at the plugin when users search them.
+    New vocabularies are unapproved; approval is kept when the manifest changes.
     """
     declared = declared_vocabularies(plugin)
     keys = set()

@@ -1,16 +1,10 @@
-"""
-Calls from the backend to a plugin at the address the plugin registered.
-
-When a plugin starts, the backend checks the connection in both directions with a handshake: it posts
-a nonce and the plugin's callback key to ``<base_url>/cupcake/handshake``, signed with the plugin's
-token, and the plugin answers with a proof made from the same token. Later calls carry the callback
-key in the ``Cupcake-Key`` header.
-"""
+"""Calls from the backend to a plugin at its registered address."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import secrets
 
 from django.conf import settings
@@ -24,6 +18,10 @@ HANDSHAKE_PATH = "cupcake/handshake"
 PING_PATH = "cupcake/ping"
 SIGNATURE_HEADER = "Cupcake-Signature"
 KEY_HEADER = "Cupcake-Key"
+USER_ID_HEADER = "Cupcake-User-Id"
+USERNAME_HEADER = "Cupcake-Username"
+USER_STAFF_HEADER = "Cupcake-User-Staff"
+GET_WIDGET_TYPES = {"card", "list", "table", "chart"}
 
 
 class PluginConnectionError(Exception):
@@ -115,3 +113,68 @@ def ping(plugin: Plugin) -> None:
     body = call_plugin(plugin, PING_PATH)
     if body.get("name") != plugin.name:
         raise PluginConnectionError(f"answered as {body.get('name')!r} instead of {plugin.name!r}")
+
+
+def declared_calls(manifest: dict) -> set[tuple[str, str]]:
+    """The (method, endpoint) pairs declared by the widgets and widget actions of the manifest's pages."""
+    calls: set[tuple[str, str]] = set()
+    pages = (manifest or {}).get("pages") or []
+    for page in pages if isinstance(pages, list) else []:
+        widgets = page.get("widgets") if isinstance(page, dict) else None
+        for widget in widgets if isinstance(widgets, list) else []:
+            if not isinstance(widget, dict):
+                continue
+            endpoint = widget.get("endpoint")
+            if isinstance(endpoint, str) and endpoint:
+                if widget.get("type") in GET_WIDGET_TYPES:
+                    calls.add(("GET", endpoint))
+                elif widget.get("type") == "form":
+                    calls.add(("POST", endpoint))
+            for action in widget.get("actions") or []:
+                if isinstance(action, dict) and isinstance(action.get("endpoint"), str):
+                    calls.add((str(action.get("method", "GET")).upper(), action["endpoint"]))
+    return calls
+
+
+def forward(plugin: Plugin, method: str, endpoint: str, user, data: dict | None = None) -> tuple[int, object]:
+    """
+    Call a plugin endpoint for a user with the callback key and user headers; return the status and JSON answered.
+
+    Raises:
+        PluginConnectionError: When the plugin cannot be reached, answers too much, answers something other
+            than JSON, or fails with a server error.
+    """
+    if not plugin.base_url:
+        raise PluginConnectionError("has no registered address")
+    headers = {
+        KEY_HEADER: callback_key(plugin),
+        USER_ID_HEADER: str(user.pk),
+        USERNAME_HEADER: user.get_username(),
+        USER_STAFF_HEADER: "true" if user.is_staff else "false",
+        "Accept": "application/json",
+    }
+    try:
+        response = requests.request(
+            method,
+            plugin_url(plugin.base_url, endpoint),
+            json=data if method != "GET" else None,
+            headers=headers,
+            timeout=settings.PLUGIN_CONNECTION_TIMEOUT,
+            allow_redirects=False,
+            stream=True,
+        )
+        content = b""
+        for chunk in response.iter_content(65536):
+            content += chunk
+            if len(content) > settings.PLUGIN_RESPONSE_MAX_BYTES:
+                response.close()
+                raise PluginConnectionError(f"answered more than {settings.PLUGIN_RESPONSE_MAX_BYTES} bytes")
+    except requests.RequestException as error:
+        raise PluginConnectionError(str(error))
+    if response.status_code >= 500:
+        raise PluginConnectionError(f"answered {response.status_code}")
+    try:
+        body = json.loads(content) if content else None
+    except ValueError:
+        raise PluginConnectionError("answered with something other than JSON")
+    return response.status_code, body

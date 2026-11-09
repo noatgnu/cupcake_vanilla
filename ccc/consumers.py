@@ -35,6 +35,7 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
         self.user_group_name = f"user_{self.user.id}"
         self.lab_groups = []
+        self.plugin_groups = set()
 
         self.lab_groups = await self.get_user_lab_groups()
 
@@ -73,6 +74,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
             await self.channel_layer.group_discard("global_notifications", self.channel_name)
 
+            for group_name in getattr(self, "plugin_groups", set()):
+                await self.channel_layer.group_discard(group_name, self.channel_name)
+
             logger.info(f"WebSocket disconnected for user {self.user.username} (code: {close_code})")
 
     async def receive(self, text_data):
@@ -83,6 +87,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
 
             if message_type == "subscribe":
                 await self.handle_subscription(data)
+            elif message_type == "unsubscribe":
+                await self.handle_unsubscription(data)
             elif message_type == "ping":
                 await self.send(text_data=json.dumps({"type": "pong"}))
             else:
@@ -114,32 +120,57 @@ class NotificationConsumer(AsyncWebsocketConsumer):
                 text_data=json.dumps({"type": "subscription.confirmed", "subscription_type": subscription_type})
             )
         elif subscription_type == "plugin_updates":
-            plugin_id = data.get("plugin_id")
-            scope = data.get("scope", "global")
-            if not plugin_id:
-                return
-            if scope == "global":
-                group_name = f"plugin__{plugin_id}__global"
-            elif scope == "user":
-                group_name = f"plugin__{plugin_id}__user_{self.user.id}"
-            elif scope == "lab_group":
-                lab_group_id = data.get("lab_group_id")
-                if not lab_group_id:
-                    return
-                group_name = f"plugin__{plugin_id}__lab_group_{lab_group_id}"
-            else:
+            group_name = self.plugin_group_name(data)
+            if not group_name:
                 return
             await self.channel_layer.group_add(group_name, self.channel_name)
+            if not hasattr(self, "plugin_groups"):
+                self.plugin_groups = set()
+            self.plugin_groups.add(group_name)
             await self.send(
                 text_data=json.dumps(
                     {
                         "type": "subscription.confirmed",
                         "subscription_type": subscription_type,
-                        "plugin_id": plugin_id,
-                        "scope": scope,
+                        "plugin_id": data.get("plugin_id"),
+                        "scope": data.get("scope", "global"),
                     }
                 )
             )
+
+    async def handle_unsubscription(self, data):
+        """Stop sending the client the plugin updates it subscribed to."""
+        if data.get("subscription_type") != "plugin_updates":
+            return
+        group_name = self.plugin_group_name(data)
+        if not group_name:
+            return
+        await self.channel_layer.group_discard(group_name, self.channel_name)
+        getattr(self, "plugin_groups", set()).discard(group_name)
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "subscription.cancelled",
+                    "subscription_type": "plugin_updates",
+                    "plugin_id": data.get("plugin_id"),
+                    "scope": data.get("scope", "global"),
+                }
+            )
+        )
+
+    def plugin_group_name(self, data):
+        """The channel group of a plugin_updates subscription, or None when the request is incomplete."""
+        plugin_id = data.get("plugin_id")
+        scope = data.get("scope", "global")
+        if not plugin_id:
+            return None
+        if scope == "global":
+            return f"plugin__{plugin_id}__global"
+        if scope == "user":
+            return f"plugin__{plugin_id}__user_{self.user.id}"
+        if scope == "lab_group" and data.get("lab_group_id"):
+            return f"plugin__{plugin_id}__lab_group_{data['lab_group_id']}"
+        return None
 
     async def notification_message(self, event):
         """Handle notification messages sent to groups."""

@@ -15,13 +15,7 @@ def search_path(local_key: str) -> str:
 
 
 class PluginVocabularySource(ExternalVocabularySource):
-    """
-    A plugin vocabulary declared with ``liveSearch``, searched at ``<base_url>/cupcake/vocabularies/<key>/search``.
-
-    The plugin answers ``{"results": [...]}`` with terms in the form it sends them to
-    ``/plugin-vocabularies/<key>/terms/``. Obsolete and invalid terms are left out. A failed search marks the
-    vocabulary unavailable with the error; the next successful one marks it active again.
-    """
+    """A plugin vocabulary declared with ``liveSearch``, searched at its plugin."""
 
     platform = "plugin"
 

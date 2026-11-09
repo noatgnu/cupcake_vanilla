@@ -687,6 +687,31 @@ class PluginConsumerTest(TestCase):
 
         consumer.channel_layer.group_add.assert_not_called()
 
+    def test_unsubscribe_discards_the_group(self):
+        consumer = self._build_consumer(user_id=1)
+        asyncio.run(consumer.handle_subscription(self._make_subscription_message(plugin_id=5)))
+        asyncio.run(consumer.handle_unsubscription(self._make_subscription_message(plugin_id=5)))
+        consumer.channel_layer.group_discard.assert_called_once_with("plugin__5__global", "test-channel")
+        self.assertEqual(consumer.plugin_groups, set())
+        sent = json.loads(consumer.send.call_args[1]["text_data"])
+        self.assertEqual(sent["type"], "subscription.cancelled")
+
+    def test_unsubscribe_from_other_subscription_types_does_nothing(self):
+        consumer = self._build_consumer(user_id=1)
+        asyncio.run(consumer.handle_unsubscription({"subscription_type": "async_task_updates"}))
+        consumer.channel_layer.group_discard.assert_not_called()
+
+    def test_disconnect_leaves_the_plugin_groups(self):
+        consumer = self._build_consumer(user_id=1)
+        consumer.user.is_authenticated = True
+        consumer.user_group_name = "user_1"
+        consumer.lab_groups = []
+        asyncio.run(consumer.handle_subscription(self._make_subscription_message(plugin_id=5)))
+        asyncio.run(consumer.handle_subscription(self._make_subscription_message(plugin_id=6, scope="user")))
+        asyncio.run(consumer.disconnect(1000))
+        discarded = {call.args[0] for call in consumer.channel_layer.group_discard.call_args_list}
+        self.assertTrue({"plugin__5__global", "plugin__6__user_1"} <= discarded)
+
     def test_plugin_message_handler_sends_correct_payload(self):
         consumer = self._build_consumer(user_id=1)
         event = {
@@ -716,6 +741,7 @@ class PluginConsumerTest(TestCase):
 
         channel_layer = MagicMock()
         channel_layer.group_add = AsyncMock()
+        channel_layer.group_discard = AsyncMock()
         consumer.channel_layer = channel_layer
 
         consumer.send = AsyncMock()

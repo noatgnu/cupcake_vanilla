@@ -2,9 +2,8 @@
 Standalone test plugin server.
 
 Starts an HTTP server that mimics a real plugin container.
-Serves its endpoints, registers itself with the CUPCAKE backend, stores the
-plugin token returned on first registration, then calls startup. The backend
-runs the handshake at /cupcake/handshake before it marks the plugin running.
+Registers itself with the CUPCAKE backend, stores the plugin token returned
+on first registration, then calls startup.
 
 Relay endpoints let the integration test suite trigger plugin-token
 calls without holding the token itself:
@@ -57,7 +56,6 @@ def _manifest(base_url: str) -> dict:
         "displayName": "CI Test Plugin",
         "version": "1.0.0",
         "description": "Automated integration-test plugin",
-        "baseUrl": base_url,
         "nav": [{"label": "Dashboard", "icon": "bi bi-speedometer2", "path": "dashboard"}],
         "pages": [
             {
@@ -118,13 +116,14 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/rows": _TABLE_DATA,
             "/api/chart": _CHART_DATA,
         }
-        if self.path == "/cupcake/ping":
-            if _state["callback_key"] and hmac.compare_digest(
-                self.headers.get("Cupcake-Key", ""), _state["callback_key"]
-            ):
-                self._json(200, {"name": "ci-test-plugin"})
-            else:
-                self._json(401, {"error": "Cupcake-Key missing or not valid"})
+        if self.path == "/manifest":
+            self._json(200, routes[self.path])
+        elif not self._from_backend():
+            self._json(401, {"error": "Cupcake-Key missing or not valid"})
+        elif self.path == "/cupcake/ping":
+            self._json(200, {"name": "ci-test-plugin"})
+        elif self.path == "/api/status":
+            self._json(200, {**_CARD_DATA, "asked_by": self.headers.get("Cupcake-Username", "")})
         elif self.path in routes:
             self._json(200, routes[self.path])
         else:
@@ -159,8 +158,14 @@ class _Handler(BaseHTTPRequestHandler):
                     },
                 ),
             )
-        else:
+        elif self.path == "/api/submit" and self._from_backend():
             self._json(200, {"success": True, "received": body})
+        else:
+            self._json(401, {"error": "Cupcake-Key missing or not valid"})
+
+    def _from_backend(self) -> bool:
+        key = _state["callback_key"]
+        return bool(key) and hmac.compare_digest(self.headers.get("Cupcake-Key", ""), key)
 
     def _json(self, code: int, data) -> None:
         payload = json.dumps(data).encode()

@@ -535,6 +535,13 @@ class PluginPushSerializer(serializers.Serializer):
     payload = serializers.DictField()
 
 
+class PluginCallSerializer(serializers.Serializer):
+    """A call to one of the POST endpoints a plugin's manifest declares."""
+
+    endpoint = serializers.CharField(help_text="Endpoint as declared in the manifest, for example /api/submit")
+    data = serializers.DictField(required=False, default=dict)
+
+
 class PluginSentSerializer(serializers.Serializer):
     """Whether the message was handed to the websocket layer."""
 

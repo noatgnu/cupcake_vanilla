@@ -1,17 +1,11 @@
 """
-CUPCAKE vocabulary plugin template.
-
-Serves its endpoints, announces the vocabularies in manifest.json to the CUPCAKE backend and answers the
-backend's handshake. Vocabularies are sent in batches and reloaded on a schedule, or, when declared with
-``liveSearch``, searched here when users search them. Terms come from ``terms/<key>.tsv`` (columns id,
-name, description, synonyms separated by ``;``, obsolete); replace ``load_terms`` or ``search_terms`` to
-read them from another source.
+CUPCAKE vocabulary plugin template: provides the vocabularies in manifest.json from ``terms/<key>.tsv``.
 
 Environment:
   PLUGIN_TOKEN       startup token written by ``cupcake-plugin register`` (required)
   CUPCAKE_BACKEND    backend address, for example http://localhost:8000 (required)
   PLUGIN_PORT        port the plugin serves on (default 8101)
-  PLUGIN_BASE_URL    address the backend and the browser reach the plugin at (default http://localhost:<port>)
+  PLUGIN_BASE_URL    address the backend reaches the plugin at (default http://localhost:<port>)
   REFRESH_HOURS      hours between reloads; 0 loads once (default 24)
 """
 
@@ -184,13 +178,7 @@ def sign(secret: str, message: str) -> str:
 
 
 class PluginHandler(BaseHTTPRequestHandler):
-    """
-    The plugin's endpoints.
-
-    ``GET /health`` answers anyone. ``POST /cupcake/handshake`` answers the backend when its request is signed
-    with the plugin token and keeps the callback key it sends. ``GET /cupcake/ping`` and
-    ``GET /cupcake/vocabularies/<key>/search?q=&limit=`` answer requests that carry that key.
-    """
+    """The plugin's endpoints: /health, the handshake, and ping and search for the backend."""
 
     manifest: dict = {}
     token: str = ""
@@ -272,10 +260,10 @@ def serve(manifest: dict, token: str, port: int, host: str = "0.0.0.0") -> tuple
 
 def announce(backend: Backend, base_url: str, manifest: dict) -> dict:
     """
-    Announce the plugin to the backend, which then runs the handshake with the plugin at base_url.
+    Announce the plugin to the backend.
 
     Raises:
-        SystemExit: When the backend refuses the startup, for example because it cannot reach base_url.
+        SystemExit: When the backend refuses the startup.
     """
     try:
         return backend.post("plugins/startup/", {"base_url": base_url, "manifest": manifest})

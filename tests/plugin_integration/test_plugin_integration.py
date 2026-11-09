@@ -109,38 +109,23 @@ def registered_plugin(token):
 
 
 class TestPluginServerEndpoints:
-    """Verify the plugin server itself serves correct data."""
+    """Verify the plugin server answers only the backend."""
 
     def test_manifest_has_required_fields(self):
         data = _get(f"{PLUGIN_BASE}/manifest")
         assert data["name"] == "ci-test-plugin"
         assert "pages" in data
-        assert data["baseUrl"] == PLUGIN_BASE
 
-    def test_card_endpoint_returns_dict(self):
-        data = _get(f"{PLUGIN_BASE}/api/status")
-        assert isinstance(data, dict)
-        assert data["status"] == "ok"
+    @pytest.mark.parametrize("path", ["/api/status", "/api/items", "/api/rows", "/api/chart", "/cupcake/ping"])
+    def test_widget_endpoints_refuse_callers_without_the_callback_key(self, path):
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            _get(f"{PLUGIN_BASE}{path}")
+        assert refused.value.code == 401
 
-    def test_list_endpoint_returns_list(self):
-        data = _get(f"{PLUGIN_BASE}/api/items")
-        assert isinstance(data, list)
-        assert len(data) > 0
-
-    def test_table_endpoint_returns_rows(self):
-        data = _get(f"{PLUGIN_BASE}/api/rows")
-        assert isinstance(data, list)
-        assert "event" in data[0]
-
-    def test_chart_endpoint_returns_labels_and_datasets(self):
-        data = _get(f"{PLUGIN_BASE}/api/chart")
-        assert "labels" in data
-        assert "datasets" in data
-
-    def test_form_post_returns_success(self):
-        data = _post(f"{PLUGIN_BASE}/api/submit", {"name": "test", "value": "42"})
-        assert data["success"] is True
-        assert data["received"]["name"] == "test"
+    def test_form_endpoint_refuses_callers_without_the_callback_key(self):
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            _post(f"{PLUGIN_BASE}/api/submit", {"name": "test"})
+        assert refused.value.code == 401
 
 
 class TestPluginStartup:
@@ -203,16 +188,38 @@ class TestPluginRegistration:
 
 
 class TestPluginWidgetEndpoints:
-    """Verify every GET widget endpoint declared in the manifest is reachable."""
+    """Verify the backend calls every widget endpoint declared in the manifest for users."""
+
+    @pytest.fixture(autouse=True)
+    def running(self, registered_plugin):
+        """Report the plugin running again after the registration tests reset it to installing."""
+        _post(f"{PLUGIN_BASE}/api/report-progress", {"lifecycle_status": "running", "progress_message": "Running"})
 
     def test_all_get_widget_endpoints_return_data(self, token, registered_plugin):
         widgets = registered_plugin["manifest_cache"]["pages"][0]["widgets"]
         for widget in widgets:
             if not widget.get("endpoint") or widget["type"] == "form":
                 continue
-            url = f"{PLUGIN_BASE}{widget['endpoint']}"
-            data = _get(url)
-            assert data is not None, f"endpoint {url} returned no data"
+            data = _get(f"{API}/{registered_plugin['id']}/call/?endpoint={widget['endpoint']}", token=token)
+            assert data is not None, f"endpoint {widget['endpoint']} returned no data"
+
+    def test_the_plugin_learns_who_asked(self, token, registered_plugin):
+        data = _get(f"{API}/{registered_plugin['id']}/call/?endpoint=/api/status", token=token)
+        assert data["asked_by"] == USERNAME
+
+    def test_form_posts_through_the_backend(self, token, registered_plugin):
+        data = _post(
+            f"{API}/{registered_plugin['id']}/call/",
+            {"endpoint": "/api/submit", "data": {"name": "test", "value": "42"}},
+            token=token,
+        )
+        assert data["success"] is True
+        assert data["received"] == {"name": "test", "value": "42"}
+
+    def test_undeclared_endpoints_are_refused(self, token, registered_plugin):
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            _get(f"{API}/{registered_plugin['id']}/call/?endpoint=/cupcake/ping", token=token)
+        assert refused.value.code == 403
 
 
 class TestPluginPush:

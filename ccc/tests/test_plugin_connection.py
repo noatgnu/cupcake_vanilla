@@ -5,11 +5,12 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from ccc.plugin.connection import callback_key, sign
+from ccc.plugin.connection import callback_key, declared_calls, sign
 from ccc.plugin.model import Plugin
 
 BASE = "/api/v1/plugins"
@@ -26,6 +27,12 @@ class FakePlugin(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/api/submit":
+            if self.headers.get("Cupcake-Key") != self.key:
+                self.answer(401, {"error": "bad key"})
+                return
+            self.answer(200, {"received": body, "by": self.headers.get("Cupcake-Username")})
+            return
         expected = sign(self.token, f"handshake:{body['nonce']}:{body['callback_key']}")
         if self.headers.get("Cupcake-Signature") != expected:
             self.answer(401, {"error": "bad signature"})
@@ -38,7 +45,23 @@ class FakePlugin(BaseHTTPRequestHandler):
         if self.headers.get("Cupcake-Key") != self.key:
             self.answer(401, {"error": "bad key"})
             return
-        self.answer(200, {"name": self.answer_as or self.name})
+        if self.path == "/api/status?verbose=1":
+            self.answer(
+                200,
+                {
+                    "user_id": self.headers.get("Cupcake-User-Id"),
+                    "username": self.headers.get("Cupcake-Username"),
+                    "staff": self.headers.get("Cupcake-User-Staff"),
+                },
+            )
+        elif self.path == "/api/missing":
+            self.answer(404, {"error": "no such thing"})
+        elif self.path == "/api/big":
+            self.answer(200, {"data": "x" * 4096})
+        elif self.path == "/api/broken":
+            self.answer(500, {"error": "boom"})
+        else:
+            self.answer(200, {"name": self.answer_as or self.name})
 
     def answer(self, code, body):
         data = json.dumps(body).encode()
@@ -138,3 +161,95 @@ class PluginConnectionTests(APITestCase):
         self.plugin.token = ""
         self.plugin.save()
         self.assertNotEqual(callback_key(self.plugin), before)
+
+
+MANIFEST = {
+    "pages": [
+        {
+            "path": "home",
+            "widgets": [
+                {"id": "status", "type": "card", "endpoint": "/api/status?verbose=1"},
+                {"id": "missing", "type": "list", "endpoint": "/api/missing"},
+                {"id": "big", "type": "table", "endpoint": "/api/big"},
+                {"id": "broken", "type": "chart", "endpoint": "/api/broken"},
+                {"id": "form", "type": "form", "endpoint": "/api/submit", "fields": ["name"]},
+                {"id": "frame", "type": "iframe", "src": "/ui"},
+            ],
+        }
+    ]
+}
+
+
+class PluginCallTests(PluginConnectionTests):
+    """The backend calls the endpoints a plugin's manifest declares on behalf of users."""
+
+    def setUp(self):
+        super().setUp()
+        self.plugin.manifest_cache = MANIFEST
+        self.plugin.save()
+        self.startup()
+        self.user = User.objects.create_user("viewer", "viewer@test.com", "password")
+
+    def call_get(self, endpoint, user=None):
+        client = APIClient()
+        client.force_authenticate(user=user or self.user)
+        return client.get(f"{BASE}/{self.plugin.pk}/call/", {"endpoint": endpoint})
+
+    def test_the_manifest_declares_widget_and_form_endpoints_only(self):
+        self.assertEqual(
+            declared_calls(MANIFEST),
+            {
+                ("GET", "/api/status?verbose=1"),
+                ("GET", "/api/missing"),
+                ("GET", "/api/big"),
+                ("GET", "/api/broken"),
+                ("POST", "/api/submit"),
+            },
+        )
+
+    def test_users_get_widget_data_and_the_plugin_learns_who_asked(self):
+        response = self.call_get("/api/status?verbose=1")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {"user_id": str(self.user.pk), "username": "viewer", "staff": "false"})
+
+    def test_form_data_is_posted_to_the_plugin(self):
+        client = APIClient()
+        client.force_authenticate(user=self.staff)
+        response = client.post(
+            f"{BASE}/{self.plugin.pk}/call/", {"endpoint": "/api/submit", "data": {"name": "x"}}, format="json"
+        )
+        self.assertEqual(response.data, {"received": {"name": "x"}, "by": "staff"})
+
+    def test_endpoints_the_manifest_does_not_declare_are_refused(self):
+        self.assertEqual(self.call_get("/cupcake/ping").status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.call_get("/api/submit").status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.call_get("/ui").status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_plugin_errors_reach_the_user(self):
+        self.assertEqual(self.call_get("/api/missing").status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.call_get("/api/broken").status_code, status.HTTP_502_BAD_GATEWAY)
+
+    @override_settings(PLUGIN_RESPONSE_MAX_BYTES=1024)
+    def test_answers_that_are_too_large_are_refused(self):
+        response = self.call_get("/api/big")
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("more than 1024 bytes", response.data["error"])
+
+    def test_a_plugin_that_lost_the_key_is_reported_as_a_backend_problem(self):
+        FakePlugin.key = "lost"
+        response = self.call_get("/api/status?verbose=1")
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("callback key", response.data["error"])
+
+    def test_a_stopped_plugin_is_not_called(self):
+        Plugin.objects.filter(pk=self.plugin.pk).update(lifecycle_status=Plugin.LIFECYCLE_STOPPED)
+        self.assertEqual(self.call_get("/api/status?verbose=1").status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def test_an_unreachable_plugin_is_reported(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.assertEqual(self.call_get("/api/status?verbose=1").status_code, status.HTTP_502_BAD_GATEWAY)
+
+    def test_only_logged_in_users_call_plugins(self):
+        response = APIClient().get(f"{BASE}/{self.plugin.pk}/call/", {"endpoint": "/api/status?verbose=1"})
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

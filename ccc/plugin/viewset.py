@@ -3,7 +3,7 @@ from django.utils import timezone
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -13,6 +13,7 @@ from ccc.api_schema import (
     ErrorSerializer,
     PluginBroadcastResultSerializer,
     PluginBroadcastSerializer,
+    PluginCallSerializer,
     PluginProgressSerializer,
     PluginPushSerializer,
     PluginRegisterSerializer,
@@ -21,7 +22,7 @@ from ccc.api_schema import (
     PluginWithTokenSerializer,
 )
 from ccc.plugin.auth import PluginTokenAuthentication
-from ccc.plugin.connection import PluginConnectionError, ping, verify_connection
+from ccc.plugin.connection import PluginConnectionError, declared_calls, forward, ping, verify_connection
 from ccc.plugin.model import Plugin
 from ccc.plugin.permissions import IsPluginAuthenticated
 from ccc.plugin.serializer import PluginSerializer
@@ -66,6 +67,7 @@ class PluginViewSet(viewsets.ModelViewSet):
       startup/            (plugin token)  → handshake with the plugin, then lifecycle set to "running"
       report-progress/    (plugin token)  → plugin self-reports any stage or progress
       push/               (plugin token)  → plugin broadcasts arbitrary runtime data
+      {id}/call/          (user)          → backend calls an endpoint the manifest declares, for the user
     """
 
     queryset = Plugin.objects.all()
@@ -130,13 +132,7 @@ class PluginViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="startup")
     def startup(self, request):
-        """Called by a plugin process on boot to announce its address and mark itself running.
-
-        Authenticated with the plugin's own startup token (Plugin-Token header).
-        Updates base_url and manifest_cache, then runs the handshake with the plugin at its address.
-        Sets lifecycle_status to running when the handshake succeeds and to error, answering 502,
-        when it fails. Broadcasts a lifecycle update to all WebSocket subscribers.
-        """
+        """Store the plugin's address and manifest, run the handshake, and set the plugin running or in error."""
         plugin = request.auth
         base_url = request.data.get("base_url", "") or plugin.base_url
         if not base_url:
@@ -170,10 +166,7 @@ class PluginViewSet(viewsets.ModelViewSet):
     @extend_schema(tags=["plugins"], request=None, responses={200: PluginSerializer, 502: ErrorSerializer})
     @action(detail=True, methods=["post"], url_path="check-connection")
     def check_connection(self, request, pk=None):
-        """Check that the backend reaches the plugin at its registered address (admin only).
-
-        Records the time of the check on success; on failure sets lifecycle_status to error and answers 502.
-        """
+        """Ping the plugin at its registered address and record the result (admin only)."""
         plugin = self.get_object()
         try:
             ping(plugin)
@@ -251,6 +244,60 @@ class PluginViewSet(viewsets.ModelViewSet):
             },
         )
         return Response({"sent": True}, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=["plugins"],
+        methods=["GET"],
+        parameters=[OpenApiParameter("endpoint", str, required=True, description="Endpoint declared in the manifest")],
+        responses={
+            200: OpenApiTypes.ANY,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            502: ErrorSerializer,
+            503: ErrorSerializer,
+        },
+    )
+    @extend_schema(
+        tags=["plugins"],
+        methods=["POST"],
+        request=PluginCallSerializer,
+        responses={
+            200: OpenApiTypes.ANY,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            502: ErrorSerializer,
+            503: ErrorSerializer,
+        },
+    )
+    @action(detail=True, methods=["get", "post"], url_path="call")
+    def call(self, request, pk=None):
+        """Call an endpoint declared in the plugin's manifest for the user and return the plugin's answer."""
+        plugin = self.get_object()
+        if request.method == "GET":
+            endpoint, data = request.query_params.get("endpoint", ""), None
+        else:
+            serializer = PluginCallSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            endpoint, data = serializer.validated_data["endpoint"], serializer.validated_data["data"]
+        if (request.method, endpoint) not in declared_calls(plugin.manifest_cache):
+            return Response(
+                {"error": f"{request.method} {endpoint!r} is not declared in the plugin's manifest"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not plugin.is_active or plugin.lifecycle_status != Plugin.LIFECYCLE_RUNNING:
+            return Response({"error": "The plugin is not running"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        try:
+            code, body = forward(plugin, request.method, endpoint, request.user, data)
+        except PluginConnectionError as error:
+            return Response(
+                {"error": f"CUPCAKE could not reach the plugin: {error}"}, status=status.HTTP_502_BAD_GATEWAY
+            )
+        if code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN):
+            return Response(
+                {"error": f"The plugin refused the backend's callback key ({code}); restart the plugin"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(body, status=code)
 
     @extend_schema(tags=["plugins"], request=None, responses={200: PluginWithTokenSerializer})
     @action(detail=True, methods=["post"], url_path="reset-token")
