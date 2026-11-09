@@ -230,6 +230,8 @@ EXTERNAL_VOCABULARY_PENDING_TTL = int(os.environ.get("EXTERNAL_VOCABULARY_PENDIN
 
 PLUGIN_CONNECTION_TIMEOUT = float(os.environ.get("PLUGIN_CONNECTION_TIMEOUT", "5"))
 
+CLOUDFLARED_METRICS_URL = os.environ.get("CLOUDFLARED_METRICS_URL", "http://127.0.0.1:20241")
+
 # Django Channels configuration
 CHANNEL_LAYERS = {
     "default": {

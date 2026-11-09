@@ -185,6 +185,38 @@ class WifiStatusSerializer(serializers.Serializer):
     config = WifiStatusConfigSerializer(allow_null=True)
 
 
+class TailscaleStatusSerializer(serializers.Serializer):
+    """Tailscale on the appliance."""
+
+    installed = serializers.BooleanField()
+    configured = serializers.BooleanField(help_text="Logged in to a tailnet")
+    connected = serializers.BooleanField()
+    state = serializers.CharField(help_text="Tailscale backend state, for example Running or Stopped")
+    dns_name = serializers.CharField(help_text="Name of the appliance on the tailnet")
+    addresses = serializers.ListField(child=serializers.CharField())
+    online = serializers.BooleanField()
+    health = serializers.ListField(child=serializers.CharField(), help_text="Warnings Tailscale reports")
+    error = serializers.CharField()
+
+
+class CloudflareStatusSerializer(serializers.Serializer):
+    """The Cloudflare tunnel on the appliance."""
+
+    installed = serializers.BooleanField()
+    configured = serializers.BooleanField(help_text="Tunnel service enabled")
+    active = serializers.BooleanField()
+    connected = serializers.BooleanField()
+    connections = serializers.IntegerField(help_text="Connections from the tunnel to Cloudflare")
+    error = serializers.CharField()
+
+
+class RemoteAccessStatusSerializer(serializers.Serializer):
+    """Remote access set up on the appliance."""
+
+    tailscale = TailscaleStatusSerializer()
+    cloudflare = CloudflareStatusSerializer()
+
+
 class ApplyWifiSerializer(serializers.Serializer):
     """Wi-Fi settings to save and apply."""
 

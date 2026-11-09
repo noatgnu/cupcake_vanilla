@@ -68,6 +68,7 @@ from .api_schema import (
     PluginServiceStatusSerializer,
     PublicSiteConfigSerializer,
     RegistrationStatusSerializer,
+    RemoteAccessStatusSerializer,
     RemoveMemberSerializer,
     RunBackupSerializer,
     ScratchToggledSerializer,
@@ -93,6 +94,7 @@ from .models import (
     SiteConfig,
     UserOrcidProfile,
 )
+from .remote_access import cloudflare_status, tailscale_status
 from .serializers import (
     AccountLinkingSerializer,
     AccountMergeRequestSerializer,
@@ -2312,6 +2314,13 @@ class ApplianceViewSet(viewsets.ViewSet):
                 "config": config,
             }
         )
+
+    @extend_schema(tags=["appliance"], responses={200: RemoteAccessStatusSerializer})
+    @action(detail=False, methods=["get"], url_path="remote-access-status")
+    def remote_access_status(self, request):
+        """Return the state of Tailscale and the Cloudflare tunnel on the appliance."""
+        self._require_staff(request)
+        return Response({"tailscale": tailscale_status(), "cloudflare": cloudflare_status()})
 
     @staticmethod
     def _validate_wifi_config(config):
