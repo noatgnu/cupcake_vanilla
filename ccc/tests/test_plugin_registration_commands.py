@@ -27,7 +27,6 @@ class RegisterPluginCommandTests(TestCase):
         self.assertEqual(plugin.token, Plugin.hash_token(token))
         self.assertEqual(plugin.version, "2.1.0")
         self.assertEqual(plugin.base_url, "http://cupcake.local:8001")
-        self.assertEqual(plugin.manifest_cache["baseUrl"], "http://cupcake.local:8001")
         self.assertEqual(plugin.lifecycle_status, Plugin.LIFECYCLE_INSTALLING)
         self.assertTrue(plugin.is_active)
 

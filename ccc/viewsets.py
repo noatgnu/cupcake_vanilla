@@ -11,6 +11,8 @@ import os
 import re
 import socket as _socket
 import subprocess
+import time
+import uuid
 from pathlib import Path
 
 from django.conf import settings
@@ -35,6 +37,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import SearchFilter
 from rest_framework.pagination import LimitOffsetPagination
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 
@@ -65,6 +68,10 @@ from .api_schema import (
     PluginControlSerializer,
     PluginInstallSerializer,
     PluginNameSerializer,
+    PluginPackageInstalledSerializer,
+    PluginPackageInstallSerializer,
+    PluginPackagePreviewSerializer,
+    PluginPackageUploadSerializer,
     PluginServiceStatusSerializer,
     PublicSiteConfigSerializer,
     RegistrationStatusSerializer,
@@ -94,6 +101,10 @@ from .models import (
     SiteConfig,
     UserOrcidProfile,
 )
+from .plugin.model import Plugin
+from .plugin.packages import PluginPackageError, choose_port, preview, read_package, upload_dir, upload_path
+from .plugin.registration import register_plugin
+from .plugin.serializer import PluginSerializer
 from .remote_access import cloudflare_status, tailscale_status
 from .serializers import (
     AccountLinkingSerializer,
@@ -2505,10 +2516,97 @@ class ApplianceViewSet(viewsets.ViewSet):
         except OSError as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if result.get("ok"):
+            Plugin.objects.filter(name=name).delete()
             return Response({"output": result.get("output", "")})
         return Response(
             {"error": result.get("error", "Uninstall failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+    def _plugin_command(self, payload):
+        """Send a command to the plugin manager and return whether it succeeded and its output or error."""
+        try:
+            result = self._send_plugin_command(payload)
+        except OSError as error:
+            return False, str(error)
+        if result.get("ok"):
+            return True, result.get("output", "")
+        return False, result.get("error", f"{payload['command']} failed")
+
+    @extend_schema(
+        tags=["appliance"],
+        request={"multipart/form-data": PluginPackageUploadSerializer},
+        responses={200: PluginPackagePreviewSerializer, 400: ErrorSerializer, 413: ErrorSerializer},
+    )
+    @action(detail=False, methods=["post"], url_path="plugin-upload", parser_classes=[MultiPartParser])
+    def plugin_upload(self, request):
+        """Check an uploaded plugin package and keep it until it is installed; return what it adds."""
+        self._require_staff(request)
+        upload = request.FILES.get("file")
+        if upload is None:
+            return Response({"error": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if upload.size > settings.PLUGIN_UPLOAD_MAX_BYTES:
+            return Response(
+                {"error": f"The package is larger than {settings.PLUGIN_UPLOAD_MAX_BYTES} bytes"},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        directory = upload_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        cutoff = time.time() - settings.PLUGIN_UPLOAD_TTL
+        for stale in directory.glob("*.tar.gz"):
+            if stale.stat().st_mtime < cutoff:
+                stale.unlink(missing_ok=True)
+        upload_id = uuid.uuid4().hex
+        path = upload_path(upload_id)
+        with open(path, "wb") as handle:
+            for chunk in upload.chunks():
+                handle.write(chunk)
+        try:
+            manifest = read_package(path)
+        except PluginPackageError as error:
+            path.unlink(missing_ok=True)
+            return Response({"error": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"upload_id": upload_id, **preview(manifest)})
+
+    @extend_schema(
+        tags=["appliance"],
+        request=PluginPackageInstallSerializer,
+        responses={200: PluginPackageInstalledSerializer, 400: ErrorSerializer, 500: ErrorSerializer},
+    )
+    @action(detail=False, methods=["post"], url_path="plugin-install-upload")
+    def plugin_install_upload(self, request):
+        """Install an uploaded plugin package on a local port, register it, write its settings and start it."""
+        self._require_staff(request)
+        try:
+            path = upload_path(str(request.data.get("upload_id", "")))
+            if not path.exists():
+                raise PluginPackageError("Unknown upload; upload the package again")
+            manifest = read_package(path)
+            port = choose_port(manifest)
+        except PluginPackageError as error:
+            return Response({"error": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        name = manifest["name"]
+        ok, output = self._plugin_command({"command": "install", "name": name, "source": str(path)})
+        if not ok:
+            return Response({"error": f"Install failed: {output}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        base_url = f"http://127.0.0.1:{port}"
+        plugin, token = register_plugin(name, base_url, manifest["version"], manifest)
+        env = {
+            "PLUGIN_TOKEN": token,
+            "CUPCAKE_BACKEND": settings.PLUGIN_BACKEND_URL,
+            "PLUGIN_BASE_URL": base_url,
+            "PLUGIN_HOST": "127.0.0.1",
+            "PLUGIN_PORT": str(port),
+        }
+        ok, output = self._plugin_command({"command": "configure", "name": name, "env": env})
+        if ok:
+            ok, output = self._plugin_command({"command": "restart", "name": name})
+        if not ok:
+            return Response(
+                {"error": f"Installed but not started: {output}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        path.unlink(missing_ok=True)
+        plugin.refresh_from_db()
+        return Response({"plugin": PluginSerializer(plugin).data, "port": port})
 
     @extend_schema(tags=["appliance"], responses={200: InstalledPluginListSerializer, 500: ErrorSerializer})
     @action(detail=False, methods=["get"], url_path="plugin-list")

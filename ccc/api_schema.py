@@ -268,6 +268,38 @@ class InstalledPluginListSerializer(serializers.Serializer):
     plugins = InstalledPluginSerializer(many=True)
 
 
+class PluginPackageUploadSerializer(serializers.Serializer):
+    """A plugin package to check before installing it."""
+
+    file = serializers.FileField(help_text="Plugin .tar.gz with run.sh and manifest.json at the top level")
+
+
+class PluginPackagePreviewSerializer(serializers.Serializer):
+    """An uploaded plugin package and what installing it adds."""
+
+    upload_id = serializers.CharField()
+    name = serializers.CharField()
+    display_name = serializers.CharField()
+    version = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    pages = serializers.ListField(child=serializers.CharField())
+    vocabularies = serializers.ListField(child=serializers.CharField())
+    installed_version = serializers.CharField(allow_null=True, help_text="Version installed now, if any")
+
+
+class PluginPackageInstallSerializer(serializers.Serializer):
+    """An uploaded plugin package to install."""
+
+    upload_id = serializers.CharField()
+
+
+class PluginPackageInstalledSerializer(serializers.Serializer):
+    """A plugin installed from an uploaded package."""
+
+    plugin = PluginSerializer()
+    port = serializers.IntegerField(help_text="Local port the plugin serves on")
+
+
 class PluginServiceStatusSerializer(serializers.Serializer):
     """systemd state of a plugin service, as reported by the plugin manager."""
 
