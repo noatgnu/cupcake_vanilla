@@ -185,6 +185,13 @@ class WifiStatusSerializer(serializers.Serializer):
     config = WifiStatusConfigSerializer(allow_null=True)
 
 
+class TailscaleCertificateSerializer(serializers.Serializer):
+    """The certificate the appliance serves its Tailscale name with."""
+
+    name = serializers.CharField()
+    expires_at = serializers.DateTimeField()
+
+
 class TailscaleStatusSerializer(serializers.Serializer):
     """Tailscale on the appliance."""
 
@@ -196,6 +203,8 @@ class TailscaleStatusSerializer(serializers.Serializer):
     addresses = serializers.ListField(child=serializers.CharField())
     online = serializers.BooleanField()
     health = serializers.ListField(child=serializers.CharField(), help_text="Warnings Tailscale reports")
+    https_available = serializers.BooleanField(help_text="The tailnet issues HTTPS certificates")
+    certificate = TailscaleCertificateSerializer(allow_null=True)
     error = serializers.CharField()
 
 

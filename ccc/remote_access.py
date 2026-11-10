@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 from django.conf import settings
 
 import requests
+from cryptography import x509
 
 COMMAND_TIMEOUT = 5
 TAILSCALE_NOT_SET_UP = {"NoState", "NeedsLogin"}
@@ -21,13 +23,28 @@ def _run(*command: str) -> subprocess.CompletedProcess | None:
         return None
 
 
+def tailscale_certificate() -> dict | None:
+    """The name and expiry of the certificate the appliance serves its Tailscale name with, if it has one."""
+    try:
+        certificate = x509.load_pem_x509_certificate(Path(settings.TAILSCALE_CERT_FILE).read_bytes())
+    except (OSError, ValueError):
+        return None
+    try:
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        name = names.get_values_for_type(x509.DNSName)[0]
+    except (x509.ExtensionNotFound, IndexError):
+        name = ""
+    return {"name": name, "expires_at": certificate.not_valid_after_utc.isoformat()}
+
+
 def tailscale_status() -> dict:
     """
-    Tailscale as ``tailscale status`` reports it.
+    Tailscale as ``tailscale status`` reports it, with the HTTPS certificate of its name.
 
     Returns:
         ``installed``, ``configured`` (logged in to a tailnet), ``connected``, ``state``, ``dns_name``,
-        ``addresses``, ``online``, ``health`` and ``error``.
+        ``addresses``, ``online``, ``health``, ``https_available`` (the tailnet issues certificates),
+        ``certificate`` and ``error``.
     """
     status = {
         "installed": bool(shutil.which("tailscale")),
@@ -38,10 +55,13 @@ def tailscale_status() -> dict:
         "addresses": [],
         "online": False,
         "health": [],
+        "https_available": False,
+        "certificate": None,
         "error": "",
     }
     if not status["installed"]:
         return status
+    status["certificate"] = tailscale_certificate()
     result = _run("tailscale", "status", "--json")
     try:
         report = json.loads(result.stdout) if result else None
@@ -59,6 +79,7 @@ def tailscale_status() -> dict:
         addresses=list(me.get("TailscaleIPs") or []),
         online=bool(me.get("Online")),
         health=[str(issue) for issue in report.get("Health") or []],
+        https_available=bool(report.get("CertDomains")),
     )
     return status
 

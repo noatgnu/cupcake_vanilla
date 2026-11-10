@@ -240,6 +240,7 @@ PLUGIN_PORT_RANGE = tuple(int(part) for part in os.environ.get("PLUGIN_PORT_RANG
 PLUGIN_BACKEND_URL = os.environ.get("PLUGIN_BACKEND_URL", "http://localhost:8000")
 
 CLOUDFLARED_METRICS_URL = os.environ.get("CLOUDFLARED_METRICS_URL", "http://127.0.0.1:20241")
+TAILSCALE_CERT_FILE = os.environ.get("TAILSCALE_CERT_FILE", "/etc/ssl/cupcake/tailscale.crt")
 
 # Django Channels configuration
 CHANNEL_LAYERS = {

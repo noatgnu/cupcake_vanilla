@@ -1,12 +1,20 @@
 """The appliance's remote access status: Tailscale and the Cloudflare tunnel, read from their commands."""
 
+import datetime
 import json
 import subprocess
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 
 import requests
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -40,6 +48,26 @@ def systemctl(enabled="enabled", active="active"):
     return run
 
 
+def certificate_file(directory, name, expires):
+    """A self-signed certificate for name, valid until expires, written as PEM into directory."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(expires - datetime.timedelta(days=90))
+        .not_valid_after(expires)
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    path = Path(directory) / "tailscale.crt"
+    path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    return path
+
+
 def ready(connections, code=200):
     """A response of the tunnel's ready endpoint."""
     response = MagicMock(status_code=code)
@@ -67,6 +95,24 @@ class TailscaleStatusTests(APITestCase):
     def test_a_stopped_tailscale_is_set_up_but_not_connected(self):
         found = self.status({**RUNNING, "BackendState": "Stopped"})
         self.assertEqual((found["configured"], found["connected"], found["state"]), (True, False, "Stopped"))
+
+    def test_a_tailnet_that_issues_certificates_offers_https(self):
+        self.assertTrue(self.status({**RUNNING, "CertDomains": ["cupcake.tail1e420d.ts.net"]})["https_available"])
+        self.assertFalse(self.status(RUNNING)["https_available"])
+
+    def test_the_certificate_of_the_tailscale_name_is_reported(self):
+        expires = datetime.datetime(2027, 2, 1, tzinfo=datetime.timezone.utc)
+        with tempfile.TemporaryDirectory() as directory:
+            path = certificate_file(directory, "cupcake.tail1e420d.ts.net", expires)
+            with override_settings(TAILSCALE_CERT_FILE=str(path)):
+                found = self.status(RUNNING)
+        self.assertEqual(
+            found["certificate"], {"name": "cupcake.tail1e420d.ts.net", "expires_at": "2027-02-01T00:00:00+00:00"}
+        )
+
+    @override_settings(TAILSCALE_CERT_FILE="/nonexistent/tailscale.crt")
+    def test_without_a_certificate_none_is_reported(self):
+        self.assertIsNone(self.status(RUNNING)["certificate"])
 
     def test_health_warnings_are_reported(self):
         self.assertEqual(self.status({**RUNNING, "Health": ["no DERP home"]})["health"], ["no DERP home"])
