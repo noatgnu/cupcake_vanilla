@@ -12,7 +12,10 @@ from unittest.mock import MagicMock, patch
 from django.core.management import call_command
 from django.test import TestCase
 
+import requests
+
 from ccv.data_sources import (
+    download,
     last_modified_release,
     obo_release,
     ols_release,
@@ -21,7 +24,7 @@ from ccv.data_sources import (
     source_entry,
     uniprot_release,
 )
-from ccv.models import DataSourceVersion
+from ccv.models import DataSourceVersion, Species, Tissue
 
 
 class OboReleaseTests(TestCase):
@@ -151,3 +154,61 @@ class ManifestSourceTests(TestCase):
         self.assertEqual(mondo["source"]["version"], "2026-10-06")
         self.assertEqual(mondo["source"]["released"], "2026-10-06")
         self.assertIsNone(schema_manifest["tables"][0]["source"])
+
+
+SPECLIST = """Release:     2026_05 of 05-Nov-2026
+HUMAN E    9606: N=Homo sapiens
+                 C=Human
+MOUSE E   10090: N=Mus musculus
+                 C=Mouse
+"""
+
+
+def answer(status=200, text=""):
+    """A response with the given status and body."""
+    response = requests.Response()
+    response.status_code = status
+    response._content = text.encode()
+    return response
+
+
+@patch("ccv.data_sources.time.sleep")
+class DownloadTests(TestCase):
+    def test_timeouts_and_temporary_errors_are_retried(self, sleep):
+        attempts = [requests.Timeout("slow"), answer(503), answer(200, "data")]
+        with patch("ccv.data_sources.requests.get", side_effect=attempts) as get:
+            self.assertEqual(download("https://example.org/file").text, "data")
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(get.call_args.kwargs["timeout"], (30, 180))
+
+    def test_the_last_failure_is_raised(self, sleep):
+        with patch("ccv.data_sources.requests.get", side_effect=requests.Timeout("slow")) as get:
+            with self.assertRaises(requests.Timeout):
+                download("https://example.org/file")
+        self.assertEqual(get.call_count, 4)
+
+    def test_a_loader_treats_an_error_status_as_a_failed_download(self, sleep):
+        Species.objects.create(code="OLD", taxon=1, official_name="Kept species")
+        with patch("ccv.data_sources.requests.get", return_value=answer(404)) as get:
+            call_command("load_species", stdout=MagicMock())
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(list(Species.objects.values_list("code", flat=True)), ["OLD"])
+
+
+@patch("ccv.data_sources.time.sleep")
+class UniProtLoaderTests(TestCase):
+    def setUp(self):
+        Species.objects.create(code="OLD", taxon=1, official_name="Kept species")
+        Tissue.objects.create(identifier="TS-0001", accession="TS-0001", synonyms="", cross_references="")
+
+    def test_a_failed_download_keeps_the_existing_rows(self, sleep):
+        with patch("ccv.data_sources.requests.get", side_effect=requests.Timeout("slow")):
+            call_command("load_species", stdout=MagicMock())
+            call_command("load_tissue", stdout=MagicMock())
+        self.assertEqual(list(Species.objects.values_list("code", flat=True)), ["OLD"])
+        self.assertEqual(Tissue.objects.count(), 1)
+
+    def test_a_successful_download_replaces_the_rows(self, sleep):
+        with patch("ccv.data_sources.requests.get", return_value=answer(200, SPECLIST)):
+            call_command("load_species", stdout=MagicMock())
+        self.assertEqual(sorted(Species.objects.values_list("code", flat=True)), ["HUMAN", "MOUSE"])

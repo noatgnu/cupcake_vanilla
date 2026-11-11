@@ -33,25 +33,8 @@ from django.core.management.base import BaseCommand
 import requests
 from tqdm import tqdm
 
-from ccv.data_sources import last_modified_release, obo_release, record_source
+from ccv.data_sources import download, last_modified_release, obo_release, record_source
 from ccv.models import BTOTerm, CellOntology, DiseaseOntologyTerm, MondoDisease, PSIMSOntology, UberonAnatomy
-
-TEMPORARY_HTTP_STATUSES = (429, 500, 502, 503, 504)
-DOWNLOAD_ATTEMPTS = 4
-
-
-def download(url, timeout):
-    """GET the url, retrying connection errors, timeouts and temporary server errors with increasing waits."""
-    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
-        try:
-            response = requests.get(url, timeout=timeout)
-        except (requests.ConnectionError, requests.Timeout):
-            if attempt == DOWNLOAD_ATTEMPTS:
-                raise
-        else:
-            if response.status_code not in TEMPORARY_HTTP_STATUSES or attempt == DOWNLOAD_ATTEMPTS:
-                return response
-        time.sleep(10 * attempt)
 
 
 class OBOParser:

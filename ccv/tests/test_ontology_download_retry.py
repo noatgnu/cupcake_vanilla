@@ -6,7 +6,7 @@ from django.test import SimpleTestCase
 
 import requests
 
-from ccv.management.commands.load_ontologies import DOWNLOAD_ATTEMPTS, download
+from ccv.data_sources import DOWNLOAD_ATTEMPTS, download
 
 
 def response_with(status_code):
@@ -16,8 +16,8 @@ def response_with(status_code):
     return response
 
 
-@patch("ccv.management.commands.load_ontologies.time.sleep")
-@patch("ccv.management.commands.load_ontologies.requests.get")
+@patch("ccv.data_sources.time.sleep")
+@patch("ccv.data_sources.requests.get")
 class OntologyDownloadRetryTests(SimpleTestCase):
     def test_a_gateway_timeout_is_retried(self, get, sleep):
         get.side_effect = [response_with(504), response_with(200)]

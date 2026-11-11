@@ -5,36 +5,40 @@ Management command to load UniProt species controlled vocabulary data.
 import re
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
-import requests
-
-from ccv.data_sources import record_source, uniprot_release
+from ccv.data_sources import download, record_source, uniprot_release
 from ccv.models import Species
+
+
+def save_species(species: dict) -> None:
+    """Store one parsed species, skipping the list's header row."""
+    if not species or species["synonym"] == "Synonym":
+        return
+    try:
+        Species.objects.create(**species)
+    except Exception as e:
+        print(f"Warning: Failed to create species {species.get('code', 'unknown')}: {str(e)}")
 
 
 def parse_uniprot_species(file_path: str = None):
     """Parse UniProt species list and populate the database."""
-    Species.objects.all().delete()
     species = {}
 
     if not file_path:
         url = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/docs/speclist.txt"
-        response = requests.get(url, timeout=30)
+        response = download(url)
+        response.raise_for_status()
         file = response.text.split("\n")
     else:
         file = open(file_path, "rt")
 
+    Species.objects.all().delete()
+
     for line in file:
         match = re.match(r"^(\w+)\s+[VABEO]\s+(\d+):\s+N=(.*)$", line)
         if match:
-            if species:
-                if species["synonym"] == "Synonym":
-                    species = {}
-                else:
-                    try:
-                        Species.objects.create(**species)
-                    except Exception as e:
-                        print(f"Warning: Failed to create species {species.get('code', 'unknown')}: {str(e)}")
+            save_species(species)
             species = {
                 "code": match.group(1),
                 "taxon": int(match.group(2)),
@@ -50,6 +54,8 @@ def parse_uniprot_species(file_path: str = None):
             match = re.match(r"^\s+S=(.*)$", line)
             if match:
                 species["synonym"] = match.group(1)
+
+    save_species(species)
 
     if isinstance(file, list):
         record_source("ontology:species", url, *uniprot_release("\n".join(file)))
@@ -75,7 +81,8 @@ class Command(BaseCommand):
 
         self.stdout.write("Loading UniProt species data...")
         try:
-            parse_uniprot_species(file_path)
+            with transaction.atomic():
+                parse_uniprot_species(file_path)
             count = Species.objects.count()
             self.stdout.write(self.style.SUCCESS(f"Successfully loaded {count} species records."))
         except Exception as e:

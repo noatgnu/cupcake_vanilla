@@ -6,9 +6,7 @@ from io import BytesIO
 
 from django.core.management.base import BaseCommand
 
-import requests
-
-from ccv.data_sources import obo_release, record_source
+from ccv.data_sources import download, obo_release, record_source
 from ccv.models import Unimod
 
 UNIMOD_URL = "https://www.unimod.org/obo/unimod.obo"
@@ -23,7 +21,8 @@ def load_unimod_data():
             "The 'pronto' package is required for loading Unimod data. " "Install it with: pip install pronto"
         )
 
-    response = requests.get(UNIMOD_URL, timeout=30)
+    response = download(UNIMOD_URL)
+    response.raise_for_status()
     raw_data = response.text
 
     # Manually parse the xrefs section

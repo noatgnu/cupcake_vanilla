@@ -3,10 +3,9 @@ Management command to load UniProt subcellular location controlled vocabulary da
 """
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
-import requests
-
-from ccv.data_sources import record_source, uniprot_release
+from ccv.data_sources import download, record_source, uniprot_release
 from ccv.models import SubcellularLocation
 
 
@@ -18,10 +17,13 @@ def parse_subcellular_location_file(filename=None):
 
     if not filename:
         url = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/docs/subcell.txt"
-        response = requests.get(url, timeout=30)
+        response = download(url)
+        response.raise_for_status()
         file = response.text.split("\n")
     else:
         file = open(filename, "rt")
+
+    SubcellularLocation.objects.all().delete()
 
     for line in file:
         line = line.strip()
@@ -109,8 +111,8 @@ class Command(BaseCommand):
 
         self.stdout.write("Loading UniProt subcellular location data...")
         try:
-            SubcellularLocation.objects.all().delete()
-            parse_subcellular_location_file(file_path)
+            with transaction.atomic():
+                parse_subcellular_location_file(file_path)
             count = SubcellularLocation.objects.count()
             self.stdout.write(self.style.SUCCESS(f"Successfully loaded {count} subcellular location records."))
         except Exception as e:

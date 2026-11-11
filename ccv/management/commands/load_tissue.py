@@ -3,10 +3,9 @@ Management command to load UniProt tissue controlled vocabulary data.
 """
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
-import requests
-
-from ccv.data_sources import record_source, uniprot_release
+from ccv.data_sources import download, record_source, uniprot_release
 from ccv.models import Tissue
 
 
@@ -17,10 +16,13 @@ def parse_tissue_file(filename=None):
 
     if not filename:
         url = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/docs/tisslist.txt"
-        response = requests.get(url, timeout=30)
+        response = download(url)
+        response.raise_for_status()
         file = response.text.split("\n")
     else:
         file = open(filename, "rt")
+
+    Tissue.objects.all().delete()
 
     for line in file:
         if line.startswith("//"):
@@ -70,8 +72,8 @@ class Command(BaseCommand):
 
         self.stdout.write("Loading UniProt tissue data...")
         try:
-            Tissue.objects.all().delete()
-            parse_tissue_file(file_path)
+            with transaction.atomic():
+                parse_tissue_file(file_path)
             count = Tissue.objects.count()
             self.stdout.write(self.style.SUCCESS(f"Successfully loaded {count} tissue records."))
         except Exception as e:

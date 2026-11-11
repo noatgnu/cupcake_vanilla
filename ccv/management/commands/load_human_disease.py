@@ -3,10 +3,9 @@ Management command to load UniProt human disease controlled vocabulary data.
 """
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
-import requests
-
-from ccv.data_sources import record_source, uniprot_release
+from ccv.data_sources import download, record_source, uniprot_release
 from ccv.models import HumanDisease
 
 
@@ -20,10 +19,13 @@ def parse_human_disease_file(filename=None):
             "https://ftp.uniprot.org/pub/databases/uniprot/current_release/"
             "knowledgebase/complete/docs/humdisease.txt"
         )
-        response = requests.get(url, timeout=30)
+        response = download(url)
+        response.raise_for_status()
         file = response.text.split("\n")
     else:
         file = open(filename, "rt")
+
+    HumanDisease.objects.all().delete()
 
     for line in file:
         line = line.strip()
@@ -93,8 +95,8 @@ class Command(BaseCommand):
 
         self.stdout.write("Loading UniProt human disease data...")
         try:
-            HumanDisease.objects.all().delete()
-            parse_human_disease_file(file_path)
+            with transaction.atomic():
+                parse_human_disease_file(file_path)
             count = HumanDisease.objects.count()
             self.stdout.write(self.style.SUCCESS(f"Successfully loaded {count} human disease records."))
         except Exception as e:
