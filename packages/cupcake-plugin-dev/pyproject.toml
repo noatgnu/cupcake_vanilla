@@ -1,0 +1,44 @@
+[tool.poetry]
+name = "cupcake-plugin-dev"
+version = "0.1.0"
+description = "Create, check, package and document CUPCAKE plugins"
+authors = ["Toan Phung <toan.phung@proteo.info>"]
+license = "MIT"
+homepage = "https://github.com/noatgnu/cupcake_vanilla"
+repository = "https://github.com/noatgnu/cupcake_vanilla"
+keywords = ["cupcake", "plugin", "scaffold", "proteomics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+packages = [{include = "cupcake_plugin_dev", from = "src"}]
+include = [
+    {path = "src/cupcake_plugin_dev/schema/*.json", format = ["sdist", "wheel"]},
+    {path = "src/cupcake_plugin_dev/templates/**/*", format = ["sdist", "wheel"]},
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+jsonschema = ">=4.18"
+
+[tool.poetry.scripts]
+cupcake-plugin-dev = "cupcake_plugin_dev.cli:main"
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+profile = "black"
+line_length = 120
+known_first_party = ["cupcake_plugin_dev"]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
