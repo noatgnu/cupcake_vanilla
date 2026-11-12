@@ -1,10 +1,11 @@
 """
-CUPCAKE vocabulary plugin template: provides the vocabularies in manifest.json from ``terms/<key>.tsv``.
+__DISPLAY_NAME__: provides the vocabularies in manifest.json from ``terms/<key>.tsv``.
 
 Environment:
-  PLUGIN_TOKEN       startup token written by ``cupcake-plugin register`` (required)
+  PLUGIN_TOKEN       startup token written when the plugin is registered (required)
   CUPCAKE_BACKEND    backend address, for example http://localhost:8000 (required)
-  PLUGIN_PORT        port the plugin serves on (default 8101)
+  PLUGIN_HOST        address the plugin listens on (default 0.0.0.0)
+  PLUGIN_PORT        port the plugin serves on (default __PORT__)
   PLUGIN_BASE_URL    address the backend reaches the plugin at (default http://localhost:<port>)
   REFRESH_HOURS      hours between reloads; 0 loads once (default 24)
 """
@@ -33,7 +34,7 @@ SEARCH_LIMIT = 25
 TRUE_VALUES = {"1", "true", "yes", "y"}
 SEARCH_PATH = re.compile(r"^/cupcake/vocabularies/([a-z0-9][a-z0-9_]*)/search$")
 
-logger = logging.getLogger("vocabulary-plugin")
+logger = logging.getLogger("__PLUGIN_NAME__")
 
 
 class Backend:
@@ -276,13 +277,13 @@ def main() -> None:
     """Serve the plugin's endpoints, announce the plugin and keep its vocabularies loaded."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     manifest = read_manifest()
-    port = int(os.environ.get("PLUGIN_PORT", "8101"))
+    port = int(os.environ.get("PLUGIN_PORT", "__PORT__"))
     base_url = os.environ.get("PLUGIN_BASE_URL", f"http://localhost:{port}")
     refresh_hours = float(os.environ.get("REFRESH_HOURS", "24"))
     token = os.environ["PLUGIN_TOKEN"]
     backend = Backend(os.environ["CUPCAKE_BACKEND"], token)
 
-    _, server_thread = serve(manifest, token, port)
+    _, server_thread = serve(manifest, token, port, host=os.environ.get("PLUGIN_HOST", "0.0.0.0"))
     announce(backend, base_url, manifest)
     threading.Thread(target=refresh_loop, args=(backend, manifest, refresh_hours), daemon=True).start()
     server_thread.join()
