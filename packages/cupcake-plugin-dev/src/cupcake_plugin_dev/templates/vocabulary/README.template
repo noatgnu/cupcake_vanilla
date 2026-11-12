@@ -1,0 +1,48 @@
+# __DISPLAY_NAME__
+
+__DESCRIPTION__
+
+## Develop
+
+```bash
+python3 -m unittest discover -s tests
+cupcake-plugin-dev validate
+cupcake-plugin-dev docs --write
+cupcake-plugin-dev package
+```
+
+`package` checks the plugin the way CUPCAKE checks an upload and writes `dist/__PLUGIN_NAME__-<version>.tar.gz`.
+
+## Terms
+
+Put the terms of each vocabulary in `terms/<key>.tsv` with the columns `id`, `name`, `description`,
+`synonyms` (separated by `;`) and `obsolete`, or replace `load_terms` in `plugin.py` to read them from a
+database or a remote service. It yields one dict per term with `id` and `name`, and optionally
+`description`, `synonyms` (a list), `obsolete` and `data`. Columns use a vocabulary as ontology type
+`plugin.__PLUGIN_NAME__.<key>`.
+
+Set `"liveSearch": true` on a vocabulary to have CUPCAKE search it here instead of receiving all its terms.
+`search_terms` answers those searches from `load_terms`; replace it to query your source directly.
+
+New vocabularies are hidden from users until staff approve them on the Vocabularies page. The plugin keeps
+loading terms while it waits.
+
+## Install
+
+On a CUPCAKE appliance, open Cupcake › Admin › Plugins and choose the package. CUPCAKE installs it,
+registers it on a local port, writes its settings and starts it. Settings can be changed afterwards in
+`/etc/cupcake/plugins/__PLUGIN_NAME__.env`.
+
+Only the CUPCAKE backend calls the plugin. Every endpoint except `/health` requires the callback key the
+backend sends during the startup handshake.
+
+## Run it locally
+
+```bash
+PLUGIN_TOKEN=<token> CUPCAKE_BACKEND=http://localhost:8000 python3 plugin.py
+```
+
+Register the plugin first with `POST /api/v1/plugins/register/` as staff to get the token.
+
+<!-- cupcake-plugin-dev:docs -->
+<!-- /cupcake-plugin-dev:docs -->

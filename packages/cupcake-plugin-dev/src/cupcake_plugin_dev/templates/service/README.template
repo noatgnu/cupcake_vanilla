@@ -1,0 +1,34 @@
+# __DISPLAY_NAME__
+
+__DESCRIPTION__
+
+## Develop
+
+```bash
+python3 -m unittest discover -s tests
+cupcake-plugin-dev validate
+cupcake-plugin-dev docs --write
+cupcake-plugin-dev package
+```
+
+`package` checks the plugin the way CUPCAKE checks an upload and writes `dist/__PLUGIN_NAME__-<version>.tar.gz`.
+
+## Install
+
+On a CUPCAKE appliance, open Cupcake › Admin › Plugins and choose the package. CUPCAKE installs it,
+registers it on a local port, writes its settings and starts it. Settings can be changed afterwards in
+`/etc/cupcake/plugins/__PLUGIN_NAME__.env`.
+
+Only the CUPCAKE backend calls the plugin. Every endpoint except `/health` requires the callback key the
+backend sends during the startup handshake.
+
+## Run it locally
+
+```bash
+PLUGIN_TOKEN=<token> CUPCAKE_BACKEND=http://localhost:8000 python3 plugin.py
+```
+
+Register the plugin first with `POST /api/v1/plugins/register/` as staff to get the token.
+
+<!-- cupcake-plugin-dev:docs -->
+<!-- /cupcake-plugin-dev:docs -->

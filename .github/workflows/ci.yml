@@ -97,6 +97,7 @@ jobs:
           ccrv.tests \
           ccsc.tests \
           packages/cupcake-protocols-io/tests \
+          packages/cupcake-plugin-dev/tests \
           --verbosity=2
 
   test-wails:

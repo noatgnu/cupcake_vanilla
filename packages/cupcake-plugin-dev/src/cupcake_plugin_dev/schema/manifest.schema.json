@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/noatgnu/cupcake_vanilla/packages/cupcake-plugin-dev/manifest.schema.json",
+  "title": "CUPCAKE plugin manifest",
+  "type": "object",
+  "required": ["name", "version"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+      "description": "Plugin name, unique per appliance: lower-case letters, digits, '-' and '_'"
+    },
+    "displayName": {"type": "string", "minLength": 1, "maxLength": 200},
+    "version": {"type": "string", "pattern": "\\S", "maxLength": 50},
+    "description": {"type": "string"},
+    "port": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 65535,
+      "description": "Local port the plugin asks for when installed from the admin page"
+    },
+    "nav": {"type": "array", "items": {"$ref": "#/$defs/navItem"}},
+    "pages": {"type": "array", "items": {"$ref": "#/$defs/page"}},
+    "vocabularies": {"type": "array", "items": {"$ref": "#/$defs/vocabulary"}},
+    "settings": {"type": "array", "items": {"$ref": "#/$defs/setting"}}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "navItem": {
+      "type": "object",
+      "required": ["label", "path"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "icon": {"type": "string", "description": "Bootstrap icon classes, for example bi bi-thermometer-half"},
+        "path": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"}
+      },
+      "additionalProperties": false
+    },
+    "page": {
+      "type": "object",
+      "required": ["path", "title", "widgets"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+        "title": {"type": "string", "minLength": 1},
+        "widgets": {"type": "array", "items": {"$ref": "#/$defs/widget"}}
+      },
+      "additionalProperties": false
+    },
+    "widget": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+        "type": {"enum": ["card", "list", "table", "form", "chart"]},
+        "title": {"type": "string"},
+        "endpoint": {"type": "string", "pattern": "^/"},
+        "fields": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "columns": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "refreshInterval": {"type": "integer", "minimum": 1000},
+        "actions": {"type": "array", "items": {"$ref": "#/$defs/action"}}
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "required": ["label", "endpoint", "method"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "endpoint": {"type": "string", "pattern": "^/"},
+        "method": {"enum": ["GET", "POST", "PATCH", "DELETE"]},
+        "confirm": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "vocabulary": {
+      "type": "object",
+      "required": ["key", "label"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_]{0,59}$"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 255},
+        "kind": {"type": "string", "maxLength": 50},
+        "description": {"type": "string"},
+        "sdrfShortName": {"type": "string", "maxLength": 50},
+        "sdrf_short_name": {"type": "string", "maxLength": 50},
+        "minTermLength": {"type": "integer", "minimum": 1, "maximum": 20},
+        "min_term_length": {"type": "integer", "minimum": 1, "maximum": 20},
+        "liveSearch": {"type": "boolean"},
+        "live_search": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "setting": {
+      "type": "object",
+      "required": ["name", "description"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+        "default": {"type": "string"},
+        "description": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}

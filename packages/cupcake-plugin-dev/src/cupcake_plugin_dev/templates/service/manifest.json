@@ -1,0 +1,22 @@
+{
+  "name": "__PLUGIN_NAME__",
+  "displayName": "__DISPLAY_NAME__",
+  "version": "0.1.0",
+  "port": "__PORT__",
+  "description": "__DESCRIPTION__",
+  "nav": [
+    { "label": "__DISPLAY_NAME__", "icon": "bi bi-plug", "path": "status" }
+  ],
+  "pages": [
+    {
+      "path": "status",
+      "title": "__DISPLAY_NAME__",
+      "widgets": [
+        { "id": "status", "type": "card", "title": "Status", "endpoint": "/api/status" }
+      ]
+    }
+  ],
+  "settings": [
+    { "name": "INTERVAL_SECONDS", "default": "5", "description": "Seconds between live updates" }
+  ]
+}

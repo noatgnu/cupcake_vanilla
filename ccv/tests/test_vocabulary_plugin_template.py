@@ -1,14 +1,14 @@
-"""The vocabulary plugin template in plugins/templates/vocabulary, run against the backend's plugin endpoints."""
+"""A plugin created from cupcake-plugin-dev's vocabulary template, run against the backend's plugin endpoints."""
 
 import copy
 import importlib.util
 import json
+import sys
 import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from django.conf import settings
 from django.core.cache import cache
 from django.test import override_settings
 
@@ -18,10 +18,13 @@ from ccc.plugin.connection import callback_key
 from ccc.plugin.model import Plugin
 from ccv.external_vocabularies import live_search_source, refresh_from_platform
 from ccv.models import Vocabulary
+from cupcake_plugin_dev.scaffold import create_plugin
 
-TEMPLATE = Path(settings.BASE_DIR) / "plugins" / "templates" / "vocabulary"
+SCAFFOLD = tempfile.TemporaryDirectory()
+TEMPLATE = create_plugin("example-vocabulary", "vocabulary", Path(SCAFFOLD.name))
 SPEC = importlib.util.spec_from_file_location("vocabulary_plugin_template", TEMPLATE / "plugin.py")
 template = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = template
 SPEC.loader.exec_module(template)
 
 

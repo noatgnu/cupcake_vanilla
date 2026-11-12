@@ -1,0 +1,20 @@
+{
+  "name": "__PLUGIN_NAME__",
+  "displayName": "__DISPLAY_NAME__",
+  "version": "0.1.0",
+  "port": "__PORT__",
+  "description": "__DESCRIPTION__",
+  "vocabularies": [
+    {
+      "key": "strains",
+      "label": "Example strains",
+      "kind": "strain",
+      "description": "Strains kept by the example lab",
+      "sdrfShortName": "EXS",
+      "minTermLength": 2
+    }
+  ],
+  "settings": [
+    { "name": "REFRESH_HOURS", "default": "24", "description": "Hours between reloads of the terms; 0 loads them once" }
+  ]
+}

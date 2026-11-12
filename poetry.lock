@@ -694,6 +694,23 @@ test = ["certifi (>=2024)", "cryptography-vectors (==46.0.7)", "pretend (>=0.7)"
 test-randomorder = ["pytest-randomly"]
 
 [[package]]
+name = "cupcake-plugin-dev"
+version = "0.1.0"
+description = "Create, check, package and document CUPCAKE plugins"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = []
+develop = true
+
+[package.dependencies]
+jsonschema = ">=4.18"
+
+[package.source]
+type = "directory"
+url = "packages/cupcake-plugin-dev"
+
+[[package]]
 name = "cupcake-protocols-io"
 version = "0.1.0"
 description = "protocols.io integration for Cupcake: user accounts, browsing, protocol import and export, and session runs"
@@ -3189,4 +3206,4 @@ brotli = ["brotli"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "66cd4a7795c0ac4f866cf0a2f1517f4eda4d95591821f52597f20cd9c134bfbc"
+content-hash = "ad409cdcb8f2cc976d6cae4bb7648d919e7fb95a6afa56b601f22250c9eaef18"
