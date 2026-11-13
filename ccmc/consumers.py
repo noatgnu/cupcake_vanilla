@@ -11,7 +11,7 @@ from django.utils import timezone
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
-from ccmc.turn_credentials import get_ice_servers
+from ccmc.turn_credentials import client_host, get_ice_servers
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +266,9 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
-        ice_servers = await self.get_ice_servers_for_user(self.user.username)
+        headers = dict(self.scope.get("headers", []))
+        request_host = client_host(headers.get(b"host", b"").decode("latin-1"))
+        ice_servers = await self.get_ice_servers_for_user(self.user.username, request_host)
 
         await self.send(
             text_data=json.dumps(
@@ -763,9 +765,9 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
         WebRTCPeer.objects.filter(id=peer_id).update(last_seen_at=timezone.now())
 
     @database_sync_to_async
-    def get_ice_servers_for_user(self, username):
+    def get_ice_servers_for_user(self, username, request_host=""):
         """Get ICE server configuration including TURN credentials."""
-        return get_ice_servers(username, include_stun=True)
+        return get_ice_servers(username, include_stun=True, request_host=request_host)
 
     @database_sync_to_async
     def store_signal(self, session_id, from_peer_id, to_peer_id, signal_type, signal_data):

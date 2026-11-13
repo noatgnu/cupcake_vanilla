@@ -24,7 +24,7 @@ URL = "/api/v1/appliance/remote-access-status/"
 
 RUNNING = {
     "BackendState": "Running",
-    "Self": {"DNSName": "cupcake.tail1e420d.ts.net.", "TailscaleIPs": ["100.66.187.101", "fd7a::1"], "Online": True},
+    "Self": {"DNSName": "appliance.example.ts.net.", "TailscaleIPs": ["100.64.0.10", "fd7a::1"], "Online": True},
     "Health": [],
 }
 
@@ -85,8 +85,8 @@ class TailscaleStatusTests(APITestCase):
     def test_a_connected_appliance_reports_its_name_and_addresses(self):
         found = self.status(RUNNING)
         self.assertTrue(found["configured"] and found["connected"] and found["online"])
-        self.assertEqual(found["dns_name"], "cupcake.tail1e420d.ts.net")
-        self.assertEqual(found["addresses"], ["100.66.187.101", "fd7a::1"])
+        self.assertEqual(found["dns_name"], "appliance.example.ts.net")
+        self.assertEqual(found["addresses"], ["100.64.0.10", "fd7a::1"])
 
     def test_an_appliance_that_never_logged_in_is_not_set_up(self):
         found = self.status({"BackendState": "NeedsLogin", "Self": {}})
@@ -97,17 +97,17 @@ class TailscaleStatusTests(APITestCase):
         self.assertEqual((found["configured"], found["connected"], found["state"]), (True, False, "Stopped"))
 
     def test_a_tailnet_that_issues_certificates_offers_https(self):
-        self.assertTrue(self.status({**RUNNING, "CertDomains": ["cupcake.tail1e420d.ts.net"]})["https_available"])
+        self.assertTrue(self.status({**RUNNING, "CertDomains": ["appliance.example.ts.net"]})["https_available"])
         self.assertFalse(self.status(RUNNING)["https_available"])
 
     def test_the_certificate_of_the_tailscale_name_is_reported(self):
         expires = datetime.datetime(2027, 2, 1, tzinfo=datetime.timezone.utc)
         with tempfile.TemporaryDirectory() as directory:
-            path = certificate_file(directory, "cupcake.tail1e420d.ts.net", expires)
+            path = certificate_file(directory, "appliance.example.ts.net", expires)
             with override_settings(TAILSCALE_CERT_FILE=str(path)):
                 found = self.status(RUNNING)
         self.assertEqual(
-            found["certificate"], {"name": "cupcake.tail1e420d.ts.net", "expires_at": "2027-02-01T00:00:00+00:00"}
+            found["certificate"], {"name": "appliance.example.ts.net", "expires_at": "2027-02-01T00:00:00+00:00"}
         )
 
     @override_settings(TAILSCALE_CERT_FILE="/nonexistent/tailscale.crt")

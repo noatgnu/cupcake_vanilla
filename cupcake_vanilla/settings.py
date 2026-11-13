@@ -417,7 +417,7 @@ JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME = timedelta(days=30)
 
 COTURN_HOST = os.environ.get("COTURN_HOST", "coturn")
 COTURN_PORT = int(os.environ.get("COTURN_PORT", "3478"))
-COTURN_TLS_PORT = int(os.environ.get("COTURN_TLS_PORT", "5349"))
+COTURN_TLS_PORT = int(os.environ.get("COTURN_TLS_PORT", "5349") or 0) or None
 COTURN_USERNAME = os.environ.get("COTURN_USERNAME", "cupcake")
 COTURN_PASSWORD = os.environ.get("COTURN_PASSWORD", "cupcake_turn_pass")
 COTURN_SECRET = os.environ.get("COTURN_SECRET", "cupcake_vanilla_turn_secret_key_change_in_production")
