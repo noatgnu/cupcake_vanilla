@@ -226,6 +226,7 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
     - answer: Send WebRTC answer (SDP)
     - ice_candidate: Exchange ICE candidates
     - peer_state: Update peer connection state
+    - set_permissions: Allow, mute or reset someone's microphone, camera, screen sharing or chat (moderators only)
     """
 
     async def connect(self):
@@ -255,7 +256,11 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
         query_params = dict(param.split("=") for param in query_string.split("&") if "=" in param)
         client_peer_id = query_params.get("client_peer_id")
 
+        self.read_only = not await self.check_may_take_part(self.session_id, self.user)
+        self.can_moderate = await self.check_may_moderate(self.session_id, self.user)
         self.peer = await self.get_or_create_peer(self.session_id, self.user, client_peer_id=client_peer_id)
+        if self.read_only:
+            await self.update_peer_role(self.peer.id, "viewer")
         self.peer_id = str(self.peer.id)
         self.channel_id = f"webrtc_{self.peer_id}"
 
@@ -281,6 +286,9 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                     "user_id": self.user.id,
                     "username": self.user.username,
                     "ice_servers": ice_servers,
+                    "read_only": self.read_only,
+                    "can_moderate": self.can_moderate,
+                    "permissions": await self.get_call_permissions(self.session_id),
                     "is_reconnection": client_peer_id is not None and self.peer.client_peer_id == client_peer_id,
                 }
             )
@@ -293,14 +301,22 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                 "peer_id": self.peer_id,
                 "user_id": self.user.id,
                 "username": self.user.username,
+                "permissions": await self.get_permissions(self.session_id, self.user),
             },
         )
 
         logger.info(f"User {self.user.username} connected to WebRTC session {self.session_id}")
 
     async def disconnect(self, close_code):
-        """Handle WebSocket disconnection."""
+        """Mark the peer disconnected, leave the call's groups and tell the others."""
+        if hasattr(self, "peer"):
+            await self.update_peer_state(self.peer.id, "disconnected")
+
+        if hasattr(self, "channel_id"):
+            await self.channel_layer.group_discard(self.channel_id, self.channel_name)
+
         if hasattr(self, "session_group"):
+            await self.channel_layer.group_discard(self.session_group, self.channel_name)
             await self.channel_layer.group_send(
                 self.session_group,
                 {
@@ -310,15 +326,19 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                     "username": self.user.username,
                 },
             )
-            await self.channel_layer.group_discard(self.session_group, self.channel_name)
-
-        if hasattr(self, "channel_id"):
-            await self.channel_layer.group_discard(self.channel_id, self.channel_name)
-
-        if hasattr(self, "peer"):
-            await self.update_peer_state(self.peer.id, "disconnected")
 
         logger.info(f"User {self.user.username} disconnected from WebRTC session {self.session_id}")
+
+    async def send(self, text_data=None, bytes_data=None, close=False):
+        """
+        Send to the client, dropping messages for a socket that has already closed.
+
+        Call messages can reach this consumer after its browser went away but before its disconnect is handled.
+        """
+        try:
+            await super().send(text_data=text_data, bytes_data=bytes_data, close=close)
+        except RuntimeError:
+            logger.debug(f"Dropped a WebRTC message for {self.user.username}: the socket is closed")
 
     async def receive(self, text_data):
         """Handle incoming WebSocket messages."""
@@ -336,6 +356,7 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                 "answer": self.handle_answer,
                 "ice_candidate": self.handle_ice_candidate,
                 "peer_state": self.handle_peer_state,
+                "set_permissions": self.handle_set_permissions,
                 "heartbeat": self.handle_heartbeat,
             }
 
@@ -358,7 +379,7 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
 
         Broadcasts presence to all other peers in the session.
         """
-        peer_role = data.get("peer_role", "participant")
+        peer_role = "viewer" if self.read_only else data.get("peer_role", "participant")
 
         await self.update_peer_role(self.peer.id, peer_role)
 
@@ -477,6 +498,10 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
         has_video = data.get("has_video")
         has_audio = data.get("has_audio")
         has_screen_share = data.get("has_screen_share")
+        allowed = await self.get_permissions(self.session_id, self.user)
+        has_video = False if has_video and not allowed["video"] else has_video
+        has_audio = False if has_audio and not allowed["audio"] else has_audio
+        has_screen_share = False if has_screen_share and not allowed["screen_share"] else has_screen_share
 
         if state:
             await self.update_peer_state(self.peer.id, state)
@@ -500,6 +525,37 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                 "has_video": has_video,
                 "has_audio": has_audio,
                 "has_screen_share": has_screen_share,
+            },
+        )
+
+    async def handle_set_permissions(self, data):
+        """
+        Allow, mute or reset what someone in the call may send.
+
+        Takes user_id and any of audio, video, screen_share and chat as true (allowed), false (muted) or null
+        (their role decides), and tells everyone in the call what that person may now send.
+        """
+        if not self.can_moderate:
+            await self.send_error("Only the session owner can change what people may send")
+            return
+        target_id = data.get("user_id")
+        changes = {kind: data[kind] for kind in ("audio", "video", "screen_share", "chat") if kind in data}
+        valid = all(value in (True, False, None) for value in changes.values())
+        if not isinstance(target_id, int) or target_id == self.user.id or not changes or not valid:
+            await self.send_error("Give the user_id of someone else and true, false or null for what to change")
+            return
+        result = await self.save_permissions(self.session_id, target_id, changes)
+        if result is None:
+            await self.send_error("That user is not in this call")
+            return
+        await self.channel_layer.group_send(
+            self.session_group,
+            {
+                "type": "peer.permissions",
+                "user_id": target_id,
+                "permissions": result["permissions"],
+                "overrides": result["overrides"],
+                "changed_by": self.user.username,
             },
         )
 
@@ -604,6 +660,7 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                         "peer_id": event["peer_id"],
                         "user_id": event["user_id"],
                         "username": event["username"],
+                        "permissions": event["permissions"],
                     }
                 )
             )
@@ -621,6 +678,20 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
                     }
                 )
             )
+
+    async def peer_permissions(self, event):
+        """Tell the client what someone in the call may now send."""
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "peer.permissions",
+                    "user_id": event["user_id"],
+                    "permissions": event["permissions"],
+                    "overrides": event["overrides"],
+                    "changed_by": event["changed_by"],
+                }
+            )
+        )
 
     async def send_error(self, message):
         """Send error message to client."""
@@ -653,6 +724,52 @@ class WebRTCSignalConsumer(AsyncWebsocketConsumer):
 
         except WebRTCSession.DoesNotExist:
             return False
+
+    @database_sync_to_async
+    def check_may_take_part(self, session_id, user):
+        """Whether user may send media, chat and files in the WebRTC session rather than only watch."""
+        from .models import WebRTCSession
+
+        return WebRTCSession.objects.get(id=session_id).can_take_part(user)
+
+    @database_sync_to_async
+    def check_may_moderate(self, session_id, user):
+        """Whether user may mute the people in the WebRTC session."""
+        from .models import WebRTCSession
+
+        return WebRTCSession.objects.get(id=session_id).can_moderate(user)
+
+    @database_sync_to_async
+    def get_permissions(self, session_id, user):
+        """What user may send in the WebRTC session."""
+        from .models import WebRTCSession
+
+        return WebRTCSession.objects.get(id=session_id).permissions_for(user)
+
+    @database_sync_to_async
+    def get_call_permissions(self, session_id):
+        """What everyone who joined the WebRTC session, and this user, may send, by user id."""
+        from .models import WebRTCSession
+
+        session = WebRTCSession.objects.get(id=session_id)
+        users = {peer.user for peer in session.peers.select_related("user")} | {self.user}
+        return {str(user.id): session.permissions_for(user) for user in users}
+
+    @database_sync_to_async
+    def save_permissions(self, session_id, user_id, changes):
+        """Apply changes to what user_id may send; None when they never joined the session."""
+        from .models import WebRTCPermission, WebRTCSession
+
+        session = WebRTCSession.objects.get(id=session_id)
+        peer = session.peers.filter(user_id=user_id).select_related("user").first()
+        if peer is None:
+            return None
+        record, _ = WebRTCPermission.objects.get_or_create(session=session, user=peer.user)
+        for kind, value in changes.items():
+            setattr(record, kind, value)
+        record.changed_by = self.user
+        record.save()
+        return {"permissions": session.permissions_for(peer.user), "overrides": record.overrides()}
 
     @database_sync_to_async
     def get_or_create_peer(self, session_id, user, client_peer_id=None):

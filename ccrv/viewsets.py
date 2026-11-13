@@ -535,17 +535,19 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
     @extend_schema(
         tags=["sessions"],
         request=None,
-        responses={200: WEBRTC_SESSION},
+        responses={200: WEBRTC_SESSION, 403: ErrorSerializer, 404: ErrorSerializer},
     )
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def join_default_webrtc(self, request, pk=None):
         """
         Get or create the default WebRTC session for this experimental session.
 
-        By default, all users joining an experimental session join the same WebRTC call
-        unless they explicitly create/join a different one.
+        Session members join the default call; only the owner and editors may start it, and viewers join it
+        read-only.
         """
         session = self.get_object()
+        if not session.can_view(request.user):
+            raise PermissionDenied("You do not have access to this session")
 
         from ccmc.models import WebRTCSession
         from ccmc.serializers import WebRTCSessionSerializer
@@ -557,6 +559,11 @@ class SessionViewSet(DeletionLogMixin, viewsets.ModelViewSet):
         )
 
         if not default_session:
+            if not session.can_edit(request.user):
+                return Response(
+                    {"error": "No live session has been started for this session yet"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             default_session = WebRTCSession.objects.create(
                 session_type="video_call", initiated_by=request.user, is_default=True
             )

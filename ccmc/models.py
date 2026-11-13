@@ -307,6 +307,34 @@ class WebRTCSession(models.Model):
     def __str__(self):
         return f"{self.session_type} session {self.id} initiated by {self.initiated_by.username}"
 
+    def can_take_part(self, user):
+        """
+        Whether user's role lets them send video, audio, screen shares, chat and files in this call.
+
+        Staff, the user who started it and the owners and editors of its sessions take part; people who can
+        only view one of its sessions join as viewers. Moderators change this per person with WebRTCPermission.
+        """
+        if user.is_staff or user.is_superuser or self.initiated_by_id == user.id:
+            return True
+        return any(ccrv_session.can_edit(user) for ccrv_session in self.ccrv_sessions.all())
+
+    def permissions_for(self, user):
+        """What user may send in this call, by kind: audio, video, screen_share and chat."""
+        takes_part = self.can_take_part(user)
+        record = self.permissions.filter(user=user).first()
+        if record:
+            return record.effective(takes_part)
+        return {kind: takes_part for kind in WebRTCPermission.KINDS}
+
+    def can_moderate(self, user):
+        """Whether user may mute the people in this call: staff, the owners of its sessions, or its starter when it has no session."""
+        if user.is_staff or user.is_superuser:
+            return True
+        ccrv_sessions = list(self.ccrv_sessions.all())
+        if not ccrv_sessions:
+            return self.initiated_by_id == user.id
+        return any(ccrv_session.owner_id == user.id for ccrv_session in ccrv_sessions)
+
     def end_session(self):
         """Mark session as ended."""
         self.session_status = WebRTCSessionStatus.ENDED
@@ -384,6 +412,42 @@ class WebRTCPeer(models.Model):
         """Update connection state."""
         self.connection_state = state
         self.save(update_fields=["connection_state"])
+
+
+class WebRTCPermission(models.Model):
+    """
+    What a moderator has allowed or muted for one person in a call.
+
+    Each of microphone, camera, screen sharing and chat (with files) is allowed (true), muted (false) or left
+    to the person's role (null): owners and editors of the call's sessions may send everything, viewers nothing.
+    """
+
+    KINDS = ("audio", "video", "screen_share", "chat")
+
+    session = models.ForeignKey(WebRTCSession, on_delete=models.CASCADE, related_name="permissions")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="webrtc_permissions")
+    audio = models.BooleanField(null=True, blank=True)
+    video = models.BooleanField(null=True, blank=True)
+    screen_share = models.BooleanField(null=True, blank=True)
+    chat = models.BooleanField(null=True, blank=True)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="webrtc_permissions_given"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "ccmc"
+        constraints = [models.UniqueConstraint(fields=["session", "user"], name="unique_webrtc_permission_per_user")]
+
+    def __str__(self):
+        return f"permissions of {self.user_id} in call {self.session_id}"
+
+    def overrides(self):
+        return {kind: getattr(self, kind) for kind in self.KINDS}
+
+    def effective(self, takes_part):
+        """What the person may send, given whether their role lets them take part."""
+        return {kind: takes_part if value is None else value for kind, value in self.overrides().items()}
 
 
 class SignalType(models.TextChoices):
