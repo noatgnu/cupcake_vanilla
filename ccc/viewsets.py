@@ -73,6 +73,7 @@ from .api_schema import (
     PluginPackagePreviewSerializer,
     PluginPackageUploadSerializer,
     PluginServiceStatusSerializer,
+    PowerActionSerializer,
     PublicSiteConfigSerializer,
     RegistrationStatusSerializer,
     RemoteAccessStatusSerializer,
@@ -1968,6 +1969,12 @@ _STORAGE_MOUNT_POINT = "/mnt/cupcake-data"
 _STORAGE_SOCK = "/run/cupcake-storage.sock"
 _NETWORK_SOCK = "/run/cupcake-network.sock"
 _PLUGIN_SOCK = "/run/cupcake-plugin.sock"
+_POWER_SOCK = "/run/cupcake-power.sock"
+_POWER_ACTIONS = {
+    "restart-backend": "The backend is restarting; the apps reconnect in about a minute.",
+    "reboot": "The appliance is restarting; it is back in a few minutes.",
+    "shutdown": "The appliance is shutting down; switch it back on to use it again.",
+}
 _VALID_PLUGIN_NAME = re.compile(r"^[a-zA-Z0-9_-]+$")
 _BACKUP_ALLOWED_PREFIXES = ("/mnt/cupcake-data/", "/opt/cupcake/backups")
 _SHELL_UNSAFE = re.compile(r"[;&|`$\\\n\r\x00]")
@@ -2043,6 +2050,56 @@ class ApplianceViewSet(viewsets.ViewSet):
             data += chunk
         client.close()
         return json.loads(data.decode())
+
+    def _send_power_command(self, payload):
+        """Send a JSON command to the power manager socket and return the response."""
+        client = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        client.settimeout(30)
+        client.connect(_POWER_SOCK)
+        client.sendall(json.dumps(payload).encode())
+        client.shutdown(_socket.SHUT_WR)
+        data = b""
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        client.close()
+        return json.loads(data.decode())
+
+    @extend_schema(
+        tags=["appliance"],
+        request=PowerActionSerializer,
+        responses={202: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 500: ErrorSerializer},
+    )
+    @action(detail=False, methods=["post"], url_path="power")
+    def power(self, request):
+        """
+        Restart the backend, reboot the appliance or shut it down.
+
+        Superusers only. The power manager answers first and carries out the action a few seconds later.
+        """
+        from rest_framework.exceptions import PermissionDenied
+
+        if not request.user.is_superuser:
+            raise PermissionDenied("Only superusers can restart or shut down the appliance.")
+        action_name = request.data.get("action")
+        if action_name not in _POWER_ACTIONS:
+            return Response(
+                {"error": f"action must be one of: {', '.join(_POWER_ACTIONS)}"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        try:
+            result = self._send_power_command({"command": action_name})
+        except OSError as e:
+            return Response(
+                {"error": f"The power manager is not available: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        if not result.get("ok"):
+            return Response(
+                {"error": result.get("error", f"{action_name} failed")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        logger.warning("Appliance %s requested by %s", action_name, request.user.username)
+        return Response({"message": _POWER_ACTIONS[action_name]}, status=status.HTTP_202_ACCEPTED)
 
     def _is_mounted(self):
         """Return True if /mnt/cupcake-data is currently mounted."""

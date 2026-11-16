@@ -87,6 +87,12 @@ class CommandOutputSerializer(serializers.Serializer):
     output = serializers.CharField(allow_blank=True)
 
 
+class PowerActionSerializer(serializers.Serializer):
+    """What to restart or shut down on the appliance."""
+
+    action = serializers.ChoiceField(choices=["restart-backend", "reboot", "shutdown"])
+
+
 class StorageConfigSerializer(serializers.Serializer):
     """External storage settings; which fields apply depends on mountType."""
 
