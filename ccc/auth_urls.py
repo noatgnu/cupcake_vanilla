@@ -5,7 +5,7 @@ These URLs are not behind the api/v1/ prefix.
 
 from django.urls import path
 
-from .authentication import CustomTokenObtainPairView, login_view, logout_view, user_profile_view
+from .authentication import CustomTokenObtainPairView, desktop_sign_in, login_view, logout_view, user_profile_view
 from .view_modules.auth_views import (
     auth_status,
     exchange_auth_code,
@@ -17,6 +17,7 @@ from .view_modules.auth_views import (
 urlpatterns = [
     path("auth/login/", login_view, name="auth-login"),
     path("auth/logout/", logout_view, name="auth-logout"),
+    path("auth/desktop-sign-in/", desktop_sign_in, name="auth-desktop-sign-in"),
     path("auth/profile/", user_profile_view, name="auth-profile"),
     path(
         "auth/token/",

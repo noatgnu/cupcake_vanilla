@@ -3,9 +3,10 @@ Custom JWT authentication views and utilities for CUPCAKE Core.
 """
 
 import json
+import secrets
 
 from django.conf import settings
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.models import update_last_login
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -116,39 +117,82 @@ def login_view(request):
     user = authenticate(username=username, password=password)
 
     if user:
-        update_last_login(None, user)
-
-        refresh = RefreshToken.for_user(user)
-        access_token = refresh.access_token
-
-        if remember_me:
-            refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
-            access_token.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
-
-        access_token["username"] = user.username
-        access_token["email"] = user.email
-        access_token["is_staff"] = user.is_staff
-        access_token["is_superuser"] = user.is_superuser
-
-        return JsonResponse(
-            {
-                "access_token": str(access_token),
-                "refresh_token": str(refresh),
-                "user": {
-                    "id": user.id,
-                    "username": user.username,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "is_staff": user.is_staff,
-                    "is_superuser": user.is_superuser,
-                    "date_joined": user.date_joined.isoformat() if user.date_joined else None,
-                    "last_login": user.last_login.isoformat() if user.last_login else None,
-                },
-            }
-        )
+        return token_login_response(user, remember_me)
     else:
         return JsonResponse({"error": "Invalid credentials"}, status=401)
+
+
+def token_login_response(user, remember_me=False):
+    """Record the login of user and return their access and refresh tokens with their profile."""
+    update_last_login(None, user)
+
+    refresh = RefreshToken.for_user(user)
+    access_token = refresh.access_token
+
+    if remember_me:
+        refresh.set_exp(lifetime=settings.JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME)
+        access_token.set_exp(lifetime=settings.JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME)
+
+    access_token["username"] = user.username
+    access_token["email"] = user.email
+    access_token["is_staff"] = user.is_staff
+    access_token["is_superuser"] = user.is_superuser
+
+    return JsonResponse(
+        {
+            "access_token": str(access_token),
+            "refresh_token": str(refresh),
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+                "date_joined": user.date_joined.isoformat() if user.date_joined else None,
+                "last_login": user.last_login.isoformat() if user.last_login else None,
+            },
+        }
+    )
+
+
+LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
+
+
+@csrf_exempt
+@require_POST
+def desktop_sign_in(request):
+    """
+    Sign in the account the desktop launcher chose for automatic sign-in.
+
+    Answers only when the backend runs in the desktop app, to requests from this computer that carry the launcher's
+    secret in the X-Cupcake-Launcher header; everywhere else the endpoint does not exist.
+
+    Expected payload: {"username": "..."}
+    """
+    launcher_secret = getattr(settings, "WAILS_LAUNCHER_SECRET", "")
+    if not launcher_secret:
+        return JsonResponse({"error": "Not found"}, status=404)
+    if request.META.get("REMOTE_ADDR") not in LOOPBACK_ADDRESSES:
+        return JsonResponse({"error": "Only available on this computer"}, status=403)
+    if not secrets.compare_digest(request.headers.get("X-Cupcake-Launcher", ""), launcher_secret):
+        return JsonResponse({"error": "Invalid launcher secret"}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    username = data.get("username")
+    if not username:
+        return JsonResponse({"error": "username is required"}, status=400)
+
+    user = get_user_model().objects.filter(username=username, is_active=True).first()
+    if user is None:
+        return JsonResponse({"error": f"No active account named {username}"}, status=404)
+
+    return token_login_response(user)
 
 
 @extend_schema(

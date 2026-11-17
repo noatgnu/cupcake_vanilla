@@ -10,8 +10,10 @@ This configuration uses:
 
 import os
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
+from .desktop_secret import load_secret_key
 from .settings import *  # noqa: F403, F401
 from .settings import (
     REDIS_DB_RQ,
@@ -47,15 +49,13 @@ os.makedirs(DATABASE_DIR, exist_ok=True)
 
 DEBUG = os.environ.get("WAILS_DEBUG", "False").lower() == "true"
 
-SECRET_KEY = os.environ.get("WAILS_SECRET_KEY", "wails-embedded-key-change-in-production-" + str(hash(WAILS_USER_DATA)))
+SECRET_KEY_FILE = os.path.join(WAILS_USER_DATA, "secret_key")
+SECRET_KEY = os.environ.get("WAILS_SECRET_KEY") or load_secret_key(SECRET_KEY_FILE)
 
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
     "[::1]",
-    "0.0.0.0",
-    "wails.localhost",
-    "*",
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True
@@ -86,7 +86,6 @@ CACHES = {
     }
 }
 
-from datetime import timedelta
 
 RQ_QUEUES = {
     "default": {
@@ -245,6 +244,11 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024
 
 WAILS_ACCESS_TOKEN_HOURS = int(os.environ.get("WAILS_ACCESS_TOKEN_HOURS", "24"))
 WAILS_REFRESH_TOKEN_DAYS = int(os.environ.get("WAILS_REFRESH_TOKEN_DAYS", "30"))
+WAILS_ROTATE_REFRESH_TOKENS = os.environ.get("WAILS_ROTATE_REFRESH_TOKENS", "true").lower() == "true"
+WAILS_LAUNCHER_SECRET = os.environ.get("WAILS_LAUNCHER_SECRET", "")
+
+JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME = timedelta(hours=WAILS_ACCESS_TOKEN_HOURS)
+JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME = timedelta(days=WAILS_REFRESH_TOKEN_DAYS)
 
 WAILS_SETTINGS = {
     "APP_DATA_DIR": WAILS_USER_DATA,
@@ -326,8 +330,8 @@ def check_redis_status():
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=WAILS_ACCESS_TOKEN_HOURS),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=WAILS_REFRESH_TOKEN_DAYS),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
+    "ROTATE_REFRESH_TOKENS": WAILS_ROTATE_REFRESH_TOKENS,
+    "BLACKLIST_AFTER_ROTATION": WAILS_ROTATE_REFRESH_TOKENS,
     "UPDATE_LAST_LOGIN": False,
     "ALGORITHM": "HS256",
     "SIGNING_KEY": SECRET_KEY,
