@@ -497,6 +497,11 @@ class BackupListTest(APITestCase):
         self.assertIn("triggered_by_username", resp.data[0])
         self.assertIsNone(resp.data[0]["triggered_by_username"])
 
+    def test_unknown_and_non_numeric_log_ids_are_not_found(self):
+        for log_id in ("999999", "worker-status"):
+            resp = self.client.get(f"{BASE}/{log_id}/")
+            self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND, log_id)
+
 
 class RunBackupTest(APITestCase):
     """Tests for POST /api/v1/appliance/run-backup/."""

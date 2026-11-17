@@ -2285,7 +2285,7 @@ class ApplianceViewSet(viewsets.ViewSet):
         self._require_staff(request)
         try:
             log = BackupLog.objects.get(pk=pk)
-        except BackupLog.DoesNotExist:
+        except (BackupLog.DoesNotExist, ValueError):
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(BackupLogSerializer(log).data)
 
