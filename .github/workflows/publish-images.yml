@@ -128,7 +128,7 @@ jobs:
         if: env.MIRROR_SSH_HOST != ''
         run: |
           (cd "mirror/images/${TAG}" && sha256sum -c -- *.sha256)
-          .github/scripts/mirror-rsync.sh mirror/images/ cupcake/images/
+          bash .github/scripts/mirror-rsync.sh mirror/images/ ./
           if [ -n "$MIRROR_URL" ]; then
             URL="${MIRROR_URL%/}/cupcake/images/${TAG}/"
             for sums in mirror/images/${TAG}/*.sha256; do
