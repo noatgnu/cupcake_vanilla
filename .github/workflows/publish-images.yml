@@ -82,8 +82,15 @@ jobs:
 
       - name: Push the ${{ matrix.arch }} image
         run: |
-          docker push "${{ steps.image.outputs.tag }}"
-          echo "Pushed ${{ steps.image.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          for attempt in 1 2 3 4 5; do
+            if docker push "${{ steps.image.outputs.tag }}"; then
+              echo "Pushed ${{ steps.image.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::warning::Push attempt ${attempt} failed; retrying"
+            sleep $((attempt * 15))
+          done
+          exit 1
 
       - name: Save the image for the mirror
         run: |
@@ -127,7 +134,16 @@ jobs:
           if [ "$LATEST" = "true" ]; then
             TAGS+=(-t "${IMAGE}:latest")
           fi
-          docker buildx imagetools create "${TAGS[@]}" "${IMAGE}:${TAG}-amd64" "${IMAGE}:${TAG}-arm64"
+          for attempt in 1 2 3 4 5; do
+            if docker buildx imagetools create "${TAGS[@]}" "${IMAGE}:${TAG}-amd64" "${IMAGE}:${TAG}-arm64"; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              exit 1
+            fi
+            echo "::warning::Combining attempt ${attempt} failed; retrying"
+            sleep $((attempt * 15))
+          done
           docker buildx imagetools inspect "${IMAGE}:${TAG}" | tee -a "$GITHUB_STEP_SUMMARY"
 
   mirror:
