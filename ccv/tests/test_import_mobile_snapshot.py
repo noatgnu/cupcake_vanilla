@@ -1,6 +1,7 @@
 """Test cases for the import_mobile_snapshot management command."""
 
 import gzip
+import json
 import sqlite3
 import tempfile
 from io import StringIO
@@ -176,3 +177,45 @@ class ImportMobileSnapshotTest(TestCase):
         with patch("ccv.management.commands.import_mobile_snapshot.requests.get", side_effect=_get):
             with self.assertRaises(CommandError):
                 call_command("import_mobile_snapshot", "--dataset", "ontology")
+
+    def test_import_from_a_local_snapshot_folder(self):
+        species_gz = _build_sqlite_gz(
+            "species",
+            ["code", "taxon", "official_name", "common_name", "synonym"],
+            [("HUMAN", 9606, "Homo sapiens", "Human", "")],
+        )
+        manifest = {
+            "format_version": 1,
+            "tables": [
+                {"dataset": "ontology", "name": "species", "file": "ontology-species.sqlite.gz", "row_count": 1},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "manifest-v0.0.3.json").write_text(json.dumps(manifest))
+            Path(folder, "ontology-species.sqlite.gz").write_bytes(species_gz)
+            with patch("ccv.management.commands.import_mobile_snapshot.requests.get") as mock_get:
+                output = self._run("--dataset", "ontology", "--source-dir", folder)
+            mock_get.assert_not_called()
+
+        self.assertIn("imported 1 rows", output)
+        self.assertFalse(Species.objects.filter(code="STALE").exists())
+        self.assertTrue(Species.objects.filter(code="HUMAN", taxon=9606).exists())
+
+    def test_local_snapshot_folder_without_manifest_raises(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(CommandError):
+                call_command("import_mobile_snapshot", "--source-dir", folder)
+
+    def test_local_snapshot_file_outside_the_folder_is_refused(self):
+        manifest = {
+            "format_version": 1,
+            "tables": [{"dataset": "ontology", "name": "species", "file": "../species.sqlite.gz", "row_count": 1}],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaises(CommandError):
+                call_command("import_mobile_snapshot", "--source-dir", folder)
+
+    def test_source_dir_and_release_tag_together_raise(self):
+        with self.assertRaises(CommandError):
+            call_command("import_mobile_snapshot", "--source-dir", "/tmp", "--release-tag", "v0.0.3")

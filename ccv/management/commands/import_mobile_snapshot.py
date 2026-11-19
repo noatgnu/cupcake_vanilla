@@ -3,7 +3,7 @@ Management command to import ontology tables and system column templates from a
 cupcake-webgui GitHub Release's mobile snapshot artifacts.
 
 Counterpart to export_mobile_snapshot: fetches the release's manifest-*.json plus the
-requested <name>.sqlite.gz assets and bulk-loads them, replacing whatever rows already
+requested <name>.sqlite.gz assets, or reads them from a local folder with --source-dir, and bulk-loads them, replacing whatever rows already
 exist for that model. This is meant as a fast, version-pinned alternative to load_ontologies
 et al for populating a fresh instance's reference tables from a known-good pre-baked snapshot
 (large ontologies like NCBI taxonomy can OOM a live scrape-and-parse in a memory-constrained
@@ -60,17 +60,29 @@ class Command(BaseCommand):
         parser.add_argument("--dataset", choices=["ontology", "column-template", "all"], default="all")
         parser.add_argument("--table", help="Restrict --dataset ontology to a single type_key")
         parser.add_argument("--release-tag", default=None, help="GitHub release tag to pull from (default: latest)")
+        parser.add_argument(
+            "--source-dir",
+            default=None,
+            help="Folder holding a snapshot's manifest-*.json and .sqlite.gz files, read instead of a GitHub release",
+        )
 
     def handle(self, *args, **options):
         dataset = options["dataset"]
         table = options.get("table")
         release_tag = options.get("release_tag")
+        source_dir = Path(options["source_dir"]) if options.get("source_dir") else None
 
         if table and dataset not in ("ontology", "all"):
             raise CommandError("--table is only valid with --dataset ontology (or all)")
+        if source_dir and release_tag:
+            raise CommandError("--source-dir and --release-tag cannot be used together")
 
-        release = self._fetch_release(release_tag)
-        manifest = self._fetch_manifest(release)
+        if source_dir:
+            release = None
+            manifest = self._read_local_manifest(source_dir)
+        else:
+            release = self._fetch_release(release_tag)
+            manifest = self._fetch_manifest(release)
 
         entries = [e for e in manifest["tables"] if e["dataset"] in ("ontology", "column-template")]
         if dataset != "all":
@@ -83,7 +95,10 @@ class Command(BaseCommand):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             for entry in entries:
-                sqlite_path = self._download(release, entry["file"], tmp_path)
+                if source_dir:
+                    sqlite_path = self._decompress(self._local_file(source_dir, entry["file"]), tmp_path)
+                else:
+                    sqlite_path = self._download(release, entry["file"], tmp_path)
                 row_count = self._import_entry(entry, sqlite_path)
                 self.stdout.write(self.style.SUCCESS(f"{entry['dataset']}/{entry['name']}: imported {row_count} rows"))
 
@@ -103,6 +118,26 @@ class Command(BaseCommand):
         response = requests.get(candidates[0]["browser_download_url"], timeout=30)
         response.raise_for_status()
         return response.json()
+
+    def _read_local_manifest(self, source_dir):
+        if not source_dir.is_dir():
+            raise CommandError(f"Snapshot folder {source_dir} does not exist")
+        candidates = sorted(source_dir.glob("manifest*.json"))
+        if not candidates:
+            raise CommandError(f"No manifest*.json in {source_dir}")
+        return json.loads(candidates[-1].read_text())
+
+    def _local_file(self, source_dir, filename):
+        path = source_dir / filename
+        if Path(filename).name != filename or not path.is_file():
+            raise CommandError(f"Snapshot file {filename} not found in {source_dir}")
+        return path
+
+    def _decompress(self, gz_path, tmp_path):
+        sqlite_path = tmp_path / Path(gz_path.name).with_suffix("")
+        with gzip.open(gz_path, "rb") as f_in, open(sqlite_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+        return sqlite_path
 
     def _download(self, release, filename, tmp_path):
         asset = next((a for a in release.get("assets", []) if a["name"] == filename), None)
