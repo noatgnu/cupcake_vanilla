@@ -1,0 +1,9 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache nfs-utils
+
+COPY dockerfiles/nfs-server-entrypoint.sh /usr/local/bin/nfs-server-entrypoint.sh
+RUN chmod +x /usr/local/bin/nfs-server-entrypoint.sh
+
+EXPOSE 2049
+ENTRYPOINT ["/usr/local/bin/nfs-server-entrypoint.sh"]
