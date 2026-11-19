@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [cupcake-vanilla, cupcake-vanilla-ng, cupcake-webgui, cupcake-transcribe-worker]
+        name: [cupcake-vanilla, cupcake-vanilla-ng, cupcake-webgui, cupcake-transcribe-worker, cupcake-nfs-server]
         arch: [amd64, arm64]
         include:
           - name: cupcake-vanilla
@@ -42,6 +42,9 @@ jobs:
           - name: cupcake-transcribe-worker
             dockerfile: dockerfiles/Dockerfile-transcribe-worker
             description: CUPCAKE Vanilla transcription worker with whisper.cpp; models are mounted from the model cache
+          - name: cupcake-nfs-server
+            dockerfile: dockerfiles/Dockerfile-nfs-server
+            description: NFSv4 server that shares the cupcake-master Whisper model cache read-only with every instance
           - arch: amd64
             runner: ubuntu-24.04
           - arch: arm64
@@ -117,7 +120,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [cupcake-vanilla, cupcake-vanilla-ng, cupcake-webgui, cupcake-transcribe-worker]
+        name: [cupcake-vanilla, cupcake-vanilla-ng, cupcake-webgui, cupcake-transcribe-worker, cupcake-nfs-server]
     steps:
       - uses: docker/setup-buildx-action@v3
 

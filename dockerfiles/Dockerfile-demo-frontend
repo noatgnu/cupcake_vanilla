@@ -26,7 +26,7 @@ RUN npm run build
 
 RUN ls -la dist/ && ls -la dist/cupcake/
 
-FROM nginx:alpine
+FROM nginx:1.31.9-alpine
 
 RUN apk add --no-cache curl moreutils
 

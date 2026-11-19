@@ -38,7 +38,7 @@ RUN npm run build:libs && npm run build
 RUN ls -la dist/ && ls -la dist/cupcake-vanilla-ng/
 
 # Stage 2: Serve with nginx
-FROM nginx:alpine
+FROM nginx:1.31.9-alpine
 
 # Install curl for health checks
 RUN apk add --no-cache curl

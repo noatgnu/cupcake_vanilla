@@ -28,7 +28,7 @@ RUN npm run build
 
 RUN ls -la dist/ && ls -la dist/cupcake-vanilla-ng/
 
-FROM nginx:alpine
+FROM nginx:1.31.9-alpine
 
 COPY --from=frontend-builder /app/dist/cupcake-vanilla-ng/browser /usr/share/nginx/html
 
