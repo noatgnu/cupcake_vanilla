@@ -379,6 +379,7 @@ CSRF_TRUSTED_ORIGINS = cors_origins
 CORS_ORIGIN_WHITELIST = cors_origins
 CORS_ALLOW_METHODS = ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost").split(",")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "")
 
 # Trust X-Forwarded-Proto header from nginx for HTTPS detection
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

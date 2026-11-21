@@ -89,6 +89,7 @@ from .api_schema import (
     WifiStatusSerializer,
     WorkerStatusSerializer,
 )
+from .frontend_links import frontend_link
 from .models import (
     Annotation,
     AnnotationFolder,
@@ -483,9 +484,7 @@ class LabGroupViewSet(viewsets.ModelViewSet, FilterMixin):
 
                 subject = f"Lab Group Invitation: {lab_group_name}"
 
-                # Create invitation acceptance URL
-                frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:4200")
-                invitation_url = f"{frontend_url}/lab-groups/invitations/{invitation.id}/accept"
+                invitation_url = frontend_link(request, f"lab-groups/invitations/{invitation.id}/accept")
 
                 message = f"""
 {inviter_name} has invited you to join the lab group "{lab_group_name}".
@@ -1289,10 +1288,7 @@ class UserManagementViewSet(viewsets.ModelViewSet, FilterMixin):
                 # Send verification email
                 subject = "Verify Your New Email Address"
 
-                # Create verification URL (you may want to use your frontend URL)
-                verification_url = (
-                    f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:4200')}/verify-email-change?token={token}"
-                )
+                verification_url = frontend_link(request, f"verify-email-change?token={token}")
 
                 message = f"""
 Hi {request.user.first_name or request.user.username},
@@ -1467,9 +1463,7 @@ The Team
                     token = default_token_generator.make_token(user)
                     uid = urlsafe_base64_encode(force_bytes(user.pk))
 
-                    # Create reset URL for frontend
-                    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:4200")
-                    reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+                    reset_url = frontend_link(request, f"reset-password?uid={uid}&token={token}")
 
                     # Send email (customize template as needed)
                     subject = "Password Reset Request"
