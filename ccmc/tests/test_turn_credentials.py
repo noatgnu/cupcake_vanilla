@@ -44,6 +44,19 @@ class TurnCredentialTests(SimpleTestCase):
         self.assertEqual(servers[0]["urls"][0], "turn:appliance.example.ts.net:3478")
 
 
+class IceServerTests(SimpleTestCase):
+    def test_a_turn_server_is_offered_after_the_stun_servers(self):
+        servers = get_ice_servers("alice", request_host="lab.example.org")
+        self.assertTrue(servers[0]["urls"].startswith("stun:"))
+        self.assertTrue(servers[-1]["urls"][0].startswith("turn:"))
+
+    @override_settings(COTURN_ENABLED=False)
+    def test_without_a_turn_server_none_is_offered(self):
+        servers = get_ice_servers("alice", request_host="lab.example.org")
+        self.assertTrue(servers)
+        self.assertFalse([server for server in servers if "username" in server])
+
+
 class ClientHostTests(SimpleTestCase):
     def test_the_port_is_dropped(self):
         self.assertEqual(client_host("appliance.example.ts.net:8443"), "appliance.example.ts.net")

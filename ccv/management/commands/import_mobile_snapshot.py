@@ -95,6 +95,13 @@ class Command(BaseCommand):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             for entry in entries:
+                if not table and not self._known(entry):
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"{entry['dataset']}/{entry['name']}: skipped; this backend does not know this table"
+                        )
+                    )
+                    continue
                 if source_dir:
                     sqlite_path = self._decompress(self._local_file(source_dir, entry["file"]), tmp_path)
                 else:
@@ -153,6 +160,12 @@ class Command(BaseCommand):
         with gzip.open(gz_path, "rb") as f_in, open(sqlite_path, "wb") as f_out:
             shutil.copyfileobj(f_in, f_out)
         return sqlite_path
+
+    def _known(self, entry):
+        """Whether this backend can import the manifest entry; newer snapshots may list tables it does not have."""
+        if entry["dataset"] == "ontology":
+            return registry.get(entry["name"]) is not None
+        return entry["dataset"] == "column-template"
 
     def _import_entry(self, entry, sqlite_path):
         if entry["dataset"] == "ontology":

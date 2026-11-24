@@ -416,6 +416,7 @@ SIMPLE_JWT = {
 JWT_REMEMBER_ME_ACCESS_TOKEN_LIFETIME = timedelta(hours=24)
 JWT_REMEMBER_ME_REFRESH_TOKEN_LIFETIME = timedelta(days=30)
 
+COTURN_ENABLED = os.environ.get("COTURN_ENABLED", "true").lower() in ("1", "true", "yes")
 COTURN_HOST = os.environ.get("COTURN_HOST", "coturn")
 COTURN_PORT = int(os.environ.get("COTURN_PORT", "3478"))
 COTURN_TLS_PORT = int(os.environ.get("COTURN_TLS_PORT", "5349") or 0) or None

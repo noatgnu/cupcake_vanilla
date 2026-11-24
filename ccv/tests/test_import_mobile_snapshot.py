@@ -154,7 +154,7 @@ class ImportMobileSnapshotTest(TestCase):
         with self.assertRaises(CommandError):
             call_command("import_mobile_snapshot", "--dataset", "column-template", "--table", "species")
 
-    def test_unknown_type_key_raises(self):
+    def test_an_unknown_type_key_asked_for_by_name_raises(self):
         species_gz = _build_sqlite_gz("species", ["code"], [("HUMAN",)])
         manifest = {
             "format_version": 1,
@@ -166,7 +166,30 @@ class ImportMobileSnapshotTest(TestCase):
 
         with patch("ccv.management.commands.import_mobile_snapshot.requests.get", side_effect=mock_get):
             with self.assertRaises(CommandError):
-                call_command("import_mobile_snapshot", "--dataset", "ontology")
+                call_command("import_mobile_snapshot", "--dataset", "ontology", "--table", "not-a-real-key")
+
+    def test_tables_a_newer_snapshot_adds_are_skipped_and_the_rest_imported(self):
+        species_gz = _build_sqlite_gz(
+            "species",
+            ["code", "taxon", "official_name", "common_name", "synonym"],
+            [("HUMAN", 9606, "Homo sapiens", "Human", "")],
+        )
+        manifest = {
+            "format_version": 1,
+            "tables": [
+                {"dataset": "ontology", "name": "a_newer_ontology", "file": "ontology-newer.sqlite.gz", "row_count": 9},
+                {"dataset": "ontology", "name": "species", "file": "ontology-species.sqlite.gz", "row_count": 1},
+                {"dataset": "a-newer-dataset", "name": "things", "file": "things.sqlite.gz", "row_count": 3},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "manifest-v0.0.3.json").write_text(json.dumps(manifest))
+            Path(folder, "ontology-species.sqlite.gz").write_bytes(species_gz)
+            output = self._run("--dataset", "all", "--source-dir", folder)
+
+        self.assertIn("ontology/a_newer_ontology: skipped; this backend does not know this table", output)
+        self.assertIn("ontology/species: imported 1 rows", output)
+        self.assertTrue(Species.objects.filter(code="HUMAN", taxon=9606).exists())
 
     def test_release_fetch_failure_raises(self):
         def _get(url, timeout=None, headers=None, stream=None):

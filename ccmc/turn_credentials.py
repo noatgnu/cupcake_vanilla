@@ -81,7 +81,7 @@ def get_ice_servers(username: str, include_stun: bool = True, request_host: str 
         request_host: Host the client reached the backend at, used when settings.COTURN_HOST is empty
 
     Returns:
-        List of ICE server configurations for WebRTC
+        List of ICE server configurations for WebRTC; without a TURN server when settings.COTURN_ENABLED is off
     """
     ice_servers = []
 
@@ -93,7 +93,7 @@ def get_ice_servers(username: str, include_stun: bool = True, request_host: str 
             ]
         )
 
-    turn_config = generate_turn_credentials(username, request_host=request_host)
-    ice_servers.append(turn_config)
+    if getattr(settings, "COTURN_ENABLED", True):
+        ice_servers.append(generate_turn_credentials(username, request_host=request_host))
 
     return ice_servers
