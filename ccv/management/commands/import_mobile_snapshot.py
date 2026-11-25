@@ -56,6 +56,8 @@ def _deserialize(field, value):
 
 class Command(BaseCommand):
     help = "Import ontology tables and system column templates from a cupcake-webgui GitHub Release snapshot"
+    batch_size = 2000
+    pause = 0.0
 
     def add_arguments(self, parser):
         parser.add_argument("--dataset", choices=["ontology", "column-template", "all"], default="all")
