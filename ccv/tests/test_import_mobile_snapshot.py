@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 from io import StringIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from django.core.management import CommandError, call_command
 from django.test import TestCase
@@ -242,3 +242,29 @@ class ImportMobileSnapshotTest(TestCase):
     def test_source_dir_and_release_tag_together_raise(self):
         with self.assertRaises(CommandError):
             call_command("import_mobile_snapshot", "--source-dir", "/tmp", "--release-tag", "v0.0.3")
+
+
+class GentleImportTest(TestCase):
+    def test_batches_and_pauses_can_be_set_for_a_small_server(self):
+        species_gz = _build_sqlite_gz(
+            "species",
+            ["code", "taxon", "official_name", "common_name", "synonym"],
+            [(f"S{i}", i, f"Species {i}", "", "") for i in range(5)],
+        )
+        manifest = {
+            "format_version": 1,
+            "tables": [
+                {"dataset": "ontology", "name": "species", "file": "ontology-species.sqlite.gz", "row_count": 5}
+            ],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "manifest-v0.0.3.json").write_text(json.dumps(manifest))
+            Path(folder, "ontology-species.sqlite.gz").write_bytes(species_gz)
+            with patch("ccv.management.commands.import_mobile_snapshot.time.sleep") as sleep:
+                out = StringIO()
+                call_command(
+                    "import_mobile_snapshot", "--source-dir", folder, "--batch-size", "2", "--pause", "0.2", stdout=out
+                )
+        self.assertIn("ontology/species: imported 5 rows", out.getvalue())
+        self.assertEqual(Species.objects.count(), 5)
+        self.assertEqual(sleep.call_args_list, [call(0.2)] * 3)

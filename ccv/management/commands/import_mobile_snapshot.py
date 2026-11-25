@@ -25,6 +25,7 @@ import json
 import shutil
 import sqlite3
 import tempfile
+import time
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
@@ -65,12 +66,21 @@ class Command(BaseCommand):
             default=None,
             help="Folder holding a snapshot's manifest-*.json and .sqlite.gz files, read instead of a GitHub release",
         )
+        parser.add_argument("--batch-size", type=int, default=2000, help="Rows written per batch")
+        parser.add_argument(
+            "--pause",
+            type=float,
+            default=0.0,
+            help="Seconds to wait between batches, leaving the disk to other programs on a small server",
+        )
 
     def handle(self, *args, **options):
         dataset = options["dataset"]
         table = options.get("table")
         release_tag = options.get("release_tag")
         source_dir = Path(options["source_dir"]) if options.get("source_dir") else None
+        self.batch_size = max(1, options.get("batch_size") or 2000)
+        self.pause = max(0.0, options.get("pause") or 0.0)
 
         if table and dataset not in ("ontology", "all"):
             raise CommandError("--table is only valid with --dataset ontology (or all)")
@@ -174,10 +184,17 @@ class Command(BaseCommand):
                 raise CommandError(f"Unknown ontology type_key: {entry['name']}")
             fixed = descriptor.base_filter if descriptor.model is VocabularyTerm else None
             return self._import_scalar_table(
-                descriptor.model, entry["name"], sqlite_path, replaced=descriptor.base_queryset(), fixed=fixed
+                descriptor.model,
+                entry["name"],
+                sqlite_path,
+                batch_size=self.batch_size,
+                replaced=descriptor.base_queryset(),
+                fixed=fixed,
             )
         if entry["dataset"] == "column-template":
-            return self._import_scalar_table(MetadataColumnTemplate, "column_template", sqlite_path)
+            return self._import_scalar_table(
+                MetadataColumnTemplate, "column_template", sqlite_path, batch_size=self.batch_size
+            )
         raise CommandError(f"Unsupported dataset for import: {entry['dataset']}")
 
     def _import_scalar_table(self, model, sqlite_table, sqlite_path, batch_size=2000, replaced=None, fixed=None):
@@ -216,6 +233,8 @@ class Command(BaseCommand):
                     ]
                     model.objects.bulk_create(batch, batch_size=batch_size)
                     total += len(batch)
+                    if self.pause:
+                        time.sleep(self.pause)
         finally:
             conn.close()
 
