@@ -260,6 +260,7 @@ class MessageThreadSerializer(serializers.ModelSerializer):
     creator_username = serializers.CharField(source="creator.username", read_only=True)
     participants_count = serializers.IntegerField(source="participants.count", read_only=True)
     messages_count = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
     participants_list = ThreadParticipantSerializer(source="threadparticipant_set", many=True, read_only=True)
     related_object_type = serializers.CharField(
         source="content_type.model", read_only=True, allow_null=True, default=None
@@ -280,6 +281,7 @@ class MessageThreadSerializer(serializers.ModelSerializer):
             "creator_details",
             "participants_count",
             "messages_count",
+            "unread_count",
             "participants_list",
             "related_object_type",
             "related_object_app",
@@ -298,6 +300,7 @@ class MessageThreadSerializer(serializers.ModelSerializer):
             "creator_details",
             "participants_count",
             "messages_count",
+            "unread_count",
             "participants_list",
             "related_object_type",
             "related_object_app",
@@ -318,6 +321,21 @@ class MessageThreadSerializer(serializers.ModelSerializer):
     def get_messages_count(self, obj) -> int:
         """The number of messages the requesting user sees."""
         return self.visible_messages(obj).count()
+
+    def get_unread_count(self, obj) -> int:
+        """The number of messages from others the requesting user sees that arrived after they last read the thread."""
+        request = self.context.get("request")
+        if request is None or not request.user.is_authenticated:
+            return 0
+        participant = obj.threadparticipant_set.filter(user=request.user).first()
+        if participant is None:
+            return 0
+        return (
+            self.visible_messages(obj)
+            .exclude(sender=request.user)
+            .filter(created_at__gt=participant.last_read_at)
+            .count()
+        )
 
     @extend_schema_field(LatestMessageSerializer(allow_null=True))
     def get_latest_message(self, obj):

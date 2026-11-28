@@ -94,6 +94,7 @@ class ContactRuleTests(APITestCase):
         threads = self.client.get("/api/v1/threads/").data["results"]
         self.assertIsNone(threads[0]["latest_message"])
         self.assertEqual(threads[0]["messages_count"], 0)
+        self.assertEqual(threads[0]["unread_count"], 0)
 
     def test_blocks_are_listed_and_removed_by_their_owner(self):
         self.client.force_authenticate(self.grace)
