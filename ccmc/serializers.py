@@ -307,7 +307,6 @@ class MessageThreadSerializer(serializers.ModelSerializer):
             "latest_message",
         ]
 
-    @extend_schema_field(LatestMessageSerializer(allow_null=True))
     def visible_messages(self, obj):
         """The thread's messages the requesting user sees: not deleted, and not from users they blocked."""
         messages = obj.messages.filter(is_deleted=False)
@@ -320,6 +319,7 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         """The number of messages the requesting user sees."""
         return self.visible_messages(obj).count()
 
+    @extend_schema_field(LatestMessageSerializer(allow_null=True))
     def get_latest_message(self, obj):
         """The thread's latest message the requesting user sees."""
         latest = self.visible_messages(obj).order_by("-created_at").first()
