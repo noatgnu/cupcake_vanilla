@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema_field, extend_schema_serializer
 from rest_framework import serializers
 
-from .contact import may_contact
+from .contact import blocked_by, may_contact
 from .models import Message, MessageThread, Notification, ThreadParticipant, UserBlock, WebRTCPeer, WebRTCSession
 
 User = get_user_model()
@@ -309,8 +309,12 @@ class MessageThreadSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(LatestMessageSerializer(allow_null=True))
     def get_latest_message(self, obj):
-        """Get the latest message in the thread."""
-        latest = obj.messages.filter(is_deleted=False).order_by("-created_at").first()
+        """The thread's latest message, leaving out those of users the requesting user blocked."""
+        messages = obj.messages.filter(is_deleted=False)
+        request = self.context.get("request")
+        if request is not None and request.user.is_authenticated:
+            messages = messages.exclude(sender__in=blocked_by(request.user))
+        latest = messages.order_by("-created_at").first()
         if latest:
             return {
                 "id": latest.id,
