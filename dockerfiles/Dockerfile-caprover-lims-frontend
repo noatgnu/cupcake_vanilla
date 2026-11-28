@@ -14,11 +14,10 @@ RUN apk add --no-cache git curl bash
 
 WORKDIR /app
 
-# Cache bust argument - pass different value to force fresh clone
-ARG CACHEBUST=1
+ARG FRONTEND_COMMIT=""
 
-# Clone the LIMS Angular frontend repository
-RUN git clone https://github.com/noatgnu/cupcake-webgui.git .
+RUN git clone https://github.com/noatgnu/cupcake-webgui.git . && \
+    if [ -n "$FRONTEND_COMMIT" ]; then git checkout "$FRONTEND_COMMIT"; fi
 
 # Patch environment to use correct API URL for CapRover nginx proxy
 RUN if [ -n "$TUNNEL_DOMAIN" ]; then \

@@ -35,10 +35,12 @@ jobs:
             description: CUPCAKE Vanilla backend
           - name: cupcake-vanilla-ng
             dockerfile: dockerfiles/Dockerfile-caprover-frontend
+            source: noatgnu/cupcake-vanilla-ng
             manual: cupcake-vanilla
             description: CUPCAKE Vanilla web app served by nginx, proxying to the backend
           - name: cupcake-webgui
             dockerfile: dockerfiles/Dockerfile-caprover-lims-frontend
+            source: noatgnu/cupcake-webgui
             manual: cupcake
             description: CUPCAKE web app served by nginx, proxying to the backend
           - name: cupcake-transcribe-worker
@@ -82,6 +84,18 @@ jobs:
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
+      - name: Choose the frontend commit
+        id: source
+        if: matrix.source
+        run: |
+          commit=$(git ls-remote "https://github.com/${{ matrix.source }}.git" HEAD | cut -f1)
+          if [ -z "$commit" ]; then
+            echo "Could not read the latest commit of ${{ matrix.source }}" >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.name }} (${{ matrix.arch }}) is built from ${{ matrix.source }}@$commit" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build
         uses: docker/build-push-action@v6
         with:
@@ -89,6 +103,7 @@ jobs:
           file: ${{ matrix.dockerfile }}
           build-args: |
             MANUAL_BUNDLE_URL=${{ steps.manual.outputs.url }}
+            FRONTEND_COMMIT=${{ steps.source.outputs.commit }}
           platforms: linux/${{ matrix.arch }}
           load: true
           tags: ${{ steps.image.outputs.tag }}

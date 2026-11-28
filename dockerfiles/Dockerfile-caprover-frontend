@@ -14,11 +14,10 @@ RUN apk add --no-cache git curl bash
 
 WORKDIR /app
 
-# Cache bust argument - pass different value to force fresh clone
-ARG CACHEBUST=2
+ARG FRONTEND_COMMIT=""
 
-# Clone the Angular frontend repository
-RUN git clone https://github.com/noatgnu/cupcake-vanilla-ng.git .
+RUN git clone https://github.com/noatgnu/cupcake-vanilla-ng.git . && \
+    if [ -n "$FRONTEND_COMMIT" ]; then git checkout "$FRONTEND_COMMIT"; fi
 
 # Configure environment for production with nginx proxy
 # Since nginx proxies /api/*, the frontend should use the same domain (no separate API URL needed)
