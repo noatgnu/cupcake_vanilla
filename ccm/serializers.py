@@ -260,30 +260,15 @@ class InstrumentJobSerializer(serializers.ModelSerializer):
 
     def get_can_edit_staff_only_columns(self, obj) -> bool:
         """
-        Check if current user can edit staff-only columns.
+        Whether the requesting user can edit the job's staff-only columns and its details after submission.
 
-        Rules:
-        - If staff assigned: Only assigned staff can edit (staff are always direct lab_group members)
-        - If no staff but lab_group exists: Direct lab_group members can edit (not subgroup members)
-
-        Note: Staff-only permissions require DIRECT membership in the lab_group for security.
+        Site staff can, and so do the people who run the job: its assigned staff or, with none assigned, the direct
+        members of its lab group. A job without a metadata table has no columns to edit.
         """
         request = self.context.get("request")
-        if request and hasattr(request, "user"):
-            user = request.user
-            if not obj.metadata_table:
-                return False
-            assigned_staff = obj.staff.all()
-            has_assigned_staff = (
-                assigned_staff.exists() if hasattr(assigned_staff, "exists") else len(assigned_staff) > 0
-            )
-            if has_assigned_staff:
-                return user in assigned_staff
-            else:
-                if obj.lab_group and obj.lab_group.members.filter(id=user.id).exists():
-                    return True
+        if not request or not request.user.is_authenticated or not obj.metadata_table:
             return False
-        return False
+        return request.user.is_staff or request.user.is_superuser or obj.runs_the_job(request.user)
 
     class Meta:
         model = InstrumentJob

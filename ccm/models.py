@@ -1197,25 +1197,28 @@ class InstrumentJob(models.Model):
         if user.is_staff or user.is_superuser:
             return True, True
 
-        # Job owner has read access always
-        if self.user == user:
-            if action == "read":
-                return True, False
-            # Write access only in draft stage
-            elif action in ["write", "admin"] and self.status == "draft":
-                return True, False
-            else:
-                return False, False
-
-        # Check staff assignment for non-draft jobs
-        if self.status != "draft":
-            if user in self.staff.all():
+        if self.user == user and (action == "read" or self.status == "draft"):
+            return True, False
+        if self.status == "draft":
+            return False, False
+        if action == "read":
+            if user in self.staff.all() or (self.lab_group and self.lab_group.is_member(user)):
                 return True, True
-            # Check if user is from the assigned lab_group
-            if self.lab_group and self.lab_group.is_member(user):
-                return True, True
-
+            return False, False
+        if self.runs_the_job(user):
+            return True, True
         return False, False
+
+    def runs_the_job(self, user):
+        """
+        Whether the user runs this job.
+
+        That is one of its assigned staff or, with none assigned, a direct member of its lab group.
+        """
+        assigned = self.staff.all()
+        if assigned.exists():
+            return assigned.filter(id=user.id).exists()
+        return bool(self.lab_group and self.lab_group.members.filter(id=user.id).exists())
 
     def can_user_view_metadata(self, user):
         """

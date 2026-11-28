@@ -259,7 +259,7 @@ class MessageThreadSerializer(serializers.ModelSerializer):
     creator_details = UserBasicSerializer(source="creator", read_only=True)
     creator_username = serializers.CharField(source="creator.username", read_only=True)
     participants_count = serializers.IntegerField(source="participants.count", read_only=True)
-    messages_count = serializers.IntegerField(source="messages.count", read_only=True)
+    messages_count = serializers.SerializerMethodField()
     participants_list = ThreadParticipantSerializer(source="threadparticipant_set", many=True, read_only=True)
     related_object_type = serializers.CharField(
         source="content_type.model", read_only=True, allow_null=True, default=None
@@ -308,13 +308,21 @@ class MessageThreadSerializer(serializers.ModelSerializer):
         ]
 
     @extend_schema_field(LatestMessageSerializer(allow_null=True))
-    def get_latest_message(self, obj):
-        """The thread's latest message, leaving out those of users the requesting user blocked."""
+    def visible_messages(self, obj):
+        """The thread's messages the requesting user sees: not deleted, and not from users they blocked."""
         messages = obj.messages.filter(is_deleted=False)
         request = self.context.get("request")
         if request is not None and request.user.is_authenticated:
             messages = messages.exclude(sender__in=blocked_by(request.user))
-        latest = messages.order_by("-created_at").first()
+        return messages
+
+    def get_messages_count(self, obj) -> int:
+        """The number of messages the requesting user sees."""
+        return self.visible_messages(obj).count()
+
+    def get_latest_message(self, obj):
+        """The thread's latest message the requesting user sees."""
+        latest = self.visible_messages(obj).order_by("-created_at").first()
         if latest:
             return {
                 "id": latest.id,
