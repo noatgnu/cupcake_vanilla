@@ -71,15 +71,28 @@ class ServiceTier(models.Model):
 
 class BillableItemType(models.Model):
     """
-    Types of items that can be billed (instruments, reagents, protocols, etc.)
-    Uses ContentType for flexibility with any model.
+    What is billed: staff time and instrument time by the hour, and reagent cost by the unit reserved.
+
+    Each kind is billed automatically: staff time from the staff hours of completed instrument jobs, instrument time
+    from finished approved bookings and the instrument hours of completed jobs, and reagent cost from each quantity
+    reserved from a stored reagent.
     """
+
+    STAFF_TIME = "staff_time"
+    INSTRUMENT_TIME = "instrument_time"
+    REAGENT_COST = "reagent_cost"
+    KIND_CHOICES = [
+        (STAFF_TIME, "Staff time"),
+        (INSTRUMENT_TIME, "Instrument time"),
+        (REAGENT_COST, "Reagent cost"),
+    ]
 
     history = HistoricalRecords()
 
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
-    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, blank=True, default="")
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True)
 
     # Billing behavior
     BILLING_UNIT_CHOICES = [
@@ -88,6 +101,7 @@ class BillableItemType(models.Model):
         ("usage", "Per Usage"),
         ("sample", "Per Sample"),
         ("flat", "Flat Rate"),
+        ("unit", "Per Unit"),
         ("custom", "Custom"),
     ]
     default_billing_unit = models.CharField(max_length=20, choices=BILLING_UNIT_CHOICES, default="hourly")

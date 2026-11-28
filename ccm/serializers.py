@@ -473,8 +473,17 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
             "updated_at",
             "user_username",
             "instrument_name",
+            "approved_by",
             "approved_by_username",
         ]
+
+    def may_approve(self, instrument):
+        """Whether the requesting user can approve bookings of the instrument: staff and its managers."""
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated or instrument is None:
+            return False
+        return user.is_staff or user.is_superuser or instrument.user_can_manage(user)
 
     def validate(self, data):
         """
@@ -492,15 +501,27 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
 
         If ALL pre-approval conditions are met, booking is auto-approved.
         If ANY condition fails, booking requires manual approval.
+
+        Only staff and the instrument's managers can set ``approved``, which records them in ``approved_by``;
+        others' values are ignored. Without an explicit approval, a new booking or a change of its times applies
+        the conditions above, and other changes keep the booking's approval.
         """
 
         time_started = data.get("time_started")
         time_ended = data.get("time_ended")
         instrument = data.get("instrument") or (self.instance.instrument if self.instance else None)
 
+        times_changed = self.instance is None or "time_started" in data or "time_ended" in data
         if self.instance:
             time_started = time_started or self.instance.time_started
             time_ended = time_ended or self.instance.time_ended
+
+        if "approved" in data:
+            if self.may_approve(instrument):
+                request = self.context.get("request")
+                data["approved_by"] = request.user if data["approved"] else None
+            else:
+                data.pop("approved")
 
         if time_started and time_ended and time_started >= time_ended:
             raise serializers.ValidationError("End time must be after start time.")
@@ -552,11 +573,9 @@ class InstrumentUsageSerializer(serializers.ModelSerializer):
                 requires_approval = True
                 approval_reasons.append(f"overlaps with {overlapping_bookings.count()} existing booking(s)")
 
-            if requires_approval and "approved" not in data:
-                data["approved"] = False
-
-            if not requires_approval and "approved" not in data:
-                data["approved"] = True
+            if "approved" not in data and times_changed:
+                data["approved"] = not requires_approval
+                data["approved_by"] = None
 
         return data
 

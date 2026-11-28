@@ -9,7 +9,8 @@ from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema_field, extend_schema_serializer
 from rest_framework import serializers
 
-from .models import Message, MessageThread, Notification, ThreadParticipant, WebRTCPeer, WebRTCSession
+from .contact import may_contact
+from .models import Message, MessageThread, Notification, ThreadParticipant, UserBlock, WebRTCPeer, WebRTCSession
 
 User = get_user_model()
 
@@ -143,6 +144,26 @@ class NotificationCreateSerializer(serializers.ModelSerializer):
         if not value.is_active:
             raise serializers.ValidationError("Cannot send notifications to inactive users.")
         return value
+
+
+class UserBlockSerializer(serializers.ModelSerializer):
+    """A user the requesting user has blocked."""
+
+    blocked_username = serializers.CharField(source="blocked.username", read_only=True)
+
+    class Meta:
+        model = UserBlock
+        fields = ["id", "blocked", "blocked_username", "created_at"]
+        read_only_fields = ["id", "blocked_username", "created_at"]
+
+    def validate_blocked(self, blocked):
+        """Refuse blocking yourself, or someone already blocked."""
+        blocker = self.context["request"].user
+        if blocked == blocker:
+            raise serializers.ValidationError("You cannot block yourself")
+        if UserBlock.objects.filter(blocker=blocker, blocked=blocked).exists():
+            raise serializers.ValidationError("This user is already blocked")
+        return blocked
 
 
 class ThreadParticipantSerializer(serializers.ModelSerializer):
@@ -339,6 +360,20 @@ class MessageThreadCreateSerializer(serializers.ModelSerializer):
             "object_id",
             "participant_usernames",
         ]
+
+    def validate_participant_usernames(self, usernames):
+        """Refuse participants the creator may not contact: outside their lab groups, or blocked."""
+        creator = self.context["request"].user
+        refused = [
+            user.username
+            for user in User.objects.filter(username__in=usernames, is_active=True)
+            if not may_contact(creator, user)
+        ]
+        if refused:
+            raise serializers.ValidationError(
+                f"You can only message people in your lab groups who have not blocked you: {', '.join(refused)}"
+            )
+        return usernames
 
     def create(self, validated_data):
         """Create thread with participants."""

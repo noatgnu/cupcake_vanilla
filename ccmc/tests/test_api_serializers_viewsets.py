@@ -13,6 +13,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from ccc.models import LabGroup
 from ccmc.models import (
     DeliveryStatus,
     Message,
@@ -39,6 +40,8 @@ class CCMCSerializerTests(TestCase):
     def setUp(self):
         self.user1 = User.objects.create_user(username="testuser1", email="test1@example.com", password="testpass123")
         self.user2 = User.objects.create_user(username="testuser2", email="test2@example.com", password="testpass123")
+        shared_group = LabGroup.objects.create(name="Shared lab", creator=self.user1)
+        shared_group.members.add(self.user1, self.user2)
 
     def test_notification_serializer(self):
         """Test NotificationSerializer."""
@@ -162,6 +165,8 @@ class CCMCViewSetTests(APITestCase):
 
         self.user1 = User.objects.create_user(username="testuser1", email="test1@example.com", password="testpass123")
         self.user2 = User.objects.create_user(username="testuser2", email="test2@example.com", password="testpass123")
+        shared_group = LabGroup.objects.create(name="Shared lab", creator=self.user1)
+        shared_group.members.add(self.user1, self.user2)
         self.staff_user = User.objects.create_user(
             username="staffuser", email="staff@example.com", password="testpass123", is_staff=True
         )
@@ -177,7 +182,7 @@ class CCMCViewSetTests(APITestCase):
         data = {
             "title": "Test Notification",
             "message": "This is a test notification",
-            "notification_type": NotificationType.SYSTEM,
+            "notification_type": NotificationType.USER,
             "priority": NotificationPriority.HIGH,
             "recipient": self.user2.id,
         }

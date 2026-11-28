@@ -45,6 +45,7 @@ from ccc.permissions import IsSuperUser
 
 from .api_schema import (
     ActionMessageSerializer,
+    AddMemberSerializer,
     AdminPasswordResetBodySerializer,
     ApplyStorageSerializer,
     ApplyWifiSerializer,
@@ -683,6 +684,32 @@ The Team
         # Remove the member
         lab_group.members.remove(user_to_remove)
         return Response({"message": f"Successfully removed {user_to_remove.username} from {lab_group.name}"})
+
+    @extend_schema(
+        tags=["lab-groups"],
+        request=AddMemberSerializer,
+        responses={200: ActionMessageSerializer, 400: ErrorSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def add_member(self, request, pk=None):
+        """Add a user to this lab group straight away, without an invitation (staff only)."""
+        lab_group = self.get_object()
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Only staff can add members without an invitation"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user_to_add = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        if lab_group.members.filter(id=user_to_add.id).exists():
+            return Response({"error": "User is already a member of this lab group"}, status=status.HTTP_400_BAD_REQUEST)
+        lab_group.members.add(user_to_add)
+        return Response({"message": f"Successfully added {user_to_add.username} to {lab_group.name}"})
 
 
 class LabGroupInvitationViewSet(viewsets.ModelViewSet, FilterMixin):

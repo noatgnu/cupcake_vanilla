@@ -35,9 +35,11 @@ jobs:
             description: CUPCAKE Vanilla backend
           - name: cupcake-vanilla-ng
             dockerfile: dockerfiles/Dockerfile-caprover-frontend
+            manual: cupcake-vanilla
             description: CUPCAKE Vanilla web app served by nginx, proxying to the backend
           - name: cupcake-webgui
             dockerfile: dockerfiles/Dockerfile-caprover-lims-frontend
+            manual: cupcake
             description: CUPCAKE web app served by nginx, proxying to the backend
           - name: cupcake-transcribe-worker
             dockerfile: dockerfiles/Dockerfile-transcribe-worker
@@ -67,11 +69,26 @@ jobs:
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "tag=${IMAGE}:${TAG}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
 
+      - name: Choose the manual
+        id: manual
+        if: matrix.manual
+        run: |
+          base=https://github.com/noatgnu/cupcake-manual/releases/download
+          url="$base/${{ matrix.manual }}-${TAG}/${{ matrix.manual }}-manual.tar.gz"
+          if ! curl -fsIL --max-time 30 -o /dev/null "$url"; then
+            echo "The manual of ${TAG} is not published; using the newest manual" >> "$GITHUB_STEP_SUMMARY"
+            url="$base/manual/${{ matrix.manual }}-manual.tar.gz"
+            curl -fsIL --max-time 30 -o /dev/null "$url" || url=""
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
       - name: Build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          build-args: |
+            MANUAL_BUNDLE_URL=${{ steps.manual.outputs.url }}
           platforms: linux/${{ matrix.arch }}
           load: true
           tags: ${{ steps.image.outputs.tag }}

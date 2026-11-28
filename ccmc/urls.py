@@ -13,6 +13,7 @@ from .viewsets import (
     MessageViewSet,
     NotificationViewSet,
     ThreadParticipantViewSet,
+    UserBlockViewSet,
     WebRTCSessionViewSet,
 )
 
@@ -24,6 +25,7 @@ router.register(r"notifications", NotificationViewSet, basename="notification")
 router.register(r"threads", MessageThreadViewSet, basename="messagethread")
 router.register(r"messages", MessageViewSet, basename="message")
 router.register(r"participants", ThreadParticipantViewSet, basename="threadparticipant")
+router.register(r"blocks", UserBlockViewSet, basename="userblock")
 router.register(r"webrtc-sessions", WebRTCSessionViewSet, basename="webrtcsession")
 
 urlpatterns = [

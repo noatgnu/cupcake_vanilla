@@ -454,6 +454,12 @@ class RemoveMemberSerializer(serializers.Serializer):
     user_id = serializers.IntegerField()
 
 
+class AddMemberSerializer(serializers.Serializer):
+    """User to add to a lab group."""
+
+    user_id = serializers.IntegerField()
+
+
 class InvitationAcceptedSerializer(ActionMessageSerializer):
     """Confirmation and the lab group that was joined."""
 

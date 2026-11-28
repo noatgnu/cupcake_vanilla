@@ -32,14 +32,17 @@ from .api_schema import (
     ThreadUsernameSerializer,
     WebRTCSessionEndedSerializer,
 )
+from .contact import blocked_by, may_contact
 from .models import (
     DeliveryStatus,
     Message,
     MessageThread,
+    MessageType,
     Notification,
     NotificationPriority,
     NotificationType,
     ThreadParticipant,
+    UserBlock,
     WebRTCSession,
 )
 from .serializers import (
@@ -51,6 +54,7 @@ from .serializers import (
     NotificationCreateSerializer,
     NotificationSerializer,
     ThreadParticipantSerializer,
+    UserBlockSerializer,
     WebRTCSessionSerializer,
 )
 
@@ -85,20 +89,21 @@ class NotificationViewSet(viewsets.ModelViewSet):
             return Notification.objects.none()
         user = self.request.user
 
-        # Staff users can see all notifications they sent or received
-        if user.is_staff:
-            return Notification.objects.filter(Q(recipient=user) | Q(sender=user)).select_related(
-                "recipient", "sender", "content_type"
-            )
-
-        # Regular users can see notifications they sent or received
-        return Notification.objects.filter(Q(recipient=user) | Q(sender=user)).select_related(
-            "recipient", "sender", "content_type"
+        return (
+            Notification.objects.filter(Q(recipient=user) | Q(sender=user))
+            .exclude(recipient=user, sender__in=blocked_by(user))
+            .select_related("recipient", "sender", "content_type")
         )
 
     def perform_create(self, serializer):
-        """Set sender when creating notification."""
-        serializer.save(sender=self.request.user)
+        """Set the sender; staff may notify anyone, others only people they may contact, and not as the system."""
+        user = self.request.user
+        if not user.is_staff:
+            if serializer.validated_data.get("notification_type") == NotificationType.SYSTEM:
+                raise PermissionDenied("Only staff can send system notifications")
+            if not may_contact(user, serializer.validated_data["recipient"]):
+                raise PermissionDenied("You can only notify people in your lab groups who have not blocked you")
+        serializer.save(sender=user)
 
     @extend_schema(request=None, responses={200: NotificationSerializer, 403: ErrorSerializer})
     @action(detail=True, methods=["post"])
@@ -235,6 +240,11 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
         try:
             User = get_user_model()
             user_to_add = User.objects.get(username=username, is_active=True)
+            if not may_contact(request.user, user_to_add):
+                return Response(
+                    {"error": "You can only add people in your lab groups who have not blocked you"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
             participant, created = ThreadParticipant.objects.get_or_create(
                 thread=thread, user=user_to_add, defaults={"is_moderator": False}
@@ -344,6 +354,22 @@ class MessageThreadViewSet(viewsets.ModelViewSet):
         return Response({"message": "Thread marked as read", "last_read_at": participant.last_read_at})
 
 
+class UserBlockViewSet(viewsets.ModelViewSet):
+    """The users the requesting user has blocked: list, block and unblock."""
+
+    serializer_class = UserBlockSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return UserBlock.objects.none()
+        return UserBlock.objects.filter(blocker=self.request.user).select_related("blocked")
+
+    def perform_create(self, serializer):
+        serializer.save(blocker=self.request.user)
+
+
 class MessageViewSet(viewsets.ModelViewSet):
     """ViewSet for managing messages within threads."""
 
@@ -366,9 +392,10 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Message.objects.none()
         user = self.request.user
 
-        # Users can see messages in threads they participate in
+        # Users can see messages in threads they participate in, except those of users they blocked
         return (
             Message.objects.filter(thread__participants=user, is_deleted=False)
+            .exclude(sender__in=blocked_by(user))
             .select_related("sender", "thread", "reply_to")
             .prefetch_related("annotations")
         )
@@ -393,6 +420,9 @@ class MessageViewSet(viewsets.ModelViewSet):
         thread = serializer.validated_data["thread"]
         self.require_participant(thread)
         self.require_reply_in_thread(serializer.validated_data.get("reply_to"), thread)
+        staff_only = (MessageType.SYSTEM, MessageType.BROADCAST)
+        if serializer.validated_data.get("message_type") in staff_only and not self.request.user.is_staff:
+            raise PermissionDenied("Only staff can send system messages and broadcasts")
         message = serializer.save(sender=self.request.user)
 
         # Update thread last_message_at

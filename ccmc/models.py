@@ -245,6 +245,27 @@ class Message(models.Model):
         return f"Message from {self.sender.username} in {self.thread.title}"
 
 
+class UserBlock(models.Model):
+    """
+    A user's block on another.
+
+    Neither can start threads with, add to threads or notify the other, and the blocked user's messages and
+    notifications are hidden from the blocker.
+    """
+
+    blocker = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="blocks_made")
+    blocked = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="blocks_received")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "ccmc"
+        ordering = ["-created_at"]
+        constraints = [models.UniqueConstraint(fields=["blocker", "blocked"], name="ccmc_userblock_once")]
+
+    def __str__(self):
+        return f"{self.blocker} blocks {self.blocked}"
+
+
 class WebRTCSessionType(models.TextChoices):
     """
     Types of WebRTC sessions.

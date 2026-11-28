@@ -83,11 +83,12 @@ class ServiceTierSerializer(serializers.ModelSerializer):
 
 class BillableItemTypeSerializer(serializers.ModelSerializer):
     """
-    Serializer for BillableItemType model with ContentType handling.
+    A billable item type: staff time, instrument time or reagent cost, with its billing unit.
     """
 
-    content_type_display = serializers.CharField(source="content_type.model", read_only=True)
-    app_label = serializers.CharField(source="content_type.app_label", read_only=True)
+    content_type_display = serializers.CharField(source="content_type.model", read_only=True, default=None)
+    app_label = serializers.CharField(source="content_type.app_label", read_only=True, default=None)
+    kind_display = serializers.CharField(source="get_kind_display", read_only=True)
     default_billing_unit_display = serializers.CharField(source="get_default_billing_unit_display", read_only=True)
     active_prices_count = serializers.SerializerMethodField()
 
@@ -97,6 +98,8 @@ class BillableItemTypeSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "description",
+            "kind",
+            "kind_display",
             "content_type",
             "content_type_display",
             "app_label",
@@ -108,7 +111,7 @@ class BillableItemTypeSerializer(serializers.ModelSerializer):
             "updated_at",
             "active_prices_count",
         ]
-        read_only_fields = ["created_at", "updated_at", "active_prices_count"]
+        read_only_fields = ["created_at", "updated_at", "active_prices_count", "content_type"]
 
     def get_active_prices_count(self, obj) -> int:
         """Return count of active service prices for this item type."""
